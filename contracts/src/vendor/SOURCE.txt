@@ -1,0 +1,17 @@
+Vendored verbatim; do not edit.
+
+IReceiver.sol, ReceiverTemplate.sol, IERC165.sol
+  Chainlink "Building Consumer Contracts" page
+  https://docs.chain.link/cre/guides/workflow/using-evm-client/onchain-write/building-consumer-contracts
+  The page renders these samples from smartcontractkit/documentation at commit 9ca45445471bde94f1045efa4129f972bea81e98:
+  https://raw.githubusercontent.com/smartcontractkit/documentation/9ca45445471bde94f1045efa4129f972bea81e98/public/samples/CRE/IReceiver.sol
+  https://raw.githubusercontent.com/smartcontractkit/documentation/9ca45445471bde94f1045efa4129f972bea81e98/public/samples/CRE/ReceiverTemplate.sol
+  https://raw.githubusercontent.com/smartcontractkit/documentation/9ca45445471bde94f1045efa4129f972bea81e98/public/samples/CRE/IERC165.sol
+
+openzeppelin/contracts/**
+  OpenZeppelin Contracts v5.4.0, files copied at their original paths
+  https://github.com/OpenZeppelin/openzeppelin-contracts/tree/v5.4.0/contracts
+  Mapped by the remapping @openzeppelin/contracts/=src/vendor/openzeppelin/contracts/
+
+lib/forge-std
+  forge-std v1.9.7 (https://github.com/foundry-rs/forge-std/tree/v1.9.7), src/ and licenses only.
