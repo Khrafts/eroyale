@@ -105,13 +105,16 @@ export class Bots {
     if (b.style === "fade" && mom !== 0) side = mom > 0 ? -1 : 1;
     let lev = r.int(b.lev[0], b.lev[1]);
     if (urgency > 1) lev = Math.min(100, lev * 2);
-    const pct = BigInt(r.int(b.marginPct[0], b.marginPct[1]));
-    // On a quiet tape, lift leverage until a one-sigma move over the time left could reach the line.
+    let pct = BigInt(r.int(b.marginPct[0], b.marginPct[1]));
+    // On a quiet tape, lift leverage (and size) until a half-sigma move over the time left reaches the line.
     if (!afterLast) {
       const needFrac = eq < line ? Number(line - eq) / Number(eq) : 0.005;
       const sigma = this.vol(m) * Math.sqrt(Math.max(secsLeft * 4, 20));
-      const needed = Math.ceil(needFrac / ((Number(pct) / 100) * sigma));
-      if (needed > lev) lev = Math.min(100, needed);
+      const needed = Math.ceil((2 * needFrac) / ((Number(pct) / 100) * sigma));
+      if (needed > lev) {
+        lev = Math.min(100, needed);
+        if (needed > 100 && pct < 80n) pct = 80n;
+      }
     }
     const margin = (free * pct) / 100n;
     if (margin <= 0n) return orders;
