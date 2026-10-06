@@ -87,6 +87,10 @@ contract RoyaleEscrow is IRoyaleEscrow, ReceiverTemplate {
         if (creatorFeeBps > MAX_CREATOR_FEE_BPS) revert CreatorFeeTooHigh(creatorFeeBps, MAX_CREATOR_FEE_BPS);
         if (creator == address(0) && creatorFeeBps != 0) revert ZeroCreatorWithFee(creatorFeeBps);
 
+        // A round without a creator settles against the royale budget floor(pot * 9500 / 10000). That equals
+        // predictSettle's pot - floor(pot * 500 / 10000) only when pot % 20 == 0, which entry % 20 == 0 guarantees.
+        if (creator == address(0) && entry % 20 != 0) revert InvalidLobbyConfig();
+
         id = _createLobby(duration, entry, maxPlayers);
 
         Lobby storage lobby = _lobbies[id];

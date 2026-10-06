@@ -107,6 +107,27 @@ contract RoyaleEscrowPredictTest is Test {
         assertEq(escrow.getLobby(id).creatorFeeBps, 0);
     }
 
+    function test_RevertWhen_NoCreatorEntryNotMultipleOf20() public {
+        // Without a creator the royale budget floor(pot * 9500 / 10000) applies; an entry that is not a
+        // multiple of 20 could leave it one unit under predictSettle's pot - floor(pot * 500 / 10000).
+        vm.expectRevert(abi.encodeWithSelector(IRoyaleEscrow.InvalidLobbyConfig.selector));
+        vm.prank(owner);
+        escrow.createRound(DURATION, 1_000001, 50, address(0), 0);
+
+        assertEq(escrow.lobbyCount(), 0);
+
+        // With a creator the predict budget applies, so any entry is fine.
+        vm.prank(owner);
+        uint256 id = escrow.createRound(DURATION, 1_000001, 50, creator, 0);
+
+        assertEq(escrow.getLobby(id).entry, 1_000001);
+
+        vm.prank(owner);
+        id = escrow.createRound(DURATION, 1_000020, 50, address(0), 0);
+
+        assertEq(escrow.getLobby(id).entry, 1_000020);
+    }
+
     function test_CreateRound() public {
         assertEq(escrow.MAX_CREATOR_FEE_BPS(), 500);
 

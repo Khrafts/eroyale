@@ -96,6 +96,7 @@ interface IRoyaleEscrow {
     /// @param  maxPlayers    Seat limit, 4 to 50.
     /// @param  creator       Receives the creator fee; zero for a round with no creator.
     /// @param  creatorFeeBps Creator fee in basis points, at most MAX_CREATOR_FEE_BPS; zero when creator is zero.
+    ///         Without a creator, entry must be a multiple of 20 (InvalidLobbyConfig otherwise).
     /// @return id The new lobby id.
     function createRound(
         uint32 duration,
