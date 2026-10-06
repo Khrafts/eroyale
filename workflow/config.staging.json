@@ -1,0 +1,9 @@
+{
+  "chainName": "ethereum-testnet-sepolia-base-1",
+  "escrowAddress": "0x0000000000000000000000000000000000000000",
+  "engineUrl": "https://ENGINE_PUBLIC_URL",
+  "priceSourceUrl": "https://api.exchange.coinbase.com/products/{MARKET}-USD/candles?granularity=60&start={START}&end={END}",
+  "feeBps": "500",
+  "gasLimit": "3000000",
+  "authorizedKeys": []
+}
