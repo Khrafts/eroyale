@@ -591,11 +591,17 @@ export function useMatch(opts: MatchOptions = {}): Match {
       };
     };
 
-    // The protocol round's lobby id, from GET /rounds (the protocol round is listed first).
+    // The protocol round to show, from GET /rounds: the locked protocol round whose reveal comes next (after the one on
+    // screen), else the open one taking predictions.
+    type Row = { lobbyId: number; protocol: boolean; endTime: number };
     const protocolRound = async (): Promise<number | null> => {
       const r = await fetch(`${engineHttp()}/rounds`, { cache: "no-store" });
-      const body = (await r.json()) as { rounds?: { lobbyId: number; protocol: boolean }[] };
-      return body.rounds?.find((x) => x.protocol)?.lobbyId ?? null;
+      const body = (await r.json()) as { protocol?: number | null; rounds?: Row[]; active?: Row[] };
+      const after = s.round?.endTime ?? 0;
+      const next = (body.active ?? [])
+        .filter((x) => x.protocol && x.endTime > after && x.lobbyId !== s.lobbyId)
+        .sort((x, y) => x.endTime - y.endTime)[0];
+      return next?.lobbyId ?? body.protocol ?? body.rounds?.find((x) => x.protocol)?.lobbyId ?? null;
     };
 
     // Follow the next match: with no ?lobby, switch when the engine's current lobby changes after this one ends.

@@ -1,0 +1,119 @@
+/* Prediction screens on the phone. Variables come from play.module.css .root (the storm palette). */
+.page { padding: 18px 16px 28px; display: flex; flex-direction: column; gap: 4px; }
+.small { font-size: 17px; color: var(--ink); }
+.h2 { font-size: 22px; font-weight: 800; margin: 22px 0 8px; }
+.urgent { color: var(--floodHi); }
+
+/* Top bar of a round */
+.bar1 { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: 10px; color: var(--ink); font-size: 18px; margin-bottom: 14px; }
+.barTitle { color: var(--chalk); font-weight: 800; font-size: 20px; }
+.barRight { text-align: right; }
+.barRight :global(*) { font-size: inherit; }
+.back { font: inherit; font-size: 18px; color: var(--chalk); background: transparent; border: 2px solid #3a5560; border-radius: 4px; padding: 4px 10px; }
+
+/* Rounds list: the protocol round is a block with a chalk rule on top, user rounds are rows. */
+.proto {
+  font: inherit;
+  color: var(--chalk);
+  text-align: left;
+  background: var(--sky2);
+  border: 0;
+  border-top: 4px solid var(--chalk);
+  border-radius: 0 0 4px 4px;
+  padding: 14px 14px 16px;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.protoTop { display: flex; justify-content: space-between; align-items: flex-end; }
+.protoMarket { display: block; font-size: 30px; font-weight: 800; line-height: 1; }
+.protoMark { display: block; font-size: 26px; color: var(--chalk); margin-top: 6px; }
+.protoClock { display: flex; flex-direction: column; align-items: flex-end; }
+.protoCount { font-size: 72px; line-height: 0.9; font-weight: 800; }
+.protoFacts { color: var(--ink); font-size: 18px; }
+.protoFacts :global(span) { color: var(--chalk); }
+.protoCta { align-self: stretch; text-align: center; font-size: 24px; font-weight: 800; color: var(--sky); background: var(--chalk); border-radius: 4px; padding: 14px; }
+
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li + li { border-top: 1px solid #3a5560; }
+.row { font: inherit; color: var(--chalk); background: transparent; border: 0; width: 100%; text-align: left; display: grid; grid-template-columns: 52px 1fr; gap: 8px; padding: 12px 0; align-items: start; }
+.rowMarket { font-size: 22px; font-weight: 800; }
+.rowBody { display: flex; flex-direction: column; gap: 2px; }
+.rowLine { display: flex; justify-content: space-between; font-size: 18px; }
+.rowSub { color: var(--ink); font-size: 16px; }
+.secondary { font: inherit; font-size: 22px; font-weight: 800; color: var(--chalk); background: transparent; border: 2px solid var(--chalk); border-radius: 4px; padding: 14px; margin-top: 18px; }
+.link { color: var(--ink); font-size: 17px; margin-top: 16px; text-align: center; text-underline-offset: 3px; }
+.tape:focus-visible, .proto:focus-visible, .row:focus-visible { outline: 3px solid var(--chalk); outline-offset: 2px; }
+
+/* Create: the payout preview stays pinned while the controls scroll under it. */
+.create { display: flex; flex-direction: column; }
+.preview { position: sticky; top: 0; z-index: 1; background: var(--sky); padding: 14px 16px 12px; border-bottom: 2px solid #3a5560; }
+.previewHead { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.createTitle { font-size: 30px; font-weight: 800; margin: 0; line-height: 1; }
+.previewLine { margin: 0 0 8px; font-size: 18px; color: var(--ink); }
+.previewLine :global(span), .previewFees :global(span) { color: var(--chalk); }
+.previewFees { margin: 6px 0 0; font-size: 16px; color: var(--ink); }
+.bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.bar { display: grid; grid-template-columns: 26px 1fr 72px; align-items: center; gap: 8px; font-size: 17px; }
+.barRank { color: var(--ink); text-align: right; }
+.barTrack { height: 12px; display: block; }
+.barFill { display: block; height: 100%; background: var(--profit); transform-origin: left center; transition: transform 160ms ease-out; }
+.barAmt { text-align: right; color: var(--profit); }
+.barGap { color: var(--ink); font-size: 15px; padding-left: 34px; }
+.controls { padding: 14px 16px 28px; display: flex; flex-direction: column; gap: 14px; }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.segBtn { font: inherit; font-size: 19px; font-weight: 800; color: var(--chalk); background: transparent; border: 2px solid #3a5560; border-radius: 4px; padding: 9px 0; }
+.segOn { border-color: var(--chalk); background: var(--chalk); color: var(--sky); }
+.slider { display: flex; flex-direction: column; gap: 2px; color: var(--ink); }
+.sliderRow { display: flex; justify-content: space-between; align-items: baseline; font-size: 18px; }
+.sliderVal { color: var(--chalk); font-size: 24px; }
+.slider input { width: 100%; accent-color: var(--chalk); height: 30px; margin: 0; }
+
+/* Predict */
+.call { display: flex; flex-direction: column; flex: 1; padding: 18px 16px 16px; min-height: 100dvh; }
+.callTop { display: flex; flex-direction: column; }
+.live { font-size: 40px; font-weight: 700; margin: 0; line-height: 1; }
+.mine { margin-top: 20px; }
+.callFig { font-size: 84px; font-weight: 800; margin: 0; line-height: 0.95; color: var(--chalk); letter-spacing: -0.01em; }
+.diff { margin: 6px 0 0; font-size: 21px; font-weight: 700; }
+.count { color: var(--ink); font-size: 17px; margin: 14px 0 0; }
+.count :global(span) { color: var(--chalk); }
+.thumb { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 16px; }
+.tape { background: var(--sky2); border-radius: 4px; touch-action: none; cursor: ew-resize; user-select: none; }
+.tape svg { display: block; }
+.tapeTick { stroke: var(--ink); stroke-width: 1.5; }
+.tapeLabel { fill: var(--ink); font-family: var(--fig); font-size: 15px; font-weight: 600; }
+.tapeNeedle { stroke: var(--chalk); stroke-width: 4; }
+.tapeMark { fill: var(--chalk); opacity: 0.7; }
+.nudges { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.nudge { font: inherit; font-family: var(--fig); font-size: 22px; font-weight: 700; color: var(--chalk); background: transparent; border: 2px solid #3a5560; border-radius: 4px; padding: 12px 0; }
+.nudge:disabled { opacity: 0.45; }
+.sentNote { margin: 0; font-size: 20px; font-weight: 700; text-align: center; padding: 15px 10px; border: 2px solid #3a5560; border-radius: 4px; color: var(--ink); }
+
+.sketch { width: 100%; height: auto; display: block; margin-top: 14px; }
+.sketchEmpty { height: 150px; }
+.sketchAhead { fill: var(--sky2); }
+.sketchPost { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.sketchLabel { fill: var(--ink); font-size: 14px; }
+.sketchCall { stroke: var(--chalk); stroke-width: 2; stroke-dasharray: 7 5; opacity: 0.8; }
+.sketchTrace { fill: none; stroke: var(--chalk); stroke-width: 2.5; stroke-linejoin: round; }
+
+/* Locked */
+.strip { width: 100%; height: auto; background: var(--sky2); border-radius: 4px; margin: 14px 0 4px; display: block; }
+.storm { fill: var(--flood); opacity: 0.8; }
+.stormEdge { stroke: var(--floodHi); stroke-width: 2; }
+.callLose { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 5; opacity: 0.7; }
+.callWin { stroke: var(--profit); stroke-width: 2.5; }
+.callMe { stroke: var(--chalk); stroke-width: 3; }
+.stripMe { fill: var(--chalk); font-size: 16px; font-weight: 800; paint-order: stroke; stroke: var(--sky2); stroke-width: 4px; }
+.markLine { stroke: var(--chalk); stroke-width: 1.5; stroke-dasharray: 2 4; }
+.markDot { fill: var(--chalk); }
+.leaders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 20px; }
+.leaders li { display: grid; grid-template-columns: 22px 1fr auto 74px; gap: 10px; align-items: baseline; }
+.leaders li > :last-child { text-align: right; }
+.dist { color: var(--ink); text-align: right; }
+
+/* Result */
+.settle { font-size: 64px; font-weight: 800; margin: 0 0 14px; line-height: 0.95; }
+.page :global(ol) { margin-top: 12px; }

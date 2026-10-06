@@ -154,9 +154,11 @@ export function useRounds(match: Match): { rounds: RoundInfo[]; error: string | 
       if (source === "mock") {
         if (mockSeed === null) return;
         setRounds(mockRounds(clock(), mockSeed));
+        setError(null);
         setLoaded(true);
         return;
       }
+      if (new URLSearchParams(window.location.search).get("mock")) return; // the mock is still starting
       if (!process.env.NEXT_PUBLIC_ENGINE_WS && !process.env.NEXT_PUBLIC_ENGINE_HTTP) {
         setError("No engine is configured. Set NEXT_PUBLIC_ENGINE_WS (repo .env) and rebuild, or open this page with ?mock=predict.");
         setLoaded(true);

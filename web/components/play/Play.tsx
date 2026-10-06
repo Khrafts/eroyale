@@ -9,6 +9,7 @@ import type { EliminatedEvent, FillEvent, Market, Side } from "@/lib/events";
 import { burner, join, sendOrder, signOrder, type Order } from "@/lib/engine";
 import { useMatch, type Match } from "@/lib/useMatch";
 import s from "./play.module.css";
+import PredictPhone from "./Predict";
 
 const DETENTS = [10, 25, 50, 100];
 const SIZES: { label: string; frac: number }[] = [
@@ -100,7 +101,19 @@ function Gauge({ equity, cut, zone }: { equity: number; cut: number; zone: numbe
 
 type Toast = { text: string; tone: "ok" | "bad" } | null;
 
+/** Royale or prediction mode, from ?mode=predict or ?mock=predict (read after mount: the page is prerendered). */
 export default function Play() {
+  const [mode, setMode] = useState<"royale" | "predict" | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    setMode(q.get("mock") === "predict" || q.get("mode") === "predict" ? "predict" : "royale");
+  }, []);
+  if (mode === "predict") return <PredictPhone />;
+  if (mode === "royale") return <RoyalePhone />;
+  return <main className={s.root} />;
+}
+
+function RoyalePhone() {
   const match = useMatch();
   const { state, source } = match;
   const [acct, setAcct] = useState<PrivateKeyAccount | null>(null);
@@ -223,6 +236,9 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
       </button>
       {err && <p className={s.error}>{err}</p>}
       <p className={s.fine}>The $5.00 entry is paid for you. Your game key stays in this browser.</p>
+      <a className={s.fine} href={source === "mock" ? "?mock=predict&screen=rounds" : "?mode=predict&screen=rounds"}>
+        Or call a price in a prediction round
+      </a>
     </section>
   );
 }
