@@ -162,17 +162,26 @@ type Snapshot = {
   settled?: SettledEvent | null;
 };
 
-/** Merge a GET /lobbies/:id snapshot: lobby fields, clock offset, positions and who is already out. */
-export function applySnapshot(s: MatchState, snap: Snapshot, receivedAtMs: number, clockNow: number): MatchState {
+const STATUS_ORDER: Record<LobbyStatus, number> = { open: 0, countdown: 1, live: 2, settling: 3, settled: 4, cancelled: 5 };
+
+/**
+ * Merge a GET /lobbies/:id snapshot: lobby fields, clock offset, positions and who is already out.
+ * `lobbyNewer`: a `lobby` frame arrived after the request was sent, so the snapshot's status, players, times and pot
+ * may be older than what the stream already applied; they are then kept unless the snapshot's status is further along.
+ */
+export function applySnapshot(s: MatchState, snap: Snapshot, receivedAtMs: number, clockNow: number, lobbyNewer = false): MatchState {
+  if (s.lobbyId !== null && snap.lobbyId !== s.lobbyId) return s; // a different lobby: not ours
   s.seq++;
   if (typeof snap.now === "number") s.serverOffsetMs = snap.now - receivedAtMs;
   s.lobbyId = snap.lobbyId;
-  s.status = snap.status;
-  s.players = snap.players.map((p) => ({ player: p.player, callsign: p.callsign, bot: p.bot }));
-  s.startsAt = snap.startsAt;
-  s.endTime = snap.endTime;
+  if (!lobbyNewer || s.status === null || STATUS_ORDER[snap.status] > STATUS_ORDER[s.status]) {
+    s.status = snap.status;
+    s.players = snap.players.map((p) => ({ player: p.player, callsign: p.callsign, bot: p.bot }));
+    s.startsAt = snap.startsAt;
+    s.endTime = snap.endTime;
+    s.potUnits = snap.potUnits;
+  }
   if (snap.preset) s.preset = snap.preset;
-  s.potUnits = snap.potUnits;
   s.duration = durationOf(s);
   if (snap.tick && (!s.tick || snap.tick.t >= s.tick.t)) applyEvent(s, { ...snap.tick, type: "tick" });
   if (snap.leaderboard && (!s.board || snap.leaderboard.t >= s.board.t)) applyEvent(s, { ...snap.leaderboard, type: "leaderboard" });
@@ -337,15 +346,20 @@ export function useMatch(): Match {
     let retry: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
     let gen = 0;
+    let lobbyFrames = 0; // `lobby` frames applied so far, to tell whether one landed while a snapshot was in flight
+    let snapshotGen = -1; // the connection generation whose snapshot has been requested
 
-    const loadSnapshot = async (g: number) => {
+    // Called on the first `lobby` frame of each connection, with that frame's lobby id (never `current`, which may
+    // already point at the next lobby).
+    const loadSnapshot = async (g: number, id: number) => {
       try {
         const t0 = Date.now();
-        const r = await fetch(`${engineHttp()}/lobbies/${s.lobbyId ?? "current"}`, { cache: "no-store" });
+        const framesAtRequest = lobbyFrames;
+        const r = await fetch(`${engineHttp()}/lobbies/${id}`, { cache: "no-store" });
         if (!r.ok || g !== gen) return;
         const snap = (await r.json()) as Snapshot;
         if (g !== gen) return;
-        applySnapshot(s, snap, (t0 + Date.now()) / 2, clock());
+        applySnapshot(s, snap, (t0 + Date.now()) / 2, clock(), lobbyFrames !== framesAtRequest);
         publish(s);
       } catch {
         /* the WebSocket stream still works without it */
@@ -364,7 +378,6 @@ export function useMatch(): Match {
           s.error = null;
           publish(s);
         }
-        void loadSnapshot(g);
       };
       ws.onclose = () => {
         if (g !== gen) return;
@@ -380,7 +393,16 @@ export function useMatch(): Match {
         if (g !== gen) return;
         try {
           const ev = JSON.parse(String(m.data)) as MatchEvent;
+          if (ev.type === "lobby" && s.lobbyId !== null && typeof ev.lobbyId === "number" && ev.lobbyId !== s.lobbyId) return;
           applyEvent(s, ev, clock());
+          if (ev.type === "lobby") {
+            lobbyFrames++;
+            const id = typeof ev.lobbyId === "number" ? ev.lobbyId : s.lobbyId;
+            if (snapshotGen !== g && id !== null) {
+              snapshotGen = g;
+              void loadSnapshot(g, id);
+            }
+          }
           if (ev.type === "tick") {
             lastT = ev.t;
             lastAt = performance.now();
