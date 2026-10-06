@@ -1,5 +1,6 @@
 // Usage: tsx scripts/score-fixture.ts <book> <prices> <potUnits> <feeBps> <chainSelector>
 // Prints {winners, amounts, bookHash, report} as one line of JSON.
+// Royale book (no mode) or predict book (mode "predict": the settlement price is prices[params.market]).
 import { readFileSync } from "node:fs";
 
 import type { Prices } from "../../shared/scoring.ts";
@@ -13,7 +14,8 @@ if (!bookPath || !pricesPath || !pot || !fee || !selector) {
 
 const rawBook = new Uint8Array(readFileSync(bookPath));
 const prices = JSON.parse(readFileSync(pricesPath, "utf8")) as Prices;
-const out = buildReport(rawBook, prices, BigInt(pot), BigInt(fee), BigInt(selector));
+// No chain here: onchain is null, so buildReport skips the on-chain lobby check.
+const out = buildReport(rawBook, prices, BigInt(pot), BigInt(fee), BigInt(selector), null);
 
 console.log(
   JSON.stringify({

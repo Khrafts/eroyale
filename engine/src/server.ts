@@ -342,11 +342,9 @@ async function settle(m: { chainError: string | null }, l: Settles, marks: Price
   const book = books.get(l.id)!;
   // `pot` is the on-chain pot `final` was computed from; once Live it cannot change, so this is the report's pot too.
   if (onchain.pot !== pot && onchain.status !== LOBBY_SETTLED) throw new Error(`on-chain pot moved from ${pot} to ${onchain.pot} after final`);
-  // Every lobby passes the on-chain values (6th argument, per predict-contracts): buildReport checks a predict book's
-  // creator and creator fee (and a royale book's absence of them) against the escrow. Cast so this compiles against
-  // either workflow version.
-  const build = buildReport as (...a: unknown[]) => ReturnType<typeof buildReport>;
-  const r = build(new TextEncoder().encode(book), marks, pot, FEE_BPS, BigInt(CHAIN_SELECTOR),
+  // Every lobby passes the on-chain values: buildReport checks a predict book's creator, fee, entry and player count
+  // (and a royale book's absence of a creator) against the escrow.
+  const r = buildReport(new TextEncoder().encode(book), marks, pot, FEE_BPS, BigInt(CHAIN_SELECTOR),
     { creator: onchain.creator, creatorFeeBps: onchain.creatorFeeBps, entry: onchain.entry, playerCount: onchain.playerCount });
   if (BigInt(r.lobbyId) !== BigInt(l.id)) throw new Error(`book lobbyId ${r.lobbyId} != ${l.id}`);
   const done = (hash: string) => {
