@@ -428,16 +428,20 @@ function saveCreatorNonce(creator: string, nonce: bigint) {
 
 /**
  * Cancel a round on chain (refunds every entry). Retries with backoff; an escrow that already says Cancelled is done.
- * Returns the line for chainError.
+ * Once the escrow is Cancelled (or an Open lobby holds no entries) it appends {"in":"cancel-done"} to the round's log,
+ * so a restart retries any round whose log has `cancelled` without it. Returns the line for chainError.
  */
-async function cancelOnChain(id: number, why: string): Promise<string> {
+async function cancelOnChain(id: number, why: string, logFile: string): Promise<string> {
+  const done = (line: string, tx: string | null) => { record({ logFile }, { in: "cancel-done", tx }); return line; };
   for (let n = 1; ; n++) {
     try {
       const l = await chain.getLobby(id);
-      if (l.status === LOBBY_CANCELLED) return `${why}; cancelled on chain`;
+      if (l.status === LOBBY_CANCELLED) return done(`${why}; cancelled on chain`, null);
       if (l.status !== LOBBY_OPEN && l.status !== LOBBY_LIVE) return `${why}; escrow status ${l.status}, not cancellable`;
+      // An empty Open lobby holds no money: nothing to refund, no transaction.
+      if (l.status === LOBBY_OPEN && l.playerCount === 0) return done(`${why}; no entries on chain, nothing to refund`, null);
       const tx = await chain.cancel(id);
-      return `${why}; cancelled on chain, entries refunded (${tx})`;
+      return done(`${why}; cancelled on chain, entries refunded (${tx})`, tx);
     } catch (e) {
       if (n >= 12) return `${why}; cancel failed ${n} times: ${failReason(e)}`.slice(0, 500);
       const wait = Math.min(60, 2 ** n);
@@ -597,7 +601,7 @@ async function onRoundLocked(m: RoundMatch) {
   if (!chain.on) return;
   await m.starting;
   if (r.status !== "cancelled") return;
-  m.chainError = await cancelOnChain(r.id, r.cancelReason ?? "cancelled");
+  m.chainError = await cancelOnChain(r.id, r.cancelReason ?? "cancelled", m.logFile);
   log(`[round ${r.id}] ${m.chainError}`);
 }
 
@@ -614,7 +618,7 @@ async function finishRound(m: RoundMatch) {
     if (l.playerCount !== r.players.length || l.pot !== r.potUnits || l.entry !== r.entryUnits) {
       r.cancel(`escrow has ${l.playerCount} players and pot ${l.pot}, the book ${r.players.length} and ${r.potUnits}`);
       record(m, { in: "cancel", why: r.cancelReason });
-      m.chainError = await cancelOnChain(r.id, r.cancelReason!);
+      m.chainError = await cancelOnChain(r.id, r.cancelReason!, m.logFile);
       log(`[round ${r.id}] ${m.chainError}`);
       return;
     }
@@ -729,7 +733,8 @@ function listRounds() {
 /**
  * Rounds are not replayed after a restart. Any round whose log has no settled or cancelled event is closed out:
  * a round that already reached `final` is settled from its stored book; any other is marked cancelled (a cancelled
- * event appended to its log) and, with the chain on, cancelled on chain so every entry is refunded.
+ * event appended to its log) and, with the chain on, cancelled on chain so every entry is refunded. A round whose log
+ * has `cancelled` but no `cancel-done` is cancelled on chain again if the escrow still says Open or Live.
  */
 async function recoverRounds() {
   const files = readdirSync(DATA).filter((f) => /^round-\d+\.jsonl$/.test(f));
@@ -737,7 +742,16 @@ async function recoverRounds() {
     const id = Number(/\d+/.exec(f)![0]);
     const file = resolve(DATA, f);
     const lines = readFileSync(file, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
-    if (lines.some((x) => x.type === "settled" || x.type === "cancelled")) continue;
+    if (lines.some((x) => x.type === "settled")) continue;
+    if (lines.some((x) => x.type === "cancelled")) {
+      // Cancelled here, but the on-chain cancel never confirmed (gave up, or the engine stopped first): try again.
+      if (chain.on && !lines.some((x) => x.in === "cancel-done")) {
+        const reason = lines.find((x) => x.type === "cancelled")?.reason ?? "cancelled";
+        log(`[round ${id}] restart: cancelled before the restart, cancel not confirmed on chain; retrying`);
+        log(`[round ${id}] ${await cancelOnChain(id, reason, file)}`);
+      }
+      continue;
+    }
     const final = lines.find((x) => x.type === "final");
     const fin = lines.find((x) => x.in === "final");
     const book = books.get(id);
@@ -757,7 +771,7 @@ async function recoverRounds() {
     const reason = "engine restarted mid-round";
     appendFileSync(file, JSON.stringify({ type: "cancelled", lobbyId: id, reason }) + "\n");
     log(`[round ${id}] restart: cancelled (${reason})`);
-    if (chain.on) log(`[round ${id}] ${await cancelOnChain(id, reason)}`);
+    if (chain.on) log(`[round ${id}] ${await cancelOnChain(id, reason, file)}`);
   }
 }
 
