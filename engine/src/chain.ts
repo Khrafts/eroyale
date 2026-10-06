@@ -4,7 +4,7 @@ import { BaseError, ContractFunctionRevertedError, HttpRequestError, numberToHex
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, foundry, sepolia } from "viem/chains";
 
-export type OnchainLobby = { status: number; endTime: bigint; pot: bigint; playerCount: number };
+export type OnchainLobby = { status: number; endTime: bigint; pot: bigint; playerCount: number; entry: bigint; creator: string; creatorFeeBps: number };
 export const LOBBY_OPEN = 1; // IRoyaleEscrow.Status.Open
 export const LOBBY_LIVE = 2; // IRoyaleEscrow.Status.Live
 export const LOBBY_SETTLED = 3; // IRoyaleEscrow.Status.Settled
@@ -55,7 +55,7 @@ const ESCROW_ABI = parseAbi([
   "function start(uint256 id)",
   "function cancel(uint256 id)",
   "function settleFallback(bytes report)",
-  "struct Lobby { uint8 status; uint16 maxPlayers; uint32 duration; uint64 startTime; uint64 endTime; uint96 entry; uint32 playerCount; uint256 pot; bytes32 bookHash; }",
+  "struct Lobby { uint8 status; uint16 maxPlayers; uint32 duration; uint64 startTime; uint64 endTime; uint96 entry; uint32 playerCount; uint256 pot; bytes32 bookHash; address creator; uint16 creatorFeeBps; }",
   "function getLobby(uint256 id) view returns (Lobby)",
   // Errors from contracts/src/interfaces/IRoyaleEscrow.sol, so reverts decode to a name.
   "error LobbyNotOpen(uint256 id)", "error LobbyNotLive(uint256 id)", "error AlreadyJoined(uint256 id, address player)",
@@ -270,7 +270,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
     cancel: (id) => serial(async () => (await send(owner, "cancel", [BigInt(id)])).hash),
     getLobby: async (id) => {
       const l = await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [BigInt(id)] });
-      return { status: l.status, endTime: l.endTime, pot: l.pot, playerCount: l.playerCount };
+      return { status: l.status, endTime: l.endTime, pot: l.pot, playerCount: l.playerCount, entry: l.entry, creator: l.creator, creatorFeeBps: l.creatorFeeBps };
     },
     blockTime: async () => (await pub.getBlock({ blockTag: "latest" })).timestamp,
     settleFallback: (report) => serial(async () => (await send(owner, "settleFallback", [report])).hash),

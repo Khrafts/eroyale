@@ -16,6 +16,9 @@ contract RoyaleEscrow is IRoyaleEscrow, ReceiverTemplate {
     /// @inheritdoc IRoyaleEscrow
     uint256 public constant FEE_BPS = 500;
 
+    /// @inheritdoc IRoyaleEscrow
+    uint16 public constant MAX_CREATOR_FEE_BPS = 500;
+
     uint256 internal constant _BPS = 10_000;
 
     uint16 internal constant _MIN_PLAYERS = 4;
@@ -70,18 +73,31 @@ contract RoyaleEscrow is IRoyaleEscrow, ReceiverTemplate {
 
     /// @inheritdoc IRoyaleEscrow
     function createLobby(uint32 duration, uint96 entry, uint16 maxPlayers) external onlyOwner returns (uint256 id) {
-        if (duration == 0 || entry == 0) revert InvalidLobbyConfig();
-        if (maxPlayers < _MIN_PLAYERS || maxPlayers > _MAX_PLAYERS) revert InvalidLobbyConfig();
+        return _createLobby(duration, entry, maxPlayers);
+    }
 
-        id = ++lobbyCount;
+    /// @inheritdoc IRoyaleEscrow
+    function createRound(
+        uint32 duration,
+        uint96 entry,
+        uint16 maxPlayers,
+        address creator,
+        uint16 creatorFeeBps
+    ) external onlyOwner returns (uint256 id) {
+        if (creatorFeeBps > MAX_CREATOR_FEE_BPS) revert CreatorFeeTooHigh(creatorFeeBps, MAX_CREATOR_FEE_BPS);
+        if (creator == address(0) && creatorFeeBps != 0) revert ZeroCreatorWithFee(creatorFeeBps);
+
+        // A round without a creator settles against the royale budget floor(pot * 9500 / 10000). That equals
+        // predictSettle's pot - floor(pot * 500 / 10000) only when pot % 20 == 0, which entry % 20 == 0 guarantees.
+        if (creator == address(0) && entry % 20 != 0) revert InvalidLobbyConfig();
+
+        id = _createLobby(duration, entry, maxPlayers);
 
         Lobby storage lobby = _lobbies[id];
-        lobby.status = Status.Open;
-        lobby.duration = duration;
-        lobby.entry = entry;
-        lobby.maxPlayers = maxPlayers;
+        lobby.creator = creator;
+        lobby.creatorFeeBps = creatorFeeBps;
 
-        emit LobbyCreated(id, duration, entry, maxPlayers);
+        emit RoundCreated(id, creator, creatorFeeBps);
     }
 
     /// @inheritdoc IRoyaleEscrow
@@ -189,7 +205,14 @@ contract RoyaleEscrow is IRoyaleEscrow, ReceiverTemplate {
         }
 
         uint256 pot = lobby.pot;
-        uint256 budget = (pot * (_BPS - FEE_BPS)) / _BPS;
+        address creator = lobby.creator;
+        uint256 creatorFee = (pot * lobby.creatorFeeBps) / _BPS;
+
+        // Without a creator: floor(pot * 9500 / 10000), as shared/scoring.ts settle() computes it.
+        // With a creator: pot - floor(pot * 500 / 10000) - creatorFee, as predictSettle() computes it.
+        uint256 budget = creator == address(0)
+            ? (pot * (_BPS - FEE_BPS)) / _BPS
+            : pot - (pot * FEE_BPS) / _BPS - creatorFee;
         uint256 total;
 
         for (uint256 i; i < amounts.length; ++i) {
@@ -202,13 +225,30 @@ contract RoyaleEscrow is IRoyaleEscrow, ReceiverTemplate {
         lobby.bookHash = bookHash;
         lobby.pot = 0;
 
+        _transfer(creator, creatorFee);
+
         for (uint256 i; i < winners.length; ++i) {
             _transfer(winners[i], amounts[i]);
         }
 
-        _transfer(treasury, pot - total);
+        _transfer(treasury, pot - creatorFee - total);
 
         emit Settled(id, bookHash);
+    }
+
+    function _createLobby(uint32 duration, uint96 entry, uint16 maxPlayers) internal returns (uint256 id) {
+        if (duration == 0 || entry == 0) revert InvalidLobbyConfig();
+        if (maxPlayers < _MIN_PLAYERS || maxPlayers > _MAX_PLAYERS) revert InvalidLobbyConfig();
+
+        id = ++lobbyCount;
+
+        Lobby storage lobby = _lobbies[id];
+        lobby.status = Status.Open;
+        lobby.duration = duration;
+        lobby.entry = entry;
+        lobby.maxPlayers = maxPlayers;
+
+        emit LobbyCreated(id, duration, entry, maxPlayers);
     }
 
     function _join(uint256 id, address player, address payer) internal {

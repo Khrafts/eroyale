@@ -1,8 +1,8 @@
 <!-- status -->
-Step: 8 of 8 done + spec-checker fixes (write status checks, endTime guards, raw-byte bookHash, floored budget)
-Last gate: contracts -> GATE PASS contracts; workflow -> GATE PASS workflow
-Next: lead deploys to Base Sepolia (commands below), then runs cre workflow simulate
-Blockers: no CRE CLI, RPC_URL or deployer key in this session; nothing deployed or simulated
+Step: Phase 8c spec-check fixes: no-creator rounds need entry % 20 == 0; buildReport onchain arg required (+entry, playerCount)
+Last gate: contracts, workflow, predict-contracts, predict-workflow -> GATE PASS (all four)
+Next: engine/src/server.ts must pass onchain to buildReport before merge (see "For the engine"); lead redeploys the escrow
+Blockers: none; nothing deployed
 <!-- /status -->
 
 # Contracts track notes
@@ -13,6 +13,7 @@ Blockers: no CRE CLI, RPC_URL or deployer key in this session; nothing deployed 
 - `contracts/src/MockUSDC.sol`: 6 decimals, open `mint`.
 - `contracts/src/vendor/`: Chainlink `IReceiver`, `ReceiverTemplate`, `IERC165` copied verbatim from the "Building Consumer Contracts" page, plus the OpenZeppelin v5.4.0 files they need. Sources and commits in `src/vendor/SOURCE.txt`.
 - `contracts/lib/forge-std`: forge-std v1.9.7, committed (no submodule, so the repo root stays untouched).
+- `contracts/test/RoyaleEscrowPredict.t.sol`: the 10 prediction-round tests required by `gates/predict-contracts.sh`. Golden values copied from `gates/fixtures/predict/*.json`.
 - `contracts/test/RoyaleEscrow.t.sol`: the 15 required tests. Golden values are copied from `gates/fixtures/*.json` so the suite runs without `gates/`.
 - `contracts/script/Deploy.s.sol`: deploys MockUSDC (unless `TOKEN_ADDRESS` is set) and RoyaleEscrow, mints `RELAYER_MINT` (default 1,000,000 mUSDC) to the relayer, approves the escrow from the relayer, writes `contracts/deployments/<CHAIN>.json`.
 - `workflow/`: CRE project root and the `royale-settle` workflow folder at once (`project.yaml`, `workflow.yaml`, `config.*.json`, `package.json`). `src/report.ts` is the pure `buildReport`; `src/main.ts` is the handler; `src/prices.ts` builds the Coinbase candle URL and reads the close.
@@ -23,7 +24,10 @@ Blockers: no CRE CLI, RPC_URL or deployer key in this session; nothing deployed 
 - `cancel` works while Open or Live and refunds each entry to whoever paid it (relayer for `joinFor`).
 - `_settle` checks, in order: chain selector; lobby Live; `block.timestamp > endTime`; equal lengths; every winner joined; winners strictly ascending; `sum(amounts) <= floor(pot * (10000 - 500) / 10000)` (same floor as `shared/scoring.ts`). Then status Settled, pot zeroed, bookHash stored, winners paid, `pot - sum` to treasury, `Settled(id, bookHash)`.
 - `settleFallback` is `onlyOwner`; the contract has no mode flag, so "simulated mode only" is an operating rule, not enforced.
-- `getLobby(id)` returns the struct the workflow reads: `(status, maxPlayers, duration, startTime, endTime, entry, playerCount, pot, bookHash)`; status Live = 2.
+- `getLobby(id)` returns the struct the workflow reads: `(status, maxPlayers, duration, startTime, endTime, entry, playerCount, pot, bookHash, creator, creatorFeeBps)`; status Live = 2. `creator` and `creatorFeeBps` were appended in Phase 8; the old 9-field ABI no longer matches the new deploy.
+- `createRound(duration, entry, maxPlayers, creator, creatorFeeBps)`: `onlyOwner`, same range checks as `createLobby`, reverts `CreatorFeeTooHigh(fee, 500)` above `MAX_CREATOR_FEE_BPS`, `ZeroCreatorWithFee(fee)` for a zero creator with a fee, and `InvalidLobbyConfig` for a zero creator with `entry % 20 != 0`. Emits `LobbyCreated` then `RoundCreated(id, creator, creatorFeeBps)`. `createLobby` gives creator 0 and fee 0.
+- Settling a lobby with a creator: `creatorFee = floor(pot * creatorFeeBps / 10000)`, budget `pot - floor(pot * 500 / 10000) - creatorFee` (predictSettle's maths); after status Settled it pays the creator, then winners, then `pot - creatorFee - sum` to the treasury. Without a creator the budget stays `floor(pot * 9500 / 10000)` (royale `settle()` maths), so royale lobbies are byte-for-byte unchanged. The two formulas differ only when `pot % 20 != 0`; `createRound` refuses a creator-less round whose entry is not a multiple of 20 (so its pot always is), and a round with a creator uses the predict formula, so each lobby gets exactly the budget its scorer computes. `createLobby` has no such rule; a predict round must be created with `createRound`.
+- `cancel` on a round refunds every entry; the creator gets nothing.
 
 ## Deploy (lead runs this; not run here)
 
@@ -59,6 +63,35 @@ After every deploy, fill both `workflow/config.staging.json` and `workflow/confi
 - `engineUrl`: the engine's public base URL (`ENGINE_PUBLIC_URL`), no trailing slash.
 - `chainName`: the CRE chain name for the deploy chain (`ethereum-testnet-sepolia-base-1` for Base Sepolia; look up Ethereum Sepolia's in the CRE docs if the cut line moves there).
 
+## Redeploy for prediction rounds (lead runs this; not run here)
+
+The Phase 8 escrow adds `createRound` and two `Lobby` fields, so the live escrow `0x0b533AcE73c79533cE6BBA3EbE2D5e9217B21eF1` must be replaced. Same command as above, with the existing token so balances carry over:
+
+```bash
+cd contracts
+set -a; source ../.env; set +a
+TOKEN_ADDRESS=0x60702429D3679fCCE9FC85E6D24c5dACc21E68F0 forge script script/Deploy.s.sol --rpc-url "$RPC_URL" --broadcast
+cat deployments/$CHAIN.json      # maxCreatorFeeBps: 500 marks the predict build; copy escrow into .env as ESCROW_ADDRESS
+```
+
+Then update `escrowAddress` in `workflow/config.staging.json` and `config.production.json`, and restart the engine with the new `ESCROW_ADDRESS` (its `getLobby` ABI must have the 11 fields). Open lobbies on the old escrow are not migrated: cancel them there first (refunds every entry). `RELAYER_MINT` mints again to the relayer; set `RELAYER_MINT=0` to skip.
+
+Rounds: `cast send "$ESCROW_ADDRESS" "createRound(uint32,uint96,uint16,address,uint16)" <endTime - startTime> 5000000 50 <creator or 0x0> <feeBps> ...`. The engine owns this in normal operation.
+
+## Workflow: prediction books
+
+- `buildReport(rawBook, prices, potUnits, feeBps, chainSelector, onchain: OnchainRound | null)`, `OnchainRound = {creator: string; creatorFeeBps: number; entry: bigint; playerCount: number}` from `getLobby`. The argument is required (omitting it throws at runtime too); only the offline `scripts/score-fixture.ts` passes `null`.
+- No `mode`: royale `settle()`, unchanged; refused if `onchain` carries a creator or fee. `mode: "predict"`: refuses unless `feeBps == params.feeBps` and `potUnits == players.length * params.entryUnits`, and, unless `onchain` is null, unless `params.creator` (null = zero address, lowercased compare), `params.creatorFeeBps` (0 when creator is null), `params.entryUnits == entry` and `players.length == playerCount` (`checkRoundParams`). Settlement price is `prices[params.market]`, then `predictSettle`.
+- Checked by hand: wrong pot, fee, creator, creator fee, entry, player count, a royale book on a creator lobby and an omitted `onchain` each refuse; the golden predict book with matching on-chain values gives the golden amounts.
+- The handler still fetches all three markets' candles for a predict book (one code path); only the round's market is used.
+- Predict books go through the same `endTime` skew check: the engine must `start` a round so the on-chain `endTime` is within 60 s of the book's resolve time.
+
+## For the engine
+
+- `getLobby(uint256)` returns `(uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps)`. viem: `"function getLobby(uint256 id) view returns ((uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps))"`.
+- Every `buildReport` call must pass the on-chain lobby: `{creator: l.creator, creatorFeeBps: Number(l.creatorFeeBps), entry: BigInt(l.entry), playerCount: Number(l.playerCount)}`. `engine/src/server.ts` on main calls it with 5 arguments; that call throws after this branch merges, so the engine change must land with or before it.
+- Create creator-less rounds with an entry that is a multiple of 20 (the protocol's 5_000000 is).
+
 ## Operating rules
 
 - Never call `setForwarderAddress(address(0))`: the vendored ReceiverTemplate then lets anyone call `onReport` with any payout.
@@ -73,7 +106,7 @@ After every deploy, fill both `workflow/config.staging.json` and `workflow/confi
 cd workflow
 curl -s "$ENGINE_PUBLIC_URL/lobbies/1/final" -o /tmp/book.json      # exact bytes, do not reformat
 echo '{"BTC":"...","ETH":"...","SOL":"..."}' > /tmp/prices.json     # closes per CLAUDE.md price source
-POT=$(cast call "$ESCROW_ADDRESS" "getLobby(uint256)((uint8,uint16,uint32,uint64,uint64,uint96,uint32,uint256,bytes32))" 1 --rpc-url "$RPC_URL" | tr -d '()' | cut -d, -f8 | awk '{print $1}')
+POT=$(cast call "$ESCROW_ADDRESS" "getLobby(uint256)((uint8,uint16,uint32,uint64,uint64,uint96,uint32,uint256,bytes32,address,uint16))" 1 --rpc-url "$RPC_URL" | tr -d '()' | cut -d, -f8 | awk '{print $1}')
 REPORT=$(npx tsx scripts/score-fixture.ts /tmp/book.json /tmp/prices.json "$POT" 500 "$CHAIN_SELECTOR" | node -pe 'JSON.parse(require("fs").readFileSync(0)).report')
 cast send "$ESCROW_ADDRESS" "settleFallback(bytes)" "$REPORT" --private-key "$PRIVATE_KEY_DEPLOYER" --rpc-url "$RPC_URL"
 ```
@@ -124,3 +157,15 @@ Each break was made in `RoyaleEscrow.sol`, `bash gates/contracts.sh` run, then r
 | Delete the chain selector check | `[FAIL: next call did not revert as expected] test_RevertWhen_WrongChainSelector()` |
 | Skip the lobby-status check in `_settle` | `[FAIL: Error != expected error: AmountsOverBudget(15000000 [1.5e7], 0) != LobbyNotLive(1)] test_RevertWhen_DoubleSettle()` (the zeroed pot still blocks a second payout) |
 | Pay the fee before winners, each winner one unit less | `[FAIL: assertion failed: 33036936 != 33036937] test_SettleGoldenReport()` and `[FAIL: assertion failed: 12000000 != 12000001] test_SettleHappyPathFeeMaths()` |
+
+## Phase 8 step 3: the predict tests bite
+
+Each break was made in `RoyaleEscrow.sol`, `bash gates/predict-contracts.sh` run, then restored with `git checkout`. None was committed.
+
+| Break | Gate result |
+| --- | --- |
+| Remove the creator-fee cap check in `createRound` | `[FAIL: next call did not revert as expected] test_RevertWhen_CreatorFeeOverCap()`; `GATE FAIL predict-contracts` |
+| Pay the creator after the winners, budget unchanged | `[FAIL: assertion failed: <winner> != <creator>] test_CreatorPaidBeforeWinners()`; `GATE FAIL predict-contracts` |
+| Drop the creator fee from the budget | `[FAIL: next call did not revert as expected] test_BudgetIncludesCreatorFee()`; `GATE FAIL predict-contracts` |
+
+After restoring, `bash gates/predict-contracts.sh` -> `GATE PASS predict-contracts`.
