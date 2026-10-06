@@ -51,6 +51,14 @@ cast send "$ESCROW_ADDRESS" "createLobby(uint32,uint96,uint16)" 120 5000000 50 \
 
 The relayer (engine) then calls `joinFor(id, player)`; the owner calls `start(id)` once 4+ players have joined.
 
+`Deploy.s.sol` refuses any chain id other than 84532 (Base Sepolia), 11155111 (Ethereum Sepolia) or 31337 (anvil).
+
+After every deploy, fill both `workflow/config.staging.json` and `workflow/config.production.json` (they ship with placeholders the workflow cannot run with):
+
+- `escrowAddress`: the new escrow from `deployments/$CHAIN.json`.
+- `engineUrl`: the engine's public base URL (`ENGINE_PUBLIC_URL`), no trailing slash.
+- `chainName`: the CRE chain name for the deploy chain (`ethereum-testnet-sepolia-base-1` for Base Sepolia; look up Ethereum Sepolia's in the CRE docs if the cut line moves there).
+
 ## Operating rules
 
 - Never call `setForwarderAddress(address(0))`: the vendored ReceiverTemplate then lets anyone call `onReport` with any payout.

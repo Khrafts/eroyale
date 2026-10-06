@@ -1,6 +1,6 @@
 ## Status
-- Step: Phase 6 chain-independent part done: settleFallback settlement + `settled`, relayer mint top-up, `npm run e2e` / `e2e:local`.
-- Last gate: engine, contracts, workflow -> GATE PASS. `npm run e2e:local` PASS (3 winners + treasury deltas equal `final`).
+- Step: review fixes: per-escrow data dir, RPC error redaction, cancel on failed start, chain id checks, on-chain pot in `final`, settlement pick-up and deployed-mode deadline.
+- Last gate: `bash gates/all.sh` -> GATE PASS x5. `npm run e2e:local` PASS (3 winners + treasury deltas equal `final`). Stale `data/lobby-1.final.json` not served (404) with the chain on.
 - Next: lead fills .env (RPC_URL, keys, TOKEN/ESCROW after deploy) and runs `npm run e2e` on Base Sepolia.
 - Blockers: no testnet RPC/keys in this session; deployed-mode CRE trigger not wired.
 
@@ -46,7 +46,7 @@ EIP-712, domain `{name: "TradingRoyale", version: "1"}` (no chainId), primary ty
 
 ## Log and replay
 
-`engine/data/lobby-<id>.jsonl` (gitignored), append-only: every event line plus input lines `{"in": "create"|"join"|"countdown"|"tick"|"order"|"final", ...}` (each tick records the marks it used). `--resume` replays the inputs through a fresh lobby (bots are seeded, so they make the same orders), reattaches, and catches up missed ticks with current marks. With `CHAIN=off`, lobby ids continue after the highest id already in `data/`, so a restart never reuses a finished lobby's id. Bot joins record their seat index, so replay rebuilds the same bot even if an earlier seat failed to join.
+`engine/data/lobby-<id>.jsonl` with `CHAIN=off`; with the chain on, `engine/data/<CHAIN>-<escrow address, lowercase>/lobby-<id>.jsonl`, so books, logs and `--resume` are per escrow (a new escrow restarts lobby ids at 1). `ENGINE_DATA_DIR` overrides both. Gitignored, append-only: every event line plus input lines `{"in": "create"|"join"|"countdown"|"tick"|"order"|"final", ...}` (each tick records the marks it used). `--resume` replays the inputs through a fresh lobby (bots are seeded, so they make the same orders), reattaches, and catches up missed ticks with current marks. With `CHAIN=off`, lobby ids continue after the highest id already in `data/`, so a restart never reuses a finished lobby's id. Bot joins record their seat index, so replay rebuilds the same bot even if an earlier seat failed to join.
 
 ## Bot tuning
 
@@ -59,6 +59,9 @@ After `final`, with the chain on, `settle()` in `src/server.ts` runs:
 
 - `SETTLE_MODE=simulated` (default): reads `getLobby` for the on-chain pot and end time, builds the report with `workflow/src/report.ts` `buildReport` from the exact book bytes on disk, the final marks, the on-chain pot, fee 500 bps and `CHAIN_SELECTOR`; waits until the latest block's timestamp is past the on-chain `endTime`; the owner (`PRIVATE_KEY_DEPLOYER`) calls `settleFallback`; on a success receipt, `markSettled` emits `settled {txHash, mode, winners, amounts}`. Retries every 5 s (up to 10), stops as soon as one failure reason (decoded custom error name) repeats; the error is on `chainError`. If the escrow already says Settled, it picks up the `Settled` log instead of sending.
 - `SETTLE_MODE=deployed`: the CRE HTTP trigger is **not wired** (contracts/NOTES.md does not document how to send a signed gateway request). The engine logs that, then polls for the escrow's `Settled(id)` log and emits `settled` with that tx hash once someone triggers `royale-settle` with `{"lobbyId": id}`.
+- Pot: with the chain on, `final`'s provisional payouts and the report both use the escrow's pot (`getLobby`, read once before `final` and passed to settlement), so they agree even if the engine's own count differs.
+- A failed `settleFallback` call checks `getLobby`; if the escrow already says Settled (the tx landed but the call errored), it picks up the `Settled` log and emits `settled`.
+- Deployed mode stops watching for `Settled` after 15 minutes, sets `chainError`, and `--loop` carries on.
 - Not resumed: a lobby restarted after `final` (`--resume` skips finished lobbies) is not settled by the engine; settle it by hand per contracts/NOTES.md.
 
 `CHAIN=anvil` (chain id 31337) is accepted for local runs. `ENGINE_DATA_DIR` moves the log/book store (e2e uses a temp dir: a fresh anvil reuses lobby ids, and a stored book is never rewritten).
@@ -76,7 +79,8 @@ Bot addresses are `keccak256("royale-bot:<seed>:<i>")[12:]`: valid addresses wit
 
 ## Not done / for the lead
 
-- Chain start: `start()` is sent 2 s before `startsAt`, retried every 3 s up to 10 times; failures go to the log and to `chainError` on `GET /lobbies/:id`. A failed `createLobby` at boot is logged and retried every 10 s.
+- Chain start: joins close 7 s before `startsAt`; `start()` is sent 6 s before, retried every second until 1.5 s before `startsAt`. After the last failure the lobby is cancelled (engine first, so it never goes live; then `cancel()` on chain, which refunds every entry); the outcome, or the cancel failure, is on `chainError`. A failed `createLobby` at boot is logged and retried every 10 s.
+- Boot refuses an `RPC_URL` whose chain id is not the configured `CHAIN`'s; `npm run e2e` refuses unless the RPC chain id is 84532, 11155111 or 31337. Errors exposed in logs, join responses and `chainError` go through `failReason` (never the raw message, which carries the RPC URL).
 - `createLobby`, `start`, `cancel`, `settleFallback` are `onlyOwner` (`PRIVATE_KEY_DEPLOYER`); `joinFor` uses `PRIVATE_KEY_RELAYER`. The on-chain lobby id becomes the engine's lobby id.
 - No `cancel` route: a lobby that never reaches 4 players just stays open.
 - Human orders fill at the latest feed price; `t` is the wall-clock offset clamped inside the current tick.
