@@ -1,6 +1,6 @@
 // Relayer: escrow calls through RPC_URL. CHAIN=off turns every call into a no-op so the engine runs before deploy.
 // Owner-only calls (createLobby, start, cancel, settleFallback) use PRIVATE_KEY_DEPLOYER; joinFor uses PRIVATE_KEY_RELAYER.
-import { BaseError, ContractFunctionRevertedError, HttpRequestError, numberToHex, type Transport, InvalidInputRpcError, InvalidParamsRpcError, NonceTooHighError, NonceTooLowError, TimeoutError, createPublicClient, createWalletClient, http, maxUint256, parseAbi, parseAbiItem, type Address, type Hex } from "viem";
+import { BaseError, ContractFunctionRevertedError, HttpRequestError, numberToHex, type Transport, InvalidInputRpcError, InvalidParamsRpcError, NonceTooHighError, NonceTooLowError, TimeoutError, createPublicClient, createWalletClient, http, maxUint256, parseAbi, parseAbiItem, parseEventLogs, type Address, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, foundry, sepolia } from "viem/chains";
 
@@ -23,9 +23,17 @@ export interface Chain {
   blockTime(): Promise<bigint>;
   /** Owner sends the report bytes; resolves to the tx hash once the receipt shows success. */
   settleFallback(report: Hex): Promise<string>;
-  /** Hash of the tx that emitted Settled(id), or null if none yet (searches the last `lookback` blocks). */
-  findSettled(id: number, lookback: bigint): Promise<string | null>;
+  blockNumber(): Promise<bigint>;
+  /**
+   * Hash of the tx that emitted Settled(id) in blocks [from, to] (to defaults to the head), or null. Scans newest
+   * first in windows of LOGS_BLOCK_SPAN blocks (default 10: the RPC plan's eth_getLogs limit). Errors are thrown.
+   */
+  findSettled(id: number, from: bigint, to?: bigint): Promise<string | null>;
+  /** The settlement tx's receipt, checked: success, and the escrow emitted Settled(id). Null while not mined. */
+  settlementReceipt(id: number, hash: Hex): Promise<SettlementReceipt | null>;
 }
+
+export type SettlementReceipt = { ok: boolean; reason: string; bookHash: Hex | null; to: string | null; block: bigint };
 
 /** Replaces every http(s)/ws(s) URL with <rpc>: RPC URLs carry API keys and must never reach a log. */
 export function redact(s: string): string {
@@ -134,7 +142,9 @@ export const offChain: Chain = {
   getLobby: async () => { throw new Error("CHAIN=off"); },
   blockTime: async () => { throw new Error("CHAIN=off"); },
   settleFallback: async () => { throw new Error("CHAIN=off"); },
+  blockNumber: async () => { throw new Error("CHAIN=off"); },
   findSettled: async () => null,
+  settlementReceipt: async () => null,
 };
 
 function need(env: NodeJS.ProcessEnv, k: string): string {
@@ -220,22 +230,8 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       await sleep(500);
     }
   }
-  /** getLobby in the Prediction-mode layout; an escrow deployed before it answers in the old one (no creator, fee 0). */
-  let v1 = false;
-  async function readLobby(id: bigint): Promise<OnchainLobby> {
-    if (!v1) {
-      try {
-        const l = await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [id] });
-        return { status: l.status, endTime: l.endTime, pot: l.pot, entry: l.entry, playerCount: l.playerCount, creator: l.creator.toLowerCase(), creatorFeeBps: l.creatorFeeBps };
-      } catch (e) {
-        if (!(e instanceof BaseError) || !/decod|data size|out of bounds|position/i.test(e.message)) throw e;
-        v1 = true;
-        log("[chain] escrow getLobby has the pre-prediction layout; reading creator as zero");
-      }
-    }
-    const l = await pub.readContract({ address: escrow, abi: GET_LOBBY_V1, functionName: "getLobby", args: [id] });
-    return { status: l.status, endTime: l.endTime, pot: l.pot, entry: l.entry, playerCount: l.playerCount, creator: ZERO_ADDRESS, creatorFeeBps: 0 };
-  }
+  const reads = escrowReader(pub as unknown as PublicClient, escrow, env, log);
+  const readLobby = (id: bigint) => reads.getLobby(Number(id));
   const lobbyStatus = async (id: bigint) => (await readLobby(id)).status;
 
   async function send(wallet: typeof owner, fn: EscrowFn, args: readonly unknown[]) {
@@ -303,13 +299,60 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       return hash;
     }),
     cancel: (id) => serial(async () => (await send(owner, "cancel", [BigInt(id)])).hash),
+    settleFallback: (report) => serial(async () => (await send(owner, "settleFallback", [report])).hash),
+    ...reads,
+  };
+}
+
+export type EscrowReads = Pick<Chain, "getLobby" | "blockTime" | "blockNumber" | "findSettled" | "settlementReceipt">;
+
+/** Read-only escrow access (no keys): shared by the engine's Chain and scripts/cre-settler.mts. */
+export function escrowReader(pub: PublicClient, escrow: Address, env: NodeJS.ProcessEnv, log: (m: string) => void): EscrowReads {
+  // eth_getLogs block window. The Base Sepolia RPC plan in use refuses more than 10 blocks per call.
+  const LOGS_SPAN = BigInt(env.LOGS_BLOCK_SPAN ?? 10);
+  if (LOGS_SPAN < 1n) throw new Error("LOGS_BLOCK_SPAN must be at least 1");
+  /** getLobby in the Prediction-mode layout; an escrow deployed before it answers in the old one (no creator, fee 0). */
+  let v1 = false;
+  async function readLobby(id: bigint): Promise<OnchainLobby> {
+    if (!v1) {
+      try {
+        const l = await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [id] });
+        return { status: l.status, endTime: l.endTime, pot: l.pot, entry: l.entry, playerCount: l.playerCount, creator: l.creator.toLowerCase(), creatorFeeBps: l.creatorFeeBps };
+      } catch (e) {
+        if (!(e instanceof BaseError) || !/decod|data size|out of bounds|position/i.test(e.message)) throw e;
+        v1 = true;
+        log("[chain] escrow getLobby has the pre-prediction layout; reading creator as zero");
+      }
+    }
+    const l = await pub.readContract({ address: escrow, abi: GET_LOBBY_V1, functionName: "getLobby", args: [id] });
+    return { status: l.status, endTime: l.endTime, pot: l.pot, entry: l.entry, playerCount: l.playerCount, creator: ZERO_ADDRESS, creatorFeeBps: 0 };
+  }
+  return {
     getLobby: (id) => readLobby(BigInt(id)),
     blockTime: async () => (await pub.getBlock({ blockTag: "latest" })).timestamp,
-    settleFallback: (report) => serial(async () => (await send(owner, "settleFallback", [report])).hash),
-    findSettled: async (id, lookback) => {
-      const to = await pub.getBlockNumber();
-      const logs = await pub.getLogs({ address: escrow, event: SETTLED_EVENT, args: { id: BigInt(id) }, fromBlock: to > lookback ? to - lookback : 0n, toBlock: to });
-      return logs.length ? logs[logs.length - 1].transactionHash : null;
+    blockNumber: () => pub.getBlockNumber(),
+    findSettled: async (id, from, to) => {
+      const head = to ?? await pub.getBlockNumber();
+      for (let hi = head; hi >= from && hi >= 0n; hi -= LOGS_SPAN) {
+        const lo = hi - LOGS_SPAN + 1n > from ? hi - LOGS_SPAN + 1n : from;
+        const logs = await pub.getLogs({ address: escrow, event: SETTLED_EVENT, args: { id: BigInt(id) }, fromBlock: lo, toBlock: hi });
+        if (logs.length) return logs[logs.length - 1].transactionHash;
+      }
+      return null;
+    },
+    settlementReceipt: async (id, hash) => {
+      const rc = await pub.getTransactionReceipt({ hash }).catch((e) => {
+        if (e instanceof BaseError && /not be found|not found/i.test(e.message)) return null;
+        throw e;
+      });
+      if (!rc) return null;
+      const to = rc.to ? rc.to.toLowerCase() : null;
+      if (rc.status !== "success") return { ok: false, reason: `tx ${hash} reverted`, bookHash: null, to, block: rc.blockNumber };
+      const ev = parseEventLogs({ abi: [SETTLED_EVENT], logs: rc.logs })
+        .find((l) => l.address.toLowerCase() === escrow.toLowerCase() && l.args.id === BigInt(id));
+      // A Keystone forwarder tx succeeds even when the receiver reverts, so success alone proves nothing.
+      if (!ev) return { ok: false, reason: `tx ${hash} succeeded but the escrow emitted no Settled(${id})`, bookHash: null, to, block: rc.blockNumber };
+      return { ok: true, reason: "", bookHash: ev.args.bookHash, to, block: rc.blockNumber };
     },
   };
 }

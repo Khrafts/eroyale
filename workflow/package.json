@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "score-fixture": "tsx scripts/score-fixture.ts"
+    "score-fixture": "tsx scripts/score-fixture.ts",
+    "check-size": "tsx scripts/check-observation-size.ts"
   },
   "dependencies": {
     "@chainlink/cre-sdk": "^1.23.0",

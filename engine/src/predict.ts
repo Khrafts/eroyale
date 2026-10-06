@@ -3,7 +3,7 @@
 import { fromCents, predictSettle, toCents } from "../../shared/scoring.ts";
 import type { Market, PredictBook, PredictParams, Prediction, Split } from "../../shared/scoring.ts";
 import { keccak256, toBytes } from "viem";
-import { FEE_BPS, MARKETS, TICKS_PER_SEC, type EngineEvent } from "./types.ts";
+import { FEE_BPS, MARKETS, TICKS_PER_SEC, type EngineEvent, type SettleVia } from "./types.ts";
 
 export type { PredictParams, Split };
 export type RoundStatus = "open" | "live" | "settling" | "settled" | "cancelled";
@@ -281,9 +281,9 @@ export class PredictRound {
     return final;
   }
 
-  markSettled(txHash: string, mode: "deployed" | "simulated", winners: string[], amounts: string[]) {
+  markSettled(txHash: string, mode: "deployed" | "simulated", via: SettleVia, winners: string[], amounts: string[]) {
     this.status = "settled";
-    this.emit({ type: "settled", lobbyId: this.id, txHash, mode, winners, amounts });
+    this.emit({ type: "settled", lobbyId: this.id, txHash, mode, via, winners, amounts });
     this.emitLobby();
   }
 

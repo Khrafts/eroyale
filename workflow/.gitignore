@@ -1,1 +1,4 @@
 node_modules/
+src/.cre_build_tmp.js
+*.wasm
+config.run-*.json
