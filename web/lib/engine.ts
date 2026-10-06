@@ -128,3 +128,89 @@ export async function signOrder(acct: PrivateKeyAccount, lobbyId: number, order:
 export async function sendOrder(acct: PrivateKeyAccount, lobbyId: number, order: Order, serverOffsetMs = 0) {
   return post("/orders", await signOrder(acct, lobbyId, order, serverOffsetMs));
 }
+
+// ---------- Prediction mode (CLAUDE.md "Prediction mode" > "Signed messages"), same domain as orders ----------
+export const CREATE_ROUND_TYPES = {
+  CreateRound: [
+    { name: "creator", type: "address" },
+    { name: "market", type: "string" },
+    { name: "entryUnits", type: "uint256" },
+    { name: "maxPlayers", type: "uint16" },
+    { name: "lockAfter", type: "uint32" },
+    { name: "resolveAfter", type: "uint32" },
+    { name: "winnerBps", type: "uint16" },
+    { name: "split", type: "string" },
+    { name: "creatorFeeBps", type: "uint16" },
+    { name: "nonce", type: "uint256" },
+  ],
+} as const;
+export const PREDICTION_TYPES = {
+  Prediction: [
+    { name: "lobbyId", type: "uint256" },
+    { name: "player", type: "address" },
+    { name: "price", type: "string" },
+    { name: "nonce", type: "uint256" },
+  ],
+} as const;
+
+/** The body of POST /rounds `params`. entryUnits is a 6-decimal integer string. */
+export type CreateRoundParams = {
+  creator: string;
+  market: Market;
+  entryUnits: string;
+  maxPlayers: number;
+  lockAfter: number;
+  resolveAfter: number;
+  winnerBps: number;
+  split: "equal" | "linear" | "steep";
+  creatorFeeBps: number;
+};
+
+const PRICE = /^\d+\.\d{2}$/;
+
+export async function signCreateRound(acct: PrivateKeyAccount, p: Omit<CreateRoundParams, "creator">) {
+  const creator = acct.address.toLowerCase() as `0x${string}`;
+  const nonce = nextNonce(creator, Date.now());
+  const params: CreateRoundParams = { ...p, creator };
+  const signature = await acct.signTypedData({
+    domain: DOMAIN,
+    types: CREATE_ROUND_TYPES,
+    primaryType: "CreateRound",
+    message: {
+      creator,
+      market: p.market,
+      entryUnits: BigInt(p.entryUnits),
+      maxPlayers: p.maxPlayers,
+      lockAfter: p.lockAfter,
+      resolveAfter: p.resolveAfter,
+      winnerBps: p.winnerBps,
+      split: p.split,
+      creatorFeeBps: p.creatorFeeBps,
+      nonce,
+    },
+  });
+  return { params, nonce: nonce.toString(), signature };
+}
+
+export async function createRound(acct: PrivateKeyAccount, p: Omit<CreateRoundParams, "creator">) {
+  return post("/rounds", await signCreateRound(acct, p));
+}
+
+/** `price` must be a positive 2-decimal string; anything else throws before signing. */
+export async function signPrediction(acct: PrivateKeyAccount, lobbyId: number, price: string, serverOffsetMs = 0) {
+  if (!PRICE.test(price) || /^0+\.00$/.test(price)) throw new Error(`Not a price: ${price}`);
+  const player = acct.address.toLowerCase() as `0x${string}`;
+  const ts = Math.round(Date.now() + serverOffsetMs);
+  const nonce = nextNonce(player, ts);
+  const signature = await acct.signTypedData({
+    domain: DOMAIN,
+    types: PREDICTION_TYPES,
+    primaryType: "Prediction",
+    message: { lobbyId: BigInt(lobbyId), player, price, nonce },
+  });
+  return { lobbyId, player, price, nonce: nonce.toString(), ts, signature };
+}
+
+export async function sendPrediction(acct: PrivateKeyAccount, lobbyId: number, price: string, serverOffsetMs = 0) {
+  return post("/predictions", await signPrediction(acct, lobbyId, price, serverOffsetMs));
+}

@@ -11,14 +11,19 @@ import type {
   LobbyPlayer,
   LobbyStatus,
   Market,
+  LockedEvent,
   MatchEvent,
+  PredictFinalEvent,
+  PtickEvent,
+  RoundEvent,
   SettledEvent,
   Side,
   TickEvent,
   WarningEvent,
 } from "./events";
-import { presetOf } from "./events";
+import { isPredictFinal, presetOf } from "./events";
 import { MOCK_END, MOMENTS, mockMatch } from "../mocks/match";
+import { PREDICT_MOMENTS, PROTOCOL_LOBBY, PREDICT_OPEN_AT, mockPredict } from "../mocks/predict";
 import { engineHttp } from "./engineUrl";
 
 export type MatchState = {
@@ -53,6 +58,23 @@ export type MatchState = {
   t: number;
   /** Increments on every applied event; cheap change detector for canvas loops. */
   seq: number;
+
+  // ---------- prediction lobbies (all null/empty on a royale lobby) ----------
+  mode: "royale" | "predict";
+  round: RoundEvent | null;
+  /** How many players have a prediction (the `predicted` count, or every locked prediction). */
+  predictedCount: number;
+  locked: LockedEvent | null;
+  ptick: PtickEvent | null;
+  prevPtick: PtickEvent | null;
+  /** The round market's price over time, unix seconds: `mark` events before the lock, every ptick after. */
+  path: { u: number; p: number }[];
+  /** Unix seconds of predict-event t = 0 (the round's open). */
+  tOrigin: number | null;
+  pfinal: PredictFinalEvent | null;
+  /** Clock value (unix seconds in predict mode) when `pfinal` arrived. */
+  pfinalT: number | null;
+  cancelled: boolean;
 };
 
 export const emptyState = (lobbyId: number | null = null): MatchState => ({
@@ -80,7 +102,28 @@ export const emptyState = (lobbyId: number | null = null): MatchState => ({
   error: null,
   t: 0,
   seq: 0,
+  mode: "royale",
+  round: null,
+  predictedCount: 0,
+  locked: null,
+  ptick: null,
+  prevPtick: null,
+  path: [],
+  tOrigin: null,
+  pfinal: null,
+  pfinalT: null,
+  cancelled: false,
 });
+
+const PATH_MAX = 4000;
+function pushPath(s: MatchState, u: number, p: number) {
+  const last = s.path[s.path.length - 1];
+  if (last && u <= last.u) {
+    if (u === last.u) last.p = p;
+    return;
+  }
+  s.path = s.path.length >= PATH_MAX ? [...s.path.slice(-PATH_MAX + 1), { u, p }] : [...s.path, { u, p }];
+}
 
 const durationOf = (s: MatchState) =>
   s.startsAt !== null && s.endTime !== null && s.endTime > s.startsAt ? s.endTime - s.startsAt : presetOf(s.preset).duration;
@@ -89,7 +132,38 @@ const durationOf = (s: MatchState) =>
 export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): MatchState {
   s.seq++;
   switch (ev.type) {
+    case "round":
+      s.mode = "predict";
+      s.round = ev;
+      s.lobbyId = ev.lobbyId;
+      break;
+    case "predicted":
+      s.mode = "predict";
+      s.predictedCount = Math.max(s.predictedCount, ev.count);
+      if (s.tOrigin === null) s.tOrigin = at - ev.t;
+      break;
+    case "locked":
+      s.mode = "predict";
+      s.locked = ev;
+      s.predictedCount = ev.predictions.length;
+      s.tOrigin = s.round ? s.round.lockTime - ev.t : at - ev.t;
+      break;
+    case "ptick":
+      s.mode = "predict";
+      if (s.tOrigin === null) s.tOrigin = s.round ? s.round.lockTime - (s.locked?.t ?? ev.t) : at - ev.t;
+      s.prevPtick = s.ptick;
+      s.ptick = ev;
+      pushPath(s, s.tOrigin + ev.t, Number(ev.mark));
+      break;
+    case "mark":
+      pushPath(s, ev.at, Number(ev.mark));
+      break;
+    case "cancelled":
+      s.cancelled = true;
+      s.status = "cancelled";
+      break;
     case "lobby":
+      if (ev.mode === "predict") s.mode = "predict";
       s.status = ev.status;
       s.players = ev.players;
       s.startsAt = ev.startsAt ?? null;
@@ -126,6 +200,12 @@ export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): Mat
       for (const p of ev.players) delete s.positions[p.player];
       break;
     case "final":
+      if (isPredictFinal(ev)) {
+        s.mode = "predict";
+        if (!s.pfinal) s.pfinalT = at;
+        s.pfinal = ev;
+        break;
+      }
       if (!s.final) s.finalT = at;
       s.final = ev;
       break;
@@ -221,12 +301,70 @@ export function applySnapshot(s: MatchState, snap: Snapshot, receivedAtMs: numbe
   return s;
 }
 
+/** GET /lobbies/:id for a predict lobby (prices only after the lock). */
+type PredictSnapshot = {
+  lobbyId: number;
+  mode: "predict";
+  protocol?: boolean;
+  status: LobbyStatus;
+  params: RoundEvent["params"];
+  lockTime: number;
+  endTime: number;
+  potUnits: string;
+  players: { player: string; callsign: string; bot: boolean; predicted?: boolean }[];
+  predictedCount?: number;
+  mark?: string | null;
+  now?: number;
+  locked?: LockedEvent | null;
+  ptick?: PtickEvent | null;
+  final?: PredictFinalEvent | null;
+  settled?: SettledEvent | null;
+};
+
+export function applyPredictSnapshot(s: MatchState, snap: PredictSnapshot, receivedAtMs: number, lobbyNewer = false): MatchState {
+  if (s.lobbyId !== null && snap.lobbyId !== s.lobbyId) return s;
+  s.seq++;
+  s.mode = "predict";
+  if (typeof snap.now === "number") s.serverOffsetMs = snap.now - receivedAtMs;
+  const nowU = (Date.now() + s.serverOffsetMs) / 1000;
+  s.lobbyId = snap.lobbyId;
+  if (!lobbyNewer || s.status === null || STATUS_ORDER[snap.status] > STATUS_ORDER[s.status]) {
+    s.status = snap.status;
+    s.players = snap.players.map((p) => ({ player: p.player, callsign: p.callsign, bot: p.bot }));
+    s.potUnits = snap.potUnits;
+    s.startsAt = snap.lockTime;
+    s.endTime = snap.endTime;
+  }
+  if (snap.status === "cancelled") s.cancelled = true;
+  if (!s.round && snap.params)
+    s.round = { type: "round", lobbyId: snap.lobbyId, params: snap.params, lockTime: snap.lockTime, endTime: snap.endTime, protocol: !!snap.protocol };
+  s.predictedCount = Math.max(s.predictedCount, snap.predictedCount ?? 0);
+  if (snap.locked && !s.locked) applyEvent(s, { ...snap.locked, type: "locked" }, nowU);
+  if (snap.ptick && (!s.ptick || snap.ptick.t >= s.ptick.t)) applyEvent(s, { ...snap.ptick, type: "ptick" }, nowU);
+  if (snap.mark && !s.locked) applyEvent(s, { type: "mark", at: nowU, mark: snap.mark }, nowU);
+  // A reload after the resolve: the reveal is long finished.
+  if (snap.final && !s.pfinal) {
+    s.pfinal = { ...snap.final, type: "final" };
+    s.pfinalT = nowU - 60;
+  }
+  if (snap.settled && !s.settled) {
+    s.settled = { ...snap.settled, type: "settled" };
+    s.settledT = nowU - 60;
+  }
+  return s;
+}
+
 export type Match = {
   state: MatchState;
   /** Live reference to the newest state, for requestAnimationFrame loops. */
   ref: React.MutableRefObject<MatchState>;
-  /** Continuous match time in seconds, interpolated between server updates. Call every frame. */
+  /**
+   * Continuous match time in seconds, interpolated between server updates. Call every frame.
+   * Prediction lobbies: unix seconds (server time), since rounds are timed by lockTime and endTime.
+   */
   clock: () => number;
+  /** Seed of the prediction mock (`?mock=predict`), else null. */
+  mockSeed: number | null;
   source: "mock" | "live";
   me: string | null;
   connected: boolean;
@@ -254,7 +392,14 @@ export function useReducedMotion(): boolean {
   return reduced;
 }
 
-export function useMatch(): Match {
+export type MatchOptions = {
+  /** Follow this lobby instead of ?lobby= or the engine's current one. Changing it reconnects. */
+  lobby?: number | null;
+  /** Prediction mode: follow the protocol round (GET /rounds) instead of the current royale lobby. */
+  predict?: boolean;
+};
+
+export function useMatch(opts: MatchOptions = {}): Match {
   const [state, setState] = useState<MatchState>(() => emptyState());
   const ref = useRef<MatchState>(state);
   const clockRef = useRef<() => number>(() => 0);
@@ -262,12 +407,15 @@ export function useMatch(): Match {
   const [source, setSource] = useState<"mock" | "live">("live");
   const [me, setMe] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [mockSeed, setMockSeed] = useState<number | null>(null);
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     const q = readParams();
-    const fixedLobby = q.get("lobby") ? Number(q.get("lobby")) || null : null;
-    const mock = q.get("mock") === "1";
+    const fixedLobby = opts.lobby ?? (q.get("lobby") ? Number(q.get("lobby")) || null : null);
+    const mockPred = q.get("mock") === "predict";
+    const mock = q.get("mock") === "1" || mockPred;
+    const predict = !!opts.predict || mockPred || q.get("mode") === "predict";
     setSource(mock ? "mock" : "live");
     const publish = (s: MatchState) => {
       ref.current = s;
@@ -275,28 +423,51 @@ export function useMatch(): Match {
     };
 
     if (mock) {
-      const { events, cast } = mockMatch(Number(q.get("seed") ?? "7") || 7);
+      const seed = Number(q.get("seed") ?? "7") || 7;
       const meParam = q.get("me");
-      setMe(meParam && meParam in cast ? cast[meParam as keyof typeof cast] : (meParam ?? cast.me));
-      const atParam = q.get("at") ?? "lobby";
-      const at = atParam in MOMENTS ? MOMENTS[atParam] : Number(atParam);
-      const start = Number.isFinite(at) ? at : MOMENTS.lobby;
+      const atParam = q.get("at");
+      let events: { at: number; ev: MatchEvent }[];
+      let start: number;
+      let end: number;
+      let lobby0: number;
+      if (mockPred) {
+        // Prediction rounds: the clock is unix seconds; `at` counts from the protocol round's open.
+        const { rounds, cast } = mockPredict(seed);
+        lobby0 = fixedLobby ?? PROTOCOL_LOBBY;
+        const round = rounds.find((r) => r.cfg.lobbyId === lobby0) ?? rounds[0];
+        lobby0 = round.cfg.lobbyId;
+        events = round.events;
+        const c = cast as unknown as Record<string, string>;
+        setMe(meParam && meParam !== "byCallsign" && typeof c[meParam] === "string" ? c[meParam] : (meParam?.toLowerCase() ?? cast.me));
+        const a = atParam === null ? PREDICT_MOMENTS.open : atParam in PREDICT_MOMENTS ? PREDICT_MOMENTS[atParam] : Number(atParam);
+        start = PREDICT_OPEN_AT + (Number.isFinite(a) ? a : PREDICT_MOMENTS.open);
+        end = Math.max(events[events.length - 1].at + 10, PREDICT_OPEN_AT + 60);
+      } else {
+        const m = mockMatch(seed);
+        events = m.events;
+        lobby0 = fixedLobby ?? 1;
+        setMe(meParam && meParam in m.cast ? m.cast[meParam as keyof typeof m.cast] : (meParam ?? m.cast.me));
+        const a = (atParam ?? "lobby") in MOMENTS ? MOMENTS[atParam ?? "lobby"] : Number(atParam);
+        start = Number.isFinite(a) ? a : MOMENTS.lobby;
+        end = MOCK_END;
+      }
+      const first = events[0].at;
       const speed = Number(q.get("speed") ?? "1");
       const loop = q.get("loop") === "1";
       const t0 = performance.now();
       let vt = start;
       const now = () => {
         let v = start + ((performance.now() - t0) / 1000) * (Number.isFinite(speed) ? speed : 1);
-        if (loop && v > MOCK_END) v = events[0].at + ((v - events[0].at) % (MOCK_END - events[0].at));
+        if (loop && v > end) v = first + ((v - first) % (end - first));
         return v;
       };
-      clockRef.current = () => Math.min(vt, MOCK_END);
-      let s = emptyState(fixedLobby ?? 1);
+      clockRef.current = () => Math.min(vt, end);
+      let s = emptyState(lobby0);
       let i = 0;
       const pump = () => {
         vt = now();
         if (i > 0 && vt < events[i - 1].at) {
-          s = emptyState(fixedLobby ?? 1);
+          s = emptyState(lobby0);
           i = 0;
         }
         let changed = false;
@@ -311,7 +482,9 @@ export function useMatch(): Match {
         applyEvent(s, ev, vt);
         publish(s);
       };
+      setMockSeed(mockPred ? seed : null);
       pump();
+      publish(s);
       setConnected(true);
       let raf = 0;
       const loopFn = () => {
@@ -326,6 +499,8 @@ export function useMatch(): Match {
     setMe(q.get("me")?.toLowerCase() ?? null);
     const base = process.env.NEXT_PUBLIC_ENGINE_WS;
     let s = emptyState(fixedLobby);
+    if (predict) s.mode = "predict";
+    publish(s);
     if (!base) {
       s.error = "No engine is configured. Set NEXT_PUBLIC_ENGINE_WS (repo .env) and rebuild, or open this page with ?mock=1.";
       publish(s);
@@ -336,6 +511,7 @@ export function useMatch(): Match {
     const serverNow = () => Date.now() + s.serverOffsetMs;
     // Match clock: server time against startsAt when known, so the countdown and the time after the end keep moving.
     const clock = () => {
+      if (predict || s.mode === "predict") return serverNow() / 1000;
       if (s.startsAt !== null) return serverNow() / 1000 - s.startsAt;
       if (!s.tick) return s.t;
       return lastT + Math.min(1, (performance.now() - lastAt) / 1000);
@@ -357,9 +533,10 @@ export function useMatch(): Match {
         const framesAtRequest = lobbyFrames;
         const r = await fetch(`${engineHttp()}/lobbies/${id}`, { cache: "no-store" });
         if (!r.ok || g !== gen) return;
-        const snap = (await r.json()) as Snapshot;
+        const snap = (await r.json()) as Snapshot | PredictSnapshot;
         if (g !== gen) return;
-        applySnapshot(s, snap, (t0 + Date.now()) / 2, clock(), lobbyFrames !== framesAtRequest);
+        if ("mode" in snap && snap.mode === "predict") applyPredictSnapshot(s, snap, (t0 + Date.now()) / 2, lobbyFrames !== framesAtRequest);
+        else applySnapshot(s, snap as Snapshot, (t0 + Date.now()) / 2, clock(), lobbyFrames !== framesAtRequest);
         publish(s);
       } catch {
         /* the WebSocket stream still works without it */
@@ -414,19 +591,33 @@ export function useMatch(): Match {
       };
     };
 
+    // The protocol round's lobby id, from GET /rounds (the protocol round is listed first).
+    const protocolRound = async (): Promise<number | null> => {
+      const r = await fetch(`${engineHttp()}/rounds`, { cache: "no-store" });
+      const body = (await r.json()) as { rounds?: { lobbyId: number; protocol: boolean }[] };
+      return body.rounds?.find((x) => x.protocol)?.lobbyId ?? null;
+    };
+
     // Follow the next match: with no ?lobby, switch when the engine's current lobby changes after this one ends.
+    // Prediction mode follows the protocol round instead, switching once this round is resolved.
     const follow = setInterval(async () => {
       if (fixedLobby !== null || closed) return;
-      const done =
-        s.status === "cancelled" || !!s.settled || (s.final !== null && s.finalT !== null && clock() - s.finalT > 20);
+      const done = predict
+        ? s.lobbyId === null || s.cancelled || !!s.settled || (s.pfinal !== null && s.pfinalT !== null && clock() - s.pfinalT > 20)
+        : s.status === "cancelled" || !!s.settled || (s.final !== null && s.finalT !== null && clock() - s.finalT > 20);
       if (!done) return;
       try {
-        const r = await fetch(`${engineHttp()}/lobbies`, { cache: "no-store" });
-        const { current } = (await r.json()) as { current: number | null };
+        let current: number | null;
+        if (predict) current = await protocolRound();
+        else {
+          const r = await fetch(`${engineHttp()}/lobbies`, { cache: "no-store" });
+          current = ((await r.json()) as { current: number | null }).current;
+        }
         if (current !== null && current !== s.lobbyId) {
           const offset = s.serverOffsetMs;
           s = emptyState(current);
           s.serverOffsetMs = offset;
+          if (predict) s.mode = "predict";
           publish(s);
           const old = ws;
           gen++;
@@ -438,17 +629,48 @@ export function useMatch(): Match {
       }
     }, 5000);
 
-    connect();
+    // Before the lock a prediction lobby streams no price: read the snapshot's `mark` every two seconds.
+    const marks = setInterval(async () => {
+      if (closed || s.mode !== "predict" || s.locked || s.lobbyId === null || s.cancelled) return;
+      const g = gen;
+      try {
+        const t0 = Date.now();
+        const r = await fetch(`${engineHttp()}/lobbies/${s.lobbyId}`, { cache: "no-store" });
+        if (!r.ok || g !== gen) return;
+        const snap = (await r.json()) as PredictSnapshot;
+        if (g !== gen || snap.mode !== "predict") return;
+        applyPredictSnapshot(s, snap, (t0 + Date.now()) / 2, true);
+        publish(s);
+      } catch {
+        /* next time */
+      }
+    }, 2000);
+
+    if (predict && fixedLobby === null) {
+      // Find the protocol round first; until then the follow loop retries.
+      void protocolRound()
+        .then((id) => {
+          if (closed || id === null || s.lobbyId !== null) return;
+          s.lobbyId = id;
+          publish(s);
+          connect();
+        })
+        .catch(() => {
+          s.error = `Cannot reach the engine at ${base}. Retrying.`;
+          publish(s);
+        });
+    } else connect();
     return () => {
       closed = true;
       gen++;
       clearTimeout(retry);
       clearInterval(follow);
+      clearInterval(marks);
       ws?.close();
     };
-  }, []);
+  }, [opts.lobby, opts.predict]);
 
   const clock = useMemo(() => () => clockRef.current(), []);
   const inject = useMemo(() => (ev: MatchEvent) => injectRef.current(ev), []);
-  return { state, ref, clock, source, me, connected, reducedMotion, inject };
+  return { state, ref, clock, mockSeed, source, me, connected, reducedMotion, inject };
 }

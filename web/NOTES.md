@@ -1,9 +1,8 @@
 ## Status
-- Step: done. Storm arena + phone verified live against the engine (CHAIN=anvil, 19 bots, stage): signed join and order accepted, reload kept the position, final podium and settled stamp shown.
-- Last gate: `bash gates/ui.sh` -> GATE PASS ui; all eight shots reviewed.
-- Next: point NEXT_PUBLIC_ENGINE_WS at the deployed engine and rebuild.
-- Blockers: none. Shots use installed Chrome because Playwright 1.63's Chromium is not downloaded.
-- Known: in the final view the flood holds at the last zone line, so finalists below it are drawn under water (still labelled and paid).
+- Step: predict mode, step 1 of 4 (events, mock, hook, signing) done; screens next.
+- Last gate: `bash gates/ui.sh` -> GATE PASS ui. predict-ui gate not run yet (no screens).
+- Next: arena prediction view (components/arena/b/predict.ts), then phone screens, then shots.
+- Blockers: none. Engine contract confirmed with predict-engine (GET /rounds {rounds}, `mark` on rounds and snapshots).
 
 ## Running
 
