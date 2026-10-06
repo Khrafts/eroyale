@@ -59,6 +59,8 @@ const BOT_RETRY_MS = 3000; // retry a bot whose joinFor failed this often while 
 const JOIN_CLOSE_MS = 7000; // joins close this long before startsAt
 const START_LEAD_MS = 6000; // first on-chain start() this long before startsAt, so the chain end lands near the book's
 const START_DEADLINE_MS = 1500; // no new start attempt after startsAt minus this; cancel instead
+const START_LATE_MS = 50_000; // an on-chain start landing this long after startsAt / the lock is cancelled (workflow allows 60 s skew)
+const MAX_CHAIN_PROTOCOL_BOTS = 20; // protocol-round bots with the chain on, whatever --predict-bots says (joins share one tx queue)
 const DEPLOYED_SETTLE_WAIT_MS = 15 * 60_000; // SETTLE_MODE=deployed: stop watching for Settled after this
 // Every engine line goes through redact(): RPC URLs carry API keys.
 const log = (m: string) => console.log(`${new Date().toISOString()} ${redact(m)}`);
@@ -233,17 +235,20 @@ function scheduleCountdown(m: Match, at: number) {
 /**
  * Send escrow start() just before startsAt so the chain's end time lands within seconds of the book's. Retries until
  * START_DEADLINE_MS before startsAt; after the last failure, cancels the lobby (engine first, so it never goes live,
- * then on chain, which refunds every entry).
+ * then on chain, which refunds every entry). A start that lands more than START_LATE_MS after startsAt (queued behind
+ * other transactions) is cancelled too: the on-chain end would be too far from the book's for the workflow.
  */
 function scheduleChainStart(m: Match) {
   if (!chain.on) return;
   const l = m.lobby;
+  const late = () => Date.now() > l.startsAt! * 1000 + START_LATE_MS;
   const attempt = async (n: number) => {
     if (l.status === "cancelled" || m.startTx) return;
     try {
       m.startTx = await chain.start(l.id);
       m.chainError = null;
       log(`[lobby ${l.id}] chain start ${m.startTx}`);
+      if (late()) await cancelMatch(m, `chain start landed more than ${START_LATE_MS / 1000} s after startsAt`);
     } catch (e) {
       m.chainError = `start attempt ${n} failed: ${failReason(e)}`.slice(0, 500);
       log(`[lobby ${l.id}] ${m.chainError}`);
@@ -401,7 +406,7 @@ async function settle(m: { chainError: string | null }, l: Settles, marks: Price
   }
 }
 
-// ---------- prediction rounds (CLAUDE.md "Prediction mode")
+// ---------- prediction rounds (the spec "Prediction mode")
 type RoundMatch = {
   round: PredictRound; driver: PredictDriver; bots: PredictBots; seed: number; logFile: string; clients: Set<WebSocket>;
   pendingJoins: Set<string>; chainError: string | null; startTx: string | null; createTx: string | null;
@@ -412,7 +417,6 @@ const rounds = new Map<number, RoundMatch>();
 let protocolRound: RoundMatch | null = null;
 let protocolCount = 0; // markets rotate BTC, ETH, SOL
 const PRECREATE_MS = 20_000; // create the next protocol round's on-chain lobby this long before the current lock
-const START_LATE_MS = 50_000; // an on-chain start landing this long after the lock is cancelled (workflow allows 60 s skew)
 const MAX_USER_ROUNDS = 5; // open user rounds at once, globally
 const creating = new Set<string>(); // creators whose createRound is in flight
 // CreateRound nonces, persisted so a signed create cannot be replayed after a restart.
@@ -557,7 +561,7 @@ async function openProtocolRound(openAt: number | null, pre: Promise<number | nu
       const id = chainId ?? ++localId;
       // Back to back: open at the previous lock time, so this round locks one lockAfter later on a minute boundary.
       const openTime = openAt ?? Math.floor(Date.now() / 1000);
-      protocolRound = openRound(id, spec, true, openTime, PREDICT_BOTS, null);
+      protocolRound = openRound(id, spec, true, openTime, chain.on ? Math.min(PREDICT_BOTS, MAX_CHAIN_PROTOCOL_BOTS) : PREDICT_BOTS, null);
       return;
     } catch (e) {
       log(`[chain] protocol round createLobby failed, retrying in 10 s: ${failReason(e)}`);
@@ -575,13 +579,15 @@ async function openProtocolRound(openAt: number | null, pre: Promise<number | nu
 async function startRoundOnChain(m: RoundMatch) {
   const r = m.round;
   const late = () => Date.now() > r.lockTime * 1000 + START_LATE_MS;
+  // Settling but before `final` still pays nobody: a start that lands that late is refunded too.
+  const cancellable = () => r.status === "open" || r.status === "live" || (r.status === "settling" && !r.finalEvent);
   for (let n = 1; n <= 5 && !late(); n++) {
     try {
       m.startTx = await chain.start(r.id);
       m.chainError = null;
       log(`[round ${r.id}] chain start ${m.startTx}`);
       // The on-chain end would be too far past the book's for the workflow: refund instead.
-      if (late() && (r.status === "open" || r.status === "live")) r.cancel(`chain start landed more than ${START_LATE_MS / 1000} s after the lock`);
+      if (late() && cancellable()) r.cancel(`chain start landed more than ${START_LATE_MS / 1000} s after the lock`);
       return;
     } catch (e) {
       m.chainError = `start attempt ${n} failed: ${failReason(e)}`.slice(0, 500);
@@ -590,7 +596,7 @@ async function startRoundOnChain(m: RoundMatch) {
       await sleep(2000);
     }
   }
-  if (r.status === "open" || r.status === "live") r.cancel("chain start failed");
+  if (cancellable()) r.cancel("chain start failed");
 }
 
 /** At the lock: the next protocol round opens; a cancelled round is cancelled on chain too, which refunds every entry. */
@@ -639,6 +645,9 @@ async function finishRound(m: RoundMatch) {
       }
     }
   }
+  // A start still in flight may cancel the round (it landed too late); onRoundLocked refunds it, nobody is paid.
+  await m.starting;
+  if (r.status === "cancelled") return;
   const pot = chain.on ? await onchainPot(r.id) : r.potUnits;
   if (pot !== r.potUnits) log(`[round ${r.id}] warning: on-chain pot ${pot} != engine pot ${r.potUnits}; final and report use the on-chain pot`);
   record(m, { in: "final", settlementPrice: price, potUnits: pot.toString() });
