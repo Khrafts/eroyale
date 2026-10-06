@@ -1,6 +1,6 @@
 // CRE workflow royale-settle: settles one lobby of RoyaleEscrow.
-// HTTP trigger {"lobbyId": N} -> read the lobby onchain -> GET the final book -> GET the three
-// settlement prices -> buildReport -> signed report -> writeReport to the escrow.
+// HTTP trigger {"lobbyId": N} -> read the lobby onchain -> on each node: GET the final book, GET the three
+// settlement prices, buildReport -> consensus on the scored result -> signed report -> writeReport to the escrow.
 // Royale and prediction lobbies share this path: buildReport branches on the book's mode and, for a
 // prediction book, refuses unless its creator, creator fee, entry and player count equal the on-chain lobby's.
 import {
@@ -21,11 +21,12 @@ import {
   type Runtime,
 } from "@chainlink/cre-sdk";
 import { EVM_PB } from "@chainlink/cre-sdk/pb";
-import { decodeFunctionResult, encodeFunctionData, hexToBytes, parseAbi, zeroAddress } from "viem";
+import { decodeFunctionResult, encodeFunctionData, parseAbi, zeroAddress } from "viem";
 
 import type { Market, Prices } from "../../shared/scoring.ts";
 import { MARKETS, candleStart, candleUrl, closeFromCandles } from "./prices.ts";
-import { buildReport } from "./report.ts";
+import { observe, type Observation } from "./observation.ts";
+import type { OnchainRound } from "./report.ts";
 
 type Config = {
   chainName: string; // CRE chain selector name, e.g. "ethereum-testnet-sepolia-base-1"
@@ -45,13 +46,6 @@ const STATUS_LIVE = 2;
 const CANDLE_FINAL_DELAY = 120;
 const MAX_END_SKEW = 60n;
 
-// Returns the body as hex so consensus compares the exact bytes, with no text decoding.
-const fetchFinalBook = (sendRequester: HTTPSendRequester, url: string): string => {
-  const resp = sendRequester.sendRequest({ url, method: "GET", timeout: "10s" }).result();
-  if (resp.statusCode !== 200) throw new Error(`final book: HTTP ${resp.statusCode}`);
-  return bytesToHex(resp.body);
-};
-
 const fetchPrices = (sendRequester: HTTPSendRequester, template: string, start: number): Prices => {
   const closes = {} as Record<Market, string>;
   for (const market of MARKETS) {
@@ -67,6 +61,39 @@ const fetchPrices = (sendRequester: HTTPSendRequester, template: string, start: 
     closes[market] = closeFromCandles(new TextDecoder().decode(resp.body), start);
   }
   return closes;
+};
+
+type NodeArgs = {
+  bookUrl: string;
+  priceTemplate: string;
+  lobbyId: bigint;
+  lobbyEnd: bigint;
+  now: number;
+  pot: bigint;
+  feeBps: bigint;
+  chainSelector: bigint;
+  onchain: OnchainRound;
+};
+
+// Node mode: fetch the exact book bytes, check them against the on-chain lobby, fetch the settlement candles for
+// the book's endTime, score. Returns the observation JSON that consensus compares.
+const scoreOnNode = (sendRequester: HTTPSendRequester, a: NodeArgs): string => {
+  const resp = sendRequester.sendRequest({ url: a.bookUrl, method: "GET", timeout: "10s" }).result();
+  if (resp.statusCode !== 200) throw new Error(`final book: HTTP ${resp.statusCode}`);
+  const rawBook = resp.body;
+  const book = JSON.parse(new TextDecoder().decode(rawBook)) as { lobbyId: number; endTime: number };
+  if (BigInt(book.lobbyId) !== a.lobbyId) throw new Error(`book is for lobby ${book.lobbyId}`);
+  // Prices follow the book's endTime so the report matches the arena's final marks. A skew over 60 s
+  // (e.g. an engine writing milliseconds) means the book and the chain disagree about the match.
+  const skew = BigInt(book.endTime) - a.lobbyEnd;
+  if (skew > MAX_END_SKEW || skew < -MAX_END_SKEW) {
+    throw new Error(`book endTime ${book.endTime} vs onchain endTime ${a.lobbyEnd}`);
+  }
+  // Settlement prices: close of the candle starting at S, fetched no earlier than S + 120 s.
+  const start = candleStart(book.endTime);
+  if (a.now < start + CANDLE_FINAL_DELAY) throw new Error(`candle ${start} not final until ${start + CANDLE_FINAL_DELAY}`);
+  const prices = fetchPrices(sendRequester, a.priceTemplate, start);
+  return observe(rawBook, prices, start, a.pot, a.feeBps, a.chainSelector, a.onchain);
 };
 
 const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
@@ -96,36 +123,11 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   if (lobby.status !== STATUS_LIVE) throw new Error(`lobby ${lobbyId} is not live (status ${lobby.status})`);
   runtime.log(`lobby ${lobbyId}: pot ${lobby.pot}, endTime ${lobby.endTime}`);
 
-  const http = new HTTPClient();
-
-  // 2. Final book, byte-identical on every node.
-  const bookHex = http
-    .sendRequest(runtime, fetchFinalBook, consensusIdenticalAggregation<string>())(
-      `${config.engineUrl}/lobbies/${lobbyId}/final`,
-    )
-    .result();
-  const rawBook = hexToBytes(bookHex as `0x${string}`);
-  const book = JSON.parse(new TextDecoder().decode(rawBook)) as { lobbyId: number; endTime: number };
-  if (BigInt(book.lobbyId) !== lobbyId) throw new Error(`book is for lobby ${book.lobbyId}`);
-  // Prices follow the book's endTime so the report matches the arena's final marks. A skew over 60 s
-  // (e.g. an engine writing milliseconds) means the book and the chain disagree about the match.
-  const skew = BigInt(book.endTime) - lobby.endTime;
-  if (skew > MAX_END_SKEW || skew < -MAX_END_SKEW) {
-    throw new Error(`book endTime ${book.endTime} vs onchain endTime ${lobby.endTime}`);
-  }
-
-  // 3. Settlement prices: close of the candle starting at S, fetched no earlier than S + 120 s,
-  //    and only once the onchain end time has passed (the escrow requires it too).
-  const start = candleStart(book.endTime);
+  // 2-4. Each node fetches the final book and the three candles and scores them with the shared scoring code;
+  //      consensus is on the scored result (see observation.ts), which includes keccak256 of the book bytes each
+  //      node received. Agreeing on the hex book itself would exceed the 25 KB observation limit for 50 players.
   const now = Math.floor(runtime.now().getTime() / 1000);
   if (BigInt(now) <= lobby.endTime) throw new Error(`lobby ${lobbyId} ends at ${lobby.endTime}, now ${now}`);
-  if (now < start + CANDLE_FINAL_DELAY) throw new Error(`candle ${start} not final until ${start + CANDLE_FINAL_DELAY}`);
-  const prices = http
-    .sendRequest(runtime, fetchPrices, consensusIdenticalAggregation<Prices>())(config.priceSourceUrl, start)
-    .result();
-  runtime.log(`prices at ${start}: BTC ${prices.BTC} ETH ${prices.ETH} SOL ${prices.SOL}`);
-
-  // 4. Score and encode with the shared scoring code.
   const onchain = {
     creator: lobby.creator,
     creatorFeeBps: Number(lobby.creatorFeeBps),
@@ -135,7 +137,23 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   runtime.log(
     `lobby ${lobbyId}: creator ${onchain.creator}, creatorFeeBps ${onchain.creatorFeeBps}, entry ${onchain.entry}, players ${onchain.playerCount}`,
   );
-  const out = buildReport(rawBook, prices, lobby.pot, BigInt(config.feeBps), chainSelector, onchain);
+  const http = new HTTPClient();
+  const observed = http
+    .sendRequest(runtime, scoreOnNode, consensusIdenticalAggregation<string>())({
+      bookUrl: `${config.engineUrl}/lobbies/${lobbyId}/final`,
+      priceTemplate: config.priceSourceUrl,
+      lobbyId,
+      lobbyEnd: lobby.endTime,
+      now,
+      pot: lobby.pot,
+      feeBps: BigInt(config.feeBps),
+      chainSelector,
+      onchain,
+    })
+    .result();
+  const out = JSON.parse(observed) as Observation;
+  if (out.lobbyId !== lobbyId.toString()) throw new Error(`observation is for lobby ${out.lobbyId}`);
+  runtime.log(`prices at ${out.candleStart}: BTC ${out.prices.BTC} ETH ${out.prices.ETH} SOL ${out.prices.SOL}`);
   runtime.log(`bookHash ${out.bookHash}, winners ${out.winners.join(",")}, amounts ${out.amounts.join(",")}`);
   // Logged before the write so SETTLE_MODE=simulated can pass these exact bytes to settleFallback.
   runtime.log(`report ${out.report}`);
