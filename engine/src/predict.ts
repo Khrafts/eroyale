@@ -37,6 +37,7 @@ export function checkUserSpec(s: RoundSpec): string | null {
   const intIn = (v: number, [lo, hi]: readonly [number, number], name: string) =>
     Number.isInteger(v) && v >= lo && v <= hi ? null : `${name} must be an integer ${lo} to ${hi}`;
   if (s.creator === null || !/^0x[0-9a-f]{40}$/.test(s.creator)) return "creator must be a lowercase address";
+  if (/^0x0{40}$/.test(s.creator)) return "creator must not be the zero address";
   if (!MARKETS.includes(s.market)) return "market must be BTC, ETH or SOL";
   if (typeof s.entryUnits !== "bigint" || s.entryUnits < RANGES.entryUnits[0] || s.entryUnits > RANGES.entryUnits[1])
     return `entryUnits must be ${RANGES.entryUnits[0]} to ${RANGES.entryUnits[1]}`;
@@ -209,8 +210,9 @@ export class PredictRound {
     return true;
   }
 
+  /** Open or live; also settling before `final` (the book disagrees with the escrow, so nobody is paid from it). */
   cancel(reason: string) {
-    if (this.status !== "open" && this.status !== "live") throw new Error(`cannot cancel from ${this.status}`);
+    if (this.status !== "open" && this.status !== "live" && !(this.status === "settling" && !this.finalEvent)) throw new Error(`cannot cancel from ${this.status}`);
     this.status = "cancelled";
     this.cancelReason = reason;
     this.emit({ type: "cancelled", lobbyId: this.id, reason });

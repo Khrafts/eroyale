@@ -9,6 +9,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const LOBBY_OPEN = 1; // IRoyaleEscrow.Status.Open
 export const LOBBY_LIVE = 2; // IRoyaleEscrow.Status.Live
 export const LOBBY_SETTLED = 3; // IRoyaleEscrow.Status.Settled
+export const LOBBY_CANCELLED = 4; // IRoyaleEscrow.Status.Cancelled
 
 export interface Chain {
   readonly on: boolean;

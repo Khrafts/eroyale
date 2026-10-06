@@ -11,7 +11,7 @@ import { CoinbaseFeed, FallbackPrices, KrakenFeed, fetchSettlementMarks, settlem
 import { Driver, PredictDriver, realClock } from "./driver.ts";
 import { PredictRound, checkUserSpec, protocolSpec, type RoundSpec } from "./predict.ts";
 import { PredictBots } from "./predict-bots.ts";
-import { LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
+import { LOBBY_CANCELLED, LOBBY_LIVE, LOBBY_OPEN, LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
 import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyCreateRound, verifyJoin, verifyOrder, verifyPrediction, type CreateRoundParams } from "./orders.ts";
 import { ENTRY_UNITS, MARKETS, PRESETS, type EngineEvent, type Order, type Preset, type Prices } from "./types.ts";
@@ -401,11 +401,46 @@ type RoundMatch = {
   round: PredictRound; driver: PredictDriver; bots: PredictBots; seed: number; logFile: string; clients: Set<WebSocket>;
   pendingJoins: Set<string>; chainError: string | null; startTx: string | null; createTx: string | null;
   locked: boolean; finishing: boolean; startSent: boolean; starting: Promise<void> | null;
+  nextLobby: Promise<number | null> | null; // the next protocol round's on-chain lobby, created before this one locks
 };
 const rounds = new Map<number, RoundMatch>();
 let protocolRound: RoundMatch | null = null;
 let protocolCount = 0; // markets rotate BTC, ETH, SOL
-const creatorNonces = new Map<string, bigint>();
+const PRECREATE_MS = 20_000; // create the next protocol round's on-chain lobby this long before the current lock
+const START_LATE_MS = 50_000; // an on-chain start landing this long after the lock is cancelled (workflow allows 60 s skew)
+const MAX_USER_ROUNDS = 5; // open user rounds at once, globally
+const creating = new Set<string>(); // creators whose createRound is in flight
+// CreateRound nonces, persisted so a signed create cannot be replayed after a restart.
+const NONCE_FILE = resolve(DATA, "creator-nonces.json");
+const creatorNonces = new Map<string, bigint>(
+  existsSync(NONCE_FILE) ? Object.entries(JSON.parse(readFileSync(NONCE_FILE, "utf8")) as Record<string, string>).map(([k, v]) => [k, BigInt(v)]) : [],
+);
+function saveCreatorNonce(creator: string, nonce: bigint) {
+  creatorNonces.set(creator, nonce);
+  writeFileSync(NONCE_FILE + ".tmp", JSON.stringify(Object.fromEntries([...creatorNonces].map(([k, v]) => [k, v.toString()]))));
+  renameSync(NONCE_FILE + ".tmp", NONCE_FILE);
+}
+
+/**
+ * Cancel a round on chain (refunds every entry). Retries with backoff; an escrow that already says Cancelled is done.
+ * Returns the line for chainError.
+ */
+async function cancelOnChain(id: number, why: string): Promise<string> {
+  for (let n = 1; ; n++) {
+    try {
+      const l = await chain.getLobby(id);
+      if (l.status === LOBBY_CANCELLED) return `${why}; cancelled on chain`;
+      if (l.status !== LOBBY_OPEN && l.status !== LOBBY_LIVE) return `${why}; escrow status ${l.status}, not cancellable`;
+      const tx = await chain.cancel(id);
+      return `${why}; cancelled on chain, entries refunded (${tx})`;
+    } catch (e) {
+      if (n >= 12) return `${why}; cancel failed ${n} times: ${failReason(e)}`.slice(0, 500);
+      const wait = Math.min(60, 2 ** n);
+      log(`[round ${id}] cancel attempt ${n} failed, retrying in ${wait} s: ${failReason(e)}`);
+      await sleep(wait * 1000);
+    }
+  }
+}
 
 function wireRound(m: RoundMatch) {
   m.round.onEvent((e, line) => {
@@ -425,7 +460,7 @@ function openRound(id: number, spec: RoundSpec, protocol: boolean, openTime: num
   const m: RoundMatch = {
     round, driver: null as unknown as PredictDriver, bots: null as unknown as PredictBots, seed, logFile: resolve(DATA, `round-${id}.jsonl`),
     clients: new Set(), pendingJoins: new Set(), chainError: null, startTx: null, createTx, locked: false, finishing: false,
-    startSent: false, starting: null,
+    startSent: false, starting: null, nextLobby: null,
   };
   m.bots = new PredictBots(seed, (player, price) => void submitPrediction(m, player, price));
   m.driver = new PredictDriver(round, realClock, prices, m.bots);
@@ -442,11 +477,11 @@ function openRound(id: number, spec: RoundSpec, protocol: boolean, openTime: num
   wireRound(m);
   round.emitLobby();
   round.emitRound();
-  void (async () => {
-    const failed: number[] = [];
-    for (let i = 0; i < nBots; i++) if (!(await joinRoundBot(m, i))) failed.push(i);
+  // All bot joins are queued at once (the chain queue still sends them one by one, in seat order).
+  void Promise.all(Array.from({ length: nBots }, (_, i) => joinRoundBot(m, i))).then((ok) => {
+    const failed = ok.flatMap((x, i) => (x ? [] : [i]));
     if (failed.length) log(`[round ${id}] ${failed.length} bots could not join: seats ${failed.join(", ")}`);
-  })();
+  });
   return m;
 }
 
@@ -502,12 +537,14 @@ function submitPrediction(m: RoundMatch, player: string, price: string): { ok: t
 }
 
 /** The next protocol round opens when the current one locks (or at boot); markets rotate. */
-async function openProtocolRound(openAt: number | null) {
+async function openProtocolRound(openAt: number | null, pre: Promise<number | null> | null = null) {
   const market = MARKETS[protocolCount++ % MARKETS.length];
   const spec = protocolSpec(market);
   for (;;) {
     try {
-      const chainId = await chain.createLobby(spec.resolveAfter, spec.entryUnits, spec.maxPlayers);
+      const preId = pre ? await pre : null;
+      pre = null;
+      const chainId = preId ?? (await chain.createLobby(spec.resolveAfter, spec.entryUnits, spec.maxPlayers));
       const id = chainId ?? ++localId;
       // Back to back: open at the previous lock time, so this round locks one lockAfter later on a minute boundary.
       const openTime = openAt ?? Math.floor(Date.now() / 1000);
@@ -528,11 +565,14 @@ async function openProtocolRound(openAt: number | null) {
  */
 async function startRoundOnChain(m: RoundMatch) {
   const r = m.round;
-  for (let n = 1; n <= 5; n++) {
+  const late = () => Date.now() > r.lockTime * 1000 + START_LATE_MS;
+  for (let n = 1; n <= 5 && !late(); n++) {
     try {
       m.startTx = await chain.start(r.id);
       m.chainError = null;
       log(`[round ${r.id}] chain start ${m.startTx}`);
+      // The on-chain end would be too far past the book's for the workflow: refund instead.
+      if (late() && (r.status === "open" || r.status === "live")) r.cancel(`chain start landed more than ${START_LATE_MS / 1000} s after the lock`);
       return;
     } catch (e) {
       m.chainError = `start attempt ${n} failed: ${failReason(e)}`.slice(0, 500);
@@ -548,22 +588,32 @@ async function startRoundOnChain(m: RoundMatch) {
 async function onRoundLocked(m: RoundMatch) {
   const r = m.round;
   if (chain.on && r.status === "live" && !m.startSent) { m.startSent = true; m.starting = startRoundOnChain(m); }
-  if (m.round.protocol && protocolRound === m && PREDICT_ON) void openProtocolRound(r.lockTime);
+  if (m.round.protocol && protocolRound === m && PREDICT_ON) void openProtocolRound(r.lockTime, m.nextLobby);
   if (!chain.on) return;
   await m.starting;
   if (r.status !== "cancelled") return;
-  try {
-    const tx = await chain.cancel(r.id);
-    m.chainError = `${r.cancelReason}; entries refunded (${tx})`;
-  } catch (e) {
-    m.chainError = `${r.cancelReason}; cancel failed: ${failReason(e)}`.slice(0, 500);
-  }
+  m.chainError = await cancelOnChain(r.id, r.cancelReason ?? "cancelled");
   log(`[round ${r.id}] ${m.chainError}`);
 }
 
 async function finishRound(m: RoundMatch) {
   m.finishing = true;
   const r = m.round;
+  if (chain.on) {
+    // Book vs escrow: a joinFor that timed out but landed, or a direct public join(), leaves the escrow with players
+    // the book does not have. Nobody can be paid from such a book: cancel and refund instead of `final`.
+    let l = null;
+    for (let attempt = 1; !l; attempt++) {
+      try { l = await chain.getLobby(r.id); } catch (e) { log(`[round ${r.id}] getLobby failed (attempt ${attempt}), retrying: ${failReason(e)}`); await sleep(5000); }
+    }
+    if (l.playerCount !== r.players.length || l.pot !== r.potUnits || l.entry !== r.entryUnits) {
+      r.cancel(`escrow has ${l.playerCount} players and pot ${l.pot}, the book ${r.players.length} and ${r.potUnits}`);
+      record(m, { in: "cancel", why: r.cancelReason });
+      m.chainError = await cancelOnChain(r.id, r.cancelReason!);
+      log(`[round ${r.id}] ${m.chainError}`);
+      return;
+    }
+  }
   let price = r.mark!;
   if (PRICE_URL) {
     const S = settlementMinute(r.endTime);
@@ -599,6 +649,13 @@ function roundsLoop() {
       if (chain.on && !m.startSent && r.status === "open" && Date.now() >= r.lockTime * 1000 - START_LEAD_MS) {
         m.startSent = true;
         if (r.players.length + m.pendingJoins.size >= 4) m.starting = startRoundOnChain(m);
+      }
+      if (chain.on && PREDICT_ON && m === protocolRound && !m.nextLobby && Date.now() >= r.lockTime * 1000 - PRECREATE_MS) {
+        const next = protocolSpec(MARKETS[protocolCount % MARKETS.length]);
+        m.nextLobby = chain.createLobby(next.resolveAfter, next.entryUnits, next.maxPlayers).catch((e) => {
+          log(`[chain] early createLobby for the next protocol round failed: ${failReason(e)}`);
+          return null;
+        });
       }
       done = m.driver.advance();
     }
@@ -639,8 +696,13 @@ async function createUserRound(body: any): Promise<[number, unknown]> {
   if (nonce <= (creatorNonces.get(creator) ?? -1n)) return [400, { error: "nonce must increase" }];
   if (!SIG_OFF && !(await verifyCreateRound(signed, String(body.nonce), body.signature))) return [401, { error: "bad signature" }];
   if (nonce <= (creatorNonces.get(creator) ?? -1n)) return [400, { error: "nonce must increase" }];
-  creatorNonces.set(creator, nonce);
-  const made = await chain.createRound(spec.resolveAfter, spec.entryUnits, spec.maxPlayers, creator, spec.creatorFeeBps);
+  const openUser = [...rounds.values()].filter((x) => !x.round.protocol && x.round.status === "open");
+  if (creating.has(creator) || openUser.some((x) => x.round.spec.creator === creator)) return [429, { error: "this creator already has an open round" }];
+  if (openUser.length + creating.size >= MAX_USER_ROUNDS) return [429, { error: `${MAX_USER_ROUNDS} user rounds are already open` }];
+  saveCreatorNonce(creator, nonce);
+  creating.add(creator);
+  let made: Awaited<ReturnType<typeof chain.createRound>>;
+  try { made = await chain.createRound(spec.resolveAfter, spec.entryUnits, spec.maxPlayers, creator, spec.creatorFeeBps); } finally { creating.delete(creator); }
   const id = made?.id ?? ++localId;
   const m = openRound(id, spec, false, Math.floor(Date.now() / 1000), 0, made?.txHash ?? null);
   log(`[round ${id}] user round by ${creator}: ${spec.market} entry ${spec.entryUnits} max ${spec.maxPlayers} winners ${spec.winnerBps} ${spec.split} creator fee ${spec.creatorFeeBps}`);
@@ -657,6 +719,41 @@ function listRounds() {
     .sort((a, b) => b.endTime - a.endTime).slice(0, 10);
   const withMark = (r: PredictRound) => ({ ...r.summary(), mark: prices.current()?.[r.market] ?? r.mark });
   return { protocol: protocolRound?.round.id ?? null, rounds: open.map(withMark), active: active.map(withMark), recent: recent.map(withMark) };
+}
+
+/**
+ * Rounds are not replayed after a restart. Any round whose log has no settled or cancelled event is closed out:
+ * a round that already reached `final` is settled from its stored book; any other is marked cancelled (a cancelled
+ * event appended to its log) and, with the chain on, cancelled on chain so every entry is refunded.
+ */
+async function recoverRounds() {
+  const files = readdirSync(DATA).filter((f) => /^round-\d+\.jsonl$/.test(f));
+  for (const f of files) {
+    const id = Number(/\d+/.exec(f)![0]);
+    const file = resolve(DATA, f);
+    const lines = readFileSync(file, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
+    if (lines.some((x) => x.type === "settled" || x.type === "cancelled")) continue;
+    const final = lines.find((x) => x.type === "final");
+    const fin = lines.find((x) => x.in === "final");
+    const book = books.get(id);
+    const m = { chainError: null as string | null };
+    if (final && fin && book) {
+      if (!chain.on) continue; // finished; nothing to pay with CHAIN=off
+      log(`[round ${id}] restart: reached final before the restart, settling from the stored book`);
+      const price = final.settlementPrice as string;
+      const target = {
+        id, markSettled: (txHash: string, mode: "deployed" | "simulated", winners: string[], amounts: string[]) =>
+          appendFileSync(file, JSON.stringify({ type: "settled", lobbyId: id, txHash, mode, winners, amounts }) + "\n"),
+      };
+      await settle(m, target, { BTC: price, ETH: price, SOL: price }, BigInt(fin.potUnits))
+        .catch((e) => log(`[round ${id}] restart settle failed: ${failReason(e)}`));
+      continue;
+    }
+    const reason = "engine restarted mid-round";
+    appendFileSync(file, JSON.stringify({ type: "cancelled", lobbyId: id, reason }) + "\n");
+    log(`[round ${id}] restart: cancelled (${reason})`);
+    if (chain.on) log(`[round ${id}] ${await cancelOnChain(id, reason)}`);
+  }
 }
 
 // ---------- replay a crashed match from its log
@@ -846,6 +943,7 @@ server.on("upgrade", (req, socket, head) => {
 server.listen(PORT, async () => {
   log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
+  void recoverRounds().catch((e) => log(`round recovery failed: ${failReason(e)}`));
   if (PREDICT_ON) void openProtocolRound(null);
   if (ROYALE_ON && !(args.resume && resume())) await createLobbyRetrying();
 });

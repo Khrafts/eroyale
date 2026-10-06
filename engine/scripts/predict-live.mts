@@ -68,6 +68,13 @@ expect("signed user round created", r[0] === 200 && Number.isInteger(r[1].lobbyI
 const userId: number = r[1].lobbyId;
 r = await post("/rounds", { params, nonce: 1, signature: await signRound(params, 1) });
 expect("reused create nonce refused", r[0] === 400, r);
+r = await post("/rounds", { params, nonce: 2, signature: await signRound(params, 2) });
+expect("second open round by the same creator refused", r[0] === 429, r);
+{
+  const zero = { ...params, creator: "0x0000000000000000000000000000000000000000" };
+  r = await post("/rounds", { params: zero, nonce: 1, signature: "0x1234" });
+  expect("zero creator refused", r[0] === 400, r);
+}
 watch(userId, false);
 
 const players = ["ALPHA", "BRAVO", "CHARLIE", "DELTA"].map((callsign) => ({ acct: privateKeyToAccount(generatePrivateKey()), callsign, nonce: 0 }));
