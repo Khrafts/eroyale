@@ -29,9 +29,12 @@ const PEAK_L = 170;
 const PEAK_R = 1470;
 const PLOT_BOTTOM = 1000;
 const LIVE_TOP = 330;
-const FINAL_TOP = 470;
-const LINGER = 3.6; // seconds an eliminated summit stays on the map
-const GX = 132; // flood gauge text, clear of the altitude scale
+const FINAL_TOP = 560;
+const LOBBY_TOP = 600; // the plateau sits low so twenty equal labels can stack above it
+const LINGER = 11; // seconds a drowned summit stays on the map
+const RX = 1512; // right-edge labels: cut line and flood
+const POLE = 34; // pennant pole above the summit triangle
+const LABEL_GAP = 26 + POLE + 12; // summit to equity baseline
 
 type Peak = {
   id: string;
@@ -58,7 +61,7 @@ type Peak = {
 
 type Gust = { id: string; side: Side; born: number };
 type Drop = { x: number; y: number; len: number; sp: number };
-type FeedRow = { key: string; callsign: string; text: string; reason: string; appear: number; y: number; vy: number };
+type Box = { l: number; r: number; t: number; b: number };
 
 export class Scene {
   T: Type;
@@ -74,7 +77,9 @@ export class Scene {
   seen = new WeakSet<object>();
   gusts: Gust[] = [];
   drops: Drop[] = [];
-  feed = new Map<string, FeedRow>();
+  amp = 0;
+  cutBoxNow: { y: number; t: number; b: number } | null = null;
+  drown = 0;
 
   constructor(cond: string, xc: string) {
     this.T = new Type(cond, xc);
@@ -179,7 +184,7 @@ export class Scene {
     const vals: number[] = [base];
     for (const p of shown) {
       if (p.alive) vals.push(p.target);
-      else if (p.reason !== "liquidated") vals.push(p.deathEq);
+      else if (p.reason !== "liquidated" && p.deadT !== null && now - p.deadT < 3.6) vals.push(p.deathEq);
     }
     if (s.board && s.status === "live") vals.push(num(s.board.cutEquity));
     let lo = Math.min(...vals);
@@ -188,7 +193,7 @@ export class Scene {
     hi = Math.max(hi, lo + span);
     const tlo = lo - span * 0.2;
     const thi = hi + span * 0.1;
-    const ttop = s.final ? FINAL_TOP : LIVE_TOP;
+    const ttop = s.final ? FINAL_TOP : !s.board ? LOBBY_TOP : LIVE_TOP;
     if (this.first || reduced) {
       this.lo = tlo;
       this.hi = thi;
@@ -227,9 +232,10 @@ export class Scene {
 
   /** Displayed altitude of a summit, including the collapse after elimination. */
   private alt(p: Peak, now: number) {
-    if (p.alive || p.deadT === null || p.reason === "liquidated") return p.eq;
+    if (p.alive || p.deadT === null) return p.eq;
+    if (p.reason === "liquidated") return Math.max(p.eq, this.drown);
     const dt = now - p.deadT;
-    return lerp(p.deathEq, this.lo - (this.hi - this.lo) * 0.12, easeIn((dt - 0.5) / 2.4));
+    return lerp(p.deathEq, Math.min(p.deathEq, this.drown), easeIn((dt - 0.5) / 2.4));
   }
 
   // ---------- frame ----------
@@ -240,8 +246,9 @@ export class Scene {
     this.dtNow = dt;
     this.reducedNow = reduced;
     this.sync(s, now, dt, reduced);
+    this.drown = this.floodBase(s, now) - (this.hi - this.lo) * 0.09;
     const shown = this.layout(now);
-    const cpEvents = s.eliminations.filter((e) => e.checkpoint !== null && now - e.t >= 0 && now - e.t < 6);
+    const cpEvents = s.eliminations.filter((e) => e.checkpoint !== null && now - e.t >= 0 && now - e.t < 6.5);
     const liqEvents = s.eliminations.filter((e) => e.checkpoint === null && now - e.t >= 0 && now - e.t < 4);
 
     // flood level, with surge
@@ -263,7 +270,7 @@ export class Scene {
     ctx.fillStyle = clear > 0 ? mix(C.sky, C.skyClear, clear) : C.sky;
     ctx.fillRect(0, 0, W, H);
     if (warn > 0 && !reduced) {
-      ctx.fillStyle = rgba("#050d1a", 0.35 * warn);
+      ctx.fillStyle = rgba("#050d1a", 0.2 * warn);
       ctx.fillRect(0, 0, W, H);
     }
 
@@ -272,7 +279,8 @@ export class Scene {
     this.drawTerrain(ctx, shown, now, step);
     this.drawSkyGrid(ctx, step, true);
     this.drawShards(ctx, cpEvents, liqEvents, now, flood, reduced);
-    this.drawFlood(ctx, flood, base, s, now, warn, reduced, cpEvents.length > 0 && flood > base + 1);
+    this.drawFlood(ctx, flood, base, s, now, warn, reduced, cpEvents.length > 0 && flood > base + 1, cpEvents);
+    this.drawVignette(ctx, warn, !!s.warning && s.status === "live" && !!s.tick?.nextCheckpoint);
     this.drawCutLine(ctx, s);
     this.drawPeaks(ctx, s, shown, now, flood);
     this.drawGusts(ctx, reduced);
@@ -283,8 +291,6 @@ export class Scene {
     this.drawTitle(ctx, s, now, reduced);
     this.drawMarks(ctx, s, now, reduced);
     this.drawCenter(ctx, s, now, reduced, cpEvents, finalDt);
-    this.drawFeed(ctx, s, now, dt, reduced, finalDt);
-    this.drawLegend(ctx, step, s);
     if (s.final) this.drawFinal(ctx, s, shown, now, finalDt, settledDt, reduced);
     this.first = false;
   }
@@ -306,8 +312,10 @@ export class Scene {
       if (y < this.top - 60) continue;
       const isStart = Math.abs(v - START_BALANCE) < 1e-6;
       if (labels) {
-        T.text(ctx, commas(v.toFixed(0)), 96, y + 6, T.font("x", 600, 19), rgba(C.ink, isStart ? 0.95 : 0.6), "right", C.sky);
-        if (isStart) T.text(ctx, "start", 96, y + 25, T.font("c", 500, 15), rgba(C.ink, 0.7), "right", C.sky);
+        const nearStart = !isStart && v < START_BALANCE && this.Y(START_BALANCE) + 36 > y - 10 && this.Y(START_BALANCE) < y;
+        if (nearStart) continue;
+        T.text(ctx, commas(v.toFixed(0)), 100, y + 8, T.font("x", 600, 23), rgba(C.ink, isStart ? 1 : 0.72), "right", C.sky);
+        if (isStart) T.text(ctx, "start", 100, y + 32, T.font("c", 600, 22), rgba(C.ink, 0.8), "right", C.sky);
         continue;
       }
       ctx.strokeStyle = rgba(C.ink, isStart ? 0.32 : 0.1);
@@ -400,22 +408,58 @@ export class Scene {
     ctx.stroke();
   }
 
+  /** The heaviest mark on the map: the line you are cut below at the next checkpoint. */
   private drawCutLine(ctx: CanvasRenderingContext2D, s: MatchState) {
-    if (!s.board || s.status !== "live") return;
-    const y = this.Y(num(s.board.cutEquity));
+    const box = this.cutBox(s);
+    if (!box) return;
     const T = this.T;
+    const y = box.y;
     ctx.save();
-    ctx.setLineDash([12, 9]);
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = rgba(C.chalk, 0.9);
+    ctx.setLineDash([22, 12]);
+    ctx.lineCap = "butt";
+    ctx.lineWidth = 9;
+    ctx.strokeStyle = rgba(C.sky, 0.7);
     ctx.beginPath();
     ctx.moveTo(110, y);
-    ctx.lineTo(PEAK_R + 40, y);
+    ctx.lineTo(W - 24, y);
+    ctx.stroke();
+    ctx.lineWidth = 4.5;
+    ctx.strokeStyle = C.chalk;
     ctx.stroke();
     ctx.restore();
-    const lx = PEAK_R + 50;
-    T.text(ctx, "Cut line", lx, y - 4, T.font("c", 700, 19), C.chalk, "left", C.sky);
-    T.odo(ctx, num(s.board.cutEquity), lx, y + 20, T.font("x", 600, 21), 21, C.chalk, "left", "", C.sky);
+    T.text(ctx, "Cut line", RX, y - 58, T.font("c", 800, 26), C.chalk, "left", C.sky);
+    T.odo(ctx, box.line, RX, y - 14, T.font("x", 800, 44), 44, C.chalk, "left", "", C.sky);
+  }
+
+  /** Where the water will stand at the next checkpoint, extrapolated from the zone's straight climb. */
+  private zoneAtCheckpoint(s: MatchState): number | null {
+    const nc = s.tick?.nextCheckpoint;
+    const p = s.prevTick;
+    if (s.status !== "live" || !nc || !s.tick || !p || s.tick.t <= p.t) return null;
+    const slope = (num(s.tick.zone) - num(p.zone)) / (s.tick.t - p.t);
+    return num(s.tick.zone) + slope * (nc.at - s.tick.t);
+  }
+
+  /**
+   * The line you are cut below at the next checkpoint: the higher of the rank cut and the
+   * flood's level at the checkpoint, never so high that fewer than three would survive.
+   */
+  private deathLine(s: MatchState): number | null {
+    if (!s.board || s.status !== "live" || !s.tick?.nextCheckpoint) return null;
+    let line = num(s.board.cutEquity);
+    const z = this.zoneAtCheckpoint(s);
+    if (z !== null) line = Math.max(line, z);
+    const alive = s.board.rows.filter((r) => r.alive).map((r) => num(r.equity)).sort((a, b) => b - a);
+    const keep = Math.min(3, alive.length);
+    if (keep > 0 && alive.filter((e) => e >= line).length < keep) line = Math.min(line, alive[keep - 1]);
+    return line;
+  }
+
+  private cutBox(s: MatchState) {
+    const line = this.deathLine(s);
+    if (line === null) return null;
+    const y = this.Y(line);
+    return { y, line, t: y - 84, b: y + 4 };
   }
 
   private drawFlood(
@@ -427,10 +471,12 @@ export class Scene {
     warn: number,
     reduced: boolean,
     surging: boolean,
+    cps: EliminatedEvent[],
   ) {
     const T = this.T;
     const y0 = this.Y(level);
     const amp = reduced ? 0 : 3 + warn * 6 + (surging ? 7 : 0);
+    this.amp = amp;
     const t = this.real;
     const surf = (x: number) => y0 + Math.sin(x * 0.017 + t * 1.3) * amp + Math.sin(x * 0.043 - t * 2.2) * amp * 0.45;
     ctx.save();
@@ -455,7 +501,23 @@ export class Scene {
       ctx.lineTo(W, y);
     }
     ctx.stroke();
+    // type set dark inside the water: the warning countdown, then the result
+    const nc = s.tick?.nextCheckpoint;
+    const cp = cps[cps.length - 1];
+    const deep = (text: string, a: number) => {
+      if (a <= 0.01) return;
+      ctx.globalAlpha = a;
+      T.text(ctx, text, 960, H - 34, T.font("x", 800, 330), rgba(C.floodDeep, 0.85), "center");
+      ctx.globalAlpha = 1;
+    };
+    if (cp) {
+      const d = now - cp.t;
+      deep(`${cp.players.length} drowned`, clamp((d - 0.3) / 0.4) * clamp((6 - d) / 0.8));
+    } else if (s.warning && nc && s.status === "live") {
+      deep(String(Math.max(0, Math.ceil(nc.at - now - 1e-6))), 1);
+    }
     ctx.restore();
+
     ctx.beginPath();
     for (let x = 0; x <= W; x += 12) (x === 0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, surf(x));
     ctx.strokeStyle = C.floodHi;
@@ -473,17 +535,11 @@ export class Scene {
       }
     }
 
-    // gauge text on the water, at the left
-    const ly = H - 52;
-    T.text(ctx, surging ? "Storm surge" : "Flood", GX, ly, T.font("c", 700, 22), C.floodHi);
-    T.odo(ctx, surging ? level : base, GX + T.w(ctx, T.font("c", 700, 22), surging ? "Storm surge " : "Flood "), ly, T.font("x", 700, 24), 24, C.floodHi, "left");
-    const nc = s.tick?.nextCheckpoint;
-    const p = s.prevTick;
+    // where the water will stand at the next checkpoint
     let note = "";
-    if (s.status === "live" && nc && s.tick && p && s.tick.t > p.t) {
-      const slope = (num(s.tick.zone) - num(p.zone)) / (s.tick.t - p.t);
-      const at = num(s.tick.zone) + slope * (nc.at - s.tick.t);
-      note = `Rises to ${commas(Math.round(at).toFixed(0))} at checkpoint ${nc.index}. Summits under the water are cut.`;
+    const at = this.zoneAtCheckpoint(s);
+    if (nc && at !== null) {
+      note = `rises to ${commas(Math.round(at).toFixed(0))} by checkpoint ${nc.index}`;
       const hy = this.Y(at);
       ctx.save();
       ctx.setLineDash([4, 6]);
@@ -491,140 +547,253 @@ export class Scene {
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(110, hy);
-      ctx.lineTo(PEAK_R + 40, hy);
+      ctx.lineTo(PEAK_R + 20, hy);
       ctx.stroke();
       ctx.restore();
-    } else if (s.status === "live" || s.final) note = "Holding. Checkpoints are over.";
-    else if (!s.final) note = "The flood rises during the match. Summits under it at a checkpoint are cut.";
-    if (note) T.text(ctx, note, GX, ly + 26, T.font("c", 500, 17), rgba(C.floodHi, 0.85));
+    } else if (s.status === "live" || s.final) note = "holding, checkpoints are over";
+    else note = "rises once the match starts";
+
+    // one label for the flood, at the right edge, kept clear of the cut-line label
+    let ly = y0 + 40;
+    const cb = this.cutBox(s);
+    if (cb && ly - 28 < cb.b && ly + 34 > cb.t) ly = cb.b + 32;
+    ly = Math.min(ly, H - 44);
+    const head = surging ? "Storm surge" : "Flood";
+    T.text(ctx, head, RX, ly, T.font("c", 800, 26), C.floodHi);
+    T.odo(ctx, surging ? level : base, RX + T.w(ctx, T.font("c", 800, 26), head + " "), ly, T.font("x", 800, 28), 28, C.floodHi, "left");
+    T.text(ctx, note, RX, ly + 30, T.font("c", 600, 22), rgba(C.floodHi, 0.9));
   }
 
   private drawPeaks(ctx: CanvasRenderingContext2D, s: MatchState, shown: Peak[], now: number, flood: number) {
     const T = this.T;
-    const lifts = this.placeLabels(ctx, s, shown, now);
-    const live = s.status === "live";
-    const cut = s.board ? num(s.board.cutEquity) : 0;
+    const line = this.deathLine(s);
     const finalIds = new Set(s.final?.finalists.map((f) => f.player) ?? []);
-    shown.forEach((p, i) => {
-      if (s.final && finalIds.has(p.id)) return; // drawn by the podium
+    const surfY = this.Y(flood);
+    const lifts = this.placeLabels(ctx, s, shown, now, surfY - this.amp * 1.5 - 8, finalIds);
+    const drowned = this.placeDrowned(ctx, shown, now, surfY);
+    this.cutBoxNow = this.cutBox(s);
+    for (const p of shown) {
+      if (s.final && finalIds.has(p.id)) continue; // drawn by the podium
       const y = this.Y(this.alt(p, now)) + (1 - p.grow) * 120;
-      const dead = !p.alive && p.deadT !== null;
-      const ddt = dead ? now - (p.deadT as number) : 0;
-      const shattered = dead && ddt > 0.35 && p.reason !== "liquidated";
-      const labelA = dead ? clamp(1 - (ddt - 0.25) / 0.75) : clamp(p.grow * 1.4);
+      if (!p.alive) {
+        this.drawDrowned(ctx, p, y, now, drowned.get(p.id) ?? NaN);
+        continue;
+      }
       const lobby = !s.board;
-      const up = p.eq >= START_BALANCE;
-      const col = lobby ? C.chalk : up ? C.profit : C.loss;
-      const inCut = live && p.alive && p.target < cut;
-      const under = p.alive && p.eq < flood;
-
+      const col = lobby ? C.chalk : p.eq >= START_BALANCE ? C.profit : C.loss;
+      const atRisk = line !== null && p.target < line;
       ctx.save();
-      ctx.globalAlpha = labelA;
+      ctx.globalAlpha = clamp(p.grow * 1.4);
+      const g = Math.max(0.01, p.grow);
       // marker: a survey summit triangle
-      if (!shattered) {
-        const flash = dead && ddt < 0.35 ? 1 - ddt / 0.35 : 0;
-        const g = Math.max(0.01, p.grow);
+      ctx.beginPath();
+      ctx.moveTo(p.x, y - 26 * g);
+      ctx.lineTo(p.x + 15 * g, y);
+      ctx.lineTo(p.x - 15 * g, y);
+      ctx.closePath();
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = C.sky;
+      ctx.stroke();
+      if (atRisk) {
+        // at risk: a white ring that breathes, separate from the loss colour
+        const pulse = this.reducedNow ? 0.6 : 0.5 + 0.5 * Math.sin(this.real * 6);
         ctx.beginPath();
-        ctx.moveTo(p.x, y - 20 * g);
-        ctx.lineTo(p.x + 11 * g, y);
-        ctx.lineTo(p.x - 11 * g, y);
-        ctx.closePath();
-        ctx.fillStyle = flash > 0 ? mix(col, "#ffffff", flash) : col;
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = C.sky;
+        ctx.arc(p.x, y - 10, 27 + pulse * 5, 0, Math.PI * 2);
+        ctx.strokeStyle = rgba("#FFFFFF", 0.55 + pulse * 0.45);
+        ctx.lineWidth = 3.5;
         ctx.stroke();
       }
-      if (inCut || under) {
-        const pulse = 0.5 + 0.5 * Math.sin(this.real * 6);
-        ctx.beginPath();
-        ctx.arc(p.x, y - 8, 22 + pulse * 4, 0, Math.PI * 2);
-        ctx.strokeStyle = rgba(C.loss, 0.6 + pulse * 0.4);
+      // wind pennant: teal flies right for long, violet flies left for short
+      let longs = 0;
+      let shorts = 0;
+      for (const side of p.pos.values()) side === 1 ? longs++ : shorts++;
+      if (longs || shorts) {
+        const top = y - 26 - POLE;
+        ctx.strokeStyle = C.chalk;
         ctx.lineWidth = 2.5;
-        ctx.stroke();
-      }
-      // open positions as wind barbs beside the marker
-      let bx = p.x + 18;
-      for (const m of MARKETS) {
-        const side = p.pos.get(m);
-        if (!side || dead) continue;
-        const c2 = side === 1 ? C.long : C.short;
-        ctx.fillStyle = c2;
         ctx.beginPath();
-        const cy = y - 9;
-        if (side === 1) {
-          ctx.moveTo(bx, cy - 7);
-          ctx.lineTo(bx + 5, cy);
-          ctx.lineTo(bx - 5, cy);
-        } else {
-          ctx.moveTo(bx, cy + 7);
-          ctx.lineTo(bx + 5, cy);
-          ctx.lineTo(bx - 5, cy);
-        }
-        ctx.closePath();
-        ctx.fill();
-        T.text(ctx, m[0], bx, y + 14, T.font("c", 700, 12), c2, "center", C.sky);
-        bx += 13;
+        ctx.moveTo(p.x, y - 24);
+        ctx.lineTo(p.x, top);
+        ctx.stroke();
+        const flap = this.reducedNow ? 0 : Math.sin(this.real * 5 + p.x * 0.05) * 3;
+        const pennant = (dir: number, c: string, dy: number) => {
+          ctx.fillStyle = c;
+          ctx.beginPath();
+          ctx.moveTo(p.x, top + dy);
+          ctx.quadraticCurveTo(p.x + dir * 16, top + dy + 5 + flap, p.x + dir * 34, top + dy + 11 + flap * 0.5);
+          ctx.lineTo(p.x, top + dy + 22);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = C.sky;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        };
+        if (longs) pennant(1, C.long, 0);
+        if (shorts) pennant(-1, C.short, longs ? 4 : 0);
       }
       // label
       const target = lifts.get(p.id) ?? 0;
       if (this.first || this.reducedNow) p.lift = target;
       else [p.lift, p.vlift] = spring(p.lift, p.vlift, target, 10, 0.85, this.dtNow);
-      const raise = p.lift;
-      const ly = y - 30 - raise;
-      if (raise > 4) {
-        ctx.strokeStyle = rgba(C.ink, 0.5);
-        ctx.lineWidth = 1;
+      const ly = y - LABEL_GAP - p.lift;
+      if (p.lift > 4) {
+        ctx.strokeStyle = rgba(C.chalk, 0.55);
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(p.x, y - 22);
-        ctx.lineTo(p.x, ly + 4);
+        ctx.moveTo(p.x, y - 26 - POLE);
+        ctx.lineTo(p.x, ly + 6);
         ctx.stroke();
       }
-      const sink = dead ? easeIn((ddt - 0.4) / 2) * 40 : 0;
-      T.odo(ctx, dead ? p.deathEq : p.eq, p.x, ly + sink, T.font("x", 600, 22), 22, dead ? C.loss : col, "center", "", C.sky);
-      const nameF = T.font("c", 800, 22);
-      const botF = T.font("c", 600, 13);
-      const nw = T.w(ctx, nameF, p.callsign);
-      const bw = p.bot ? T.w(ctx, botF, "BOT") + 6 : 0;
-      const nx = p.x - (nw + bw) / 2;
-      T.text(ctx, p.callsign, nx, ly - 24 + sink, nameF, inCut || dead ? C.loss : C.chalk, "left", C.sky);
-      if (dead && p.reason === "liquidated") {
-        // the strike callout stays readable for the whole sequence
-        ctx.globalAlpha = clamp(1 - (ddt - 2.6) / 0.8) * clamp(ddt / 0.15);
-        const cy = this.Y(p.deathEq) - 44;
-        T.text(ctx, p.callsign, p.x, cy - 30, T.font("c", 800, 30), C.loss, "center", C.sky);
-        T.text(ctx, "liquidated", p.x, cy, T.font("c", 700, 22), C.chalk, "center", C.sky);
-        ctx.globalAlpha = labelA;
-      }
-      if (p.bot) T.text(ctx, "BOT", nx + nw + 6, ly - 24 + sink, botF, rgba(C.chalk, 0.6), "left", C.sky);
+      T.odo(ctx, p.eq, p.x, ly, T.font("x", 700, 26), 26, col, "center", "", C.sky);
+      this.nameTag(ctx, p, p.x, ly - 28, C.chalk, C.sky);
       ctx.restore();
-    });
+    }
   }
 
-  /** Greedy label placement: highest summits keep their spot, lower labels climb clear of them. */
-  private placeLabels(ctx: CanvasRenderingContext2D, s: MatchState, shown: Peak[], now: number) {
+  private nameTag(ctx: CanvasRenderingContext2D, p: Peak, x: number, y: number, color: string, halo: string) {
     const T = this.T;
-    const out = new Map<string, number>();
-    const cut = s.board ? num(s.board.cutEquity) : 0;
-    const boxes: { l: number; r: number; t: number; b: number }[] = [];
-    const order = shown.filter((p) => p.alive).sort((a, b) => b.eq - a.eq);
-    for (const p of order) {
-      const y = this.Y(this.alt(p, now));
-      const w = Math.max(T.w(ctx, T.font("c", 800, 22), p.callsign) + (p.bot ? 34 : 0), 80) + 16;
-      const h = 52;
-      const bottom = y - 22;
-      let box = { l: p.x - w / 2, r: p.x + w / 2, t: bottom - h, b: bottom };
-      for (let k = 0; k < 12; k++) {
-        const hit = boxes.find((o) => o.l < box.r && o.r > box.l && o.t < box.b && o.b > box.t);
-        if (!hit) break;
-        const nb = hit.t - 4;
-        box = { ...box, t: nb - h, b: nb };
+    const nameF = T.font("c", 800, 26);
+    const botF = T.font("c", 600, 22);
+    const nw = T.w(ctx, nameF, p.callsign);
+    const bw = p.bot ? T.w(ctx, botF, "BOT") + 7 : 0;
+    const nx = x - (nw + bw) / 2;
+    T.text(ctx, p.callsign, nx, y, nameF, color, "left", halo);
+    if (p.bot) T.text(ctx, "BOT", nx + nw + 7, y, botF, rgba(C.chalk, 0.62), "left", halo);
+  }
+
+  private tagWidth(ctx: CanvasRenderingContext2D, p: Peak) {
+    const T = this.T;
+    return T.w(ctx, T.font("c", 800, 26), p.callsign) + (p.bot ? T.w(ctx, T.font("c", 600, 22), "BOT") + 7 : 0);
+  }
+
+  /** A drowned summit: a dim shape under the water with its name in loss red, fading over ten seconds. */
+  private drawDrowned(ctx: CanvasRenderingContext2D, p: Peak, y: number, now: number, labelY: number) {
+    const T = this.T;
+    const ddt = now - (p.deadT as number);
+    ctx.save();
+    if (ddt < 0.35 && p.reason !== "liquidated") {
+      // the instant of the cut: the marker flashes before it shatters
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.moveTo(p.x, y - 26);
+      ctx.lineTo(p.x + 15, y);
+      ctx.lineTo(p.x - 15, y);
+      ctx.closePath();
+      ctx.fillStyle = mix(C.loss, "#ffffff", 1 - ddt / 0.35);
+      ctx.fill();
+    }
+    if (p.reason === "liquidated" && ddt < 3.4) {
+      // the strike callout, in the sky where the summit stood
+      ctx.globalAlpha = clamp(1 - (ddt - 2.6) / 0.8) * clamp(ddt / 0.15);
+      const cb = this.cutBoxNow;
+      const cy = Math.min(this.Y(p.deathEq), cb ? cb.t : H) - 50;
+      T.text(ctx, p.callsign, p.x, cy - 32, T.font("c", 800, 34), C.loss, "center", C.sky);
+      T.text(ctx, "liquidated", p.x, cy, T.font("c", 700, 26), C.chalk, "center", C.sky);
+    }
+    const a = clamp((ddt - 0.6) / 0.5) * clamp(1 - (ddt - 1.1) / (LINGER - 1.6));
+    if (a > 0.01) {
+      ctx.globalAlpha = a;
+      ctx.beginPath();
+      ctx.moveTo(p.x, y - 26);
+      ctx.lineTo(p.x + 15, y);
+      ctx.lineTo(p.x - 15, y);
+      ctx.closePath();
+      ctx.strokeStyle = rgba(C.loss, 0.7);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      if (Number.isNaN(labelY)) {
+        ctx.restore();
+        return;
       }
-      // never climb into the scoreboard band
-      out.set(p.id, Math.min(bottom - box.b, Math.max(0, bottom - 250)));
-      boxes.push(box);
+      if (labelY > y + 6) {
+        ctx.strokeStyle = rgba(C.loss, 0.45);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x, y + 2);
+        ctx.lineTo(p.x, labelY - 22);
+        ctx.stroke();
+      }
+      this.nameTag(ctx, p, p.x, labelY, C.loss, C.floodDeep);
+    }
+    ctx.restore();
+  }
+
+  /** Living labels: kept above the wave crest, the highest summits keep their spot, lower ones climb clear. */
+  private placeLabels(
+    ctx: CanvasRenderingContext2D,
+    s: MatchState,
+    shown: Peak[],
+    now: number,
+    crest: number,
+    skip: Set<string>,
+  ) {
+    const out = new Map<string, number>();
+    const boxes: Box[] = [];
+    const cb = this.cutBox(s);
+    if (cb) {
+      boxes.push({ l: RX - 10, r: W, t: cb.t, b: cb.b });
+      boxes.push({ l: 0, r: W, t: cb.y - 8, b: cb.y + 8 });
+    }
+    const order = shown.filter((p) => p.alive && !skip.has(p.id)).sort((a, b) => b.eq - a.eq);
+    for (const p of order) {
+      const y = this.Y(this.alt(p, now)) + (1 - p.grow) * 120;
+      const w = Math.max(this.tagWidth(ctx, p), 96) + 14;
+      const h = 58;
+      const bottom = y - LABEL_GAP + 8;
+      let b = Math.min(bottom, crest);
+      for (let k = 0; k < 16; k++) {
+        const hit = boxes.find((o) => o.l < p.x + w / 2 && o.r > p.x - w / 2 && o.t < b && o.b > b - h);
+        if (!hit) break;
+        b = hit.t - 4;
+      }
+      b = Math.max(b, 236 + h); // never climb into the scoreboard band
+      out.set(p.id, Math.max(0, bottom - b));
+      boxes.push({ l: p.x - w / 2, r: p.x + w / 2, t: b - h, b });
     }
     return out;
+  }
+
+  /** Drowned labels sit in the water and push down past each other. Returns each name's baseline. */
+  private placeDrowned(ctx: CanvasRenderingContext2D, shown: Peak[], now: number, surfY: number) {
+    const out = new Map<string, number>();
+    const boxes: Box[] = [];
+    const dead = shown.filter((p) => !p.alive).sort((a, b) => a.join - b.join);
+    for (const p of dead) {
+      const y = this.Y(this.alt(p, now));
+      const w = this.tagWidth(ctx, p) + 14;
+      const h = 32;
+      // fixed rows under the surface, so names never overlap: start at the summit's own row,
+      // search down, then up
+      const first = surfY + 26;
+      const rows = Math.max(1, Math.floor((H - 4 - first) / (h + 4)));
+      const k0 = clamp(Math.floor((y + 8 - first) / (h + 4)), 0, rows - 1);
+      const free = (k: number) => {
+        const tt = first + k * (h + 4);
+        return !boxes.some((o) => o.l < p.x + w / 2 && o.r > p.x - w / 2 && o.t < tt + h && o.b > tt);
+      };
+      let k = -1;
+      for (let j = k0; j < rows && k < 0; j++) if (free(j)) k = j;
+      for (let j = k0 - 1; j >= 0 && k < 0; j--) if (free(j)) k = j;
+      if (k < 0) continue; // no room this frame; the silhouette still shows
+      const t = first + k * (h + 4);
+      boxes.push({ l: p.x - w / 2, r: p.x + w / 2, t, b: t + h });
+      out.set(p.id, t + 25);
+    }
+    return out;
+  }
+
+  private drawVignette(ctx: CanvasRenderingContext2D, warnRaw: number, warning: boolean) {
+    if (!warning) return;
+    const warn = 0.35 + 0.65 * warnRaw;
+    // the lens closes in through the ten-second warning; the strike releases it
+    const inner = lerp(1000, 240, smooth(warn));
+    const g = ctx.createRadialGradient(960, 600, inner, 960, 600, inner + 700);
+    g.addColorStop(0, "rgba(4,10,18,0)");
+    g.addColorStop(1, `rgba(4,10,18,${0.92 * smooth(warn)})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
   }
 
   private drawGusts(ctx: CanvasRenderingContext2D, reduced: boolean) {
@@ -792,7 +961,7 @@ export class Scene {
     const total = s.players.length;
     const word = s.board ? `standing of ${total}` : total === 1 ? "player in" : "players in";
     const fw = T.roll(ctx, "alive", String(alive), 40, 196, T.font("x", 700, 30), 30, C.chalk, "left", this.real, reduced);
-    T.text(ctx, word, 40 + fw + 8, 195, T.font("c", 500, 21), rgba(C.chalk, 0.7));
+    T.text(ctx, word, 40 + fw + 8, 195, T.font("c", 500, 22), rgba(C.chalk, 0.7));
   }
 
   private drawMarks(ctx: CanvasRenderingContext2D, s: MatchState, now: number, reduced: boolean) {
@@ -853,7 +1022,7 @@ export class Scene {
       ctx.globalAlpha = bannerA;
       const alive = s.board ? s.board.rows.filter((r) => r.alive).length : 0;
       const n = cp.players.length;
-      T.text(ctx, `The flood took ${n} ${n === 1 ? "summit" : "summits"}. ${alive} still standing.`, cx, 172, T.font("c", 600, 30), C.chalk, "center");
+      T.text(ctx, `${n} ${n === 1 ? "summit" : "summits"} went under. ${alive} still standing.`, cx, 172, T.font("c", 600, 30), C.chalk, "center");
       ctx.restore();
     }
     if (normalA <= 0.01) return;
@@ -867,7 +1036,7 @@ export class Scene {
         T.text(ctx, "Waiting for players", cx, 58, T.font("c", 600, 26), rgba(C.chalk, 0.75), "center");
         const w = T.roll(ctx, "joined", String(s.players.length), cx, 162, T.font("x", 800, 110), 110, C.chalk, "center", this.real, reduced);
         T.text(ctx, "joined", cx + w / 2 + 12, 160, T.font("c", 600, 28), rgba(C.chalk, 0.75), "left");
-        T.text(ctx, "Every summit starts at 10,000. Survive the flood.", cx, 200, T.font("c", 500, 21), rgba(C.chalk, 0.6), "center");
+        T.text(ctx, "Every summit starts at 10,000. Survive the flood.", cx, 204, T.font("c", 500, 22), rgba(C.chalk, 0.7), "center");
       }
     } else {
       const nc = s.tick?.nextCheckpoint;
@@ -886,120 +1055,15 @@ export class Scene {
         T.text(ctx, "Final in", cx, 58, T.font("c", 600, 26), rgba(C.chalk, 0.75), "center");
         T.roll(ctx, "cp", mmss(end), cx, 168, T.font("x", 800, 112), 112, C.chalk, "center", this.real, reduced);
       }
-      if (nc) {
-        const msg = `Match ends in ${mmss(end)}`;
-        T.text(ctx, msg, cx, 206, T.font("c", 500, 21), rgba(C.chalk, 0.6), "center");
+      const line = this.deathLine(s);
+      if (nc && s.warning && s.board && line !== null) {
+        const n = s.board.rows.filter((r) => r.alive && num(r.equity) < line).length;
+        T.text(ctx, `${n} below the line`, cx, 210, T.font("c", 800, 30), C.chalk, "center");
+      } else if (nc) {
+        T.text(ctx, `Match ends in ${mmss(end)}`, cx, 208, T.font("c", 500, 22), rgba(C.chalk, 0.7), "center");
       }
     }
     ctx.restore();
-  }
-
-  private drawFeed(ctx: CanvasRenderingContext2D, s: MatchState, now: number, dt: number, reduced: boolean, finalDt: number) {
-    const T = this.T;
-    const rows: FeedRow[] = [];
-    for (const e of s.eliminations) {
-      e.players.forEach((v, i) => {
-        const key = `${e.t}|${v.player}`;
-        let r = this.feed.get(key);
-        if (!r) {
-          const text =
-            v.reason === "liquidated"
-              ? `Liquidated at ${mmss(e.t)}`
-              : v.reason === "zone"
-                ? `Under the flood at checkpoint ${e.checkpoint}`
-                : `Cut at checkpoint ${e.checkpoint}, rank ${v.rank}`;
-          r = { key, callsign: v.callsign, text, reason: v.reason, appear: e.t + 0.3 + i * 0.12, y: -1, vy: 0 };
-          this.feed.set(key, r);
-        }
-        if (now >= r.appear) rows.push(r);
-      });
-    }
-    if (!rows.length) return;
-    rows.sort((a, b) => b.appear - a.appear);
-    const A = s.final ? 1 - smooth(finalDt / 1.2) : 1;
-    if (A <= 0.01) return;
-    ctx.save();
-    ctx.globalAlpha = A;
-    const x0 = 1600;
-    T.text(ctx, "Eliminated", x0, 262, T.font("c", 700, 22), rgba(C.chalk, 0.7));
-    const MAX = 9;
-    const room = rows.length > MAX ? MAX - 1 : MAX;
-    rows.forEach((r, i) => {
-      const ty = 304 + i * 54;
-      if (r.y < 0 || this.first || reduced) r.y = ty;
-      else [r.y, r.vy] = spring(r.y, r.vy, ty, 9, 0.8, dt);
-      if (i >= room) return;
-      const age = now - r.appear;
-      const k = reduced ? clamp(age / 0.3) : easeOutBack(age / 0.45);
-      ctx.save();
-      ctx.globalAlpha = A * clamp(age / 0.2);
-      if (!reduced) ctx.translate((1 - k) * 80, 0);
-      ctx.fillStyle = r.reason === "liquidated" ? C.loss : C.flood;
-      ctx.fillRect(x0, r.y - 22, 5, 44);
-      T.text(ctx, r.callsign, x0 + 16, r.y - 2, T.font("c", 800, 24), C.chalk);
-      T.text(ctx, r.text, x0 + 16, r.y + 20, T.font("c", 500, 17), rgba(C.chalk, 0.65));
-      ctx.restore();
-    });
-    if (rows.length > MAX) T.text(ctx, `and ${rows.length - room} more`, x0 + 16, 304 + room * 54 - 14, T.font("c", 600, 18), rgba(C.chalk, 0.65));
-    ctx.restore();
-  }
-
-  private drawLegend(ctx: CanvasRenderingContext2D, step: number, s: MatchState) {
-    const T = this.T;
-    const x = 1600;
-    const y = 852;
-    const w = 280;
-    const h = 196;
-    ctx.fillStyle = rgba(C.sky, 0.92);
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = rgba(C.ink, 0.6);
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    ctx.strokeRect(x + 4.5, y + 4.5, w - 9, h - 9);
-    const F = T.font("c", 500, 18);
-    const tri = (cx: number, cy: number, c: string) => {
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - 9);
-      ctx.lineTo(cx + 7, cy + 4);
-      ctx.lineTo(cx - 7, cy + 4);
-      ctx.closePath();
-      ctx.fill();
-    };
-    let ly = y + 34;
-    tri(x + 26, ly - 6, C.profit);
-    T.text(ctx, "Summit in profit", x + 44, ly, F, C.chalk);
-    ly += 28;
-    tri(x + 26, ly - 6, C.loss);
-    T.text(ctx, "Summit in loss", x + 44, ly, F, C.chalk);
-    ly += 28;
-    tri(x + 26, ly - 6, C.long);
-    T.text(ctx, "Long", x + 44, ly, F, C.chalk);
-    ctx.fillStyle = C.short;
-    ctx.beginPath();
-    ctx.moveTo(x + 136, ly);
-    ctx.lineTo(x + 143, ly - 13);
-    ctx.lineTo(x + 129, ly - 13);
-    ctx.closePath();
-    ctx.fill();
-    T.text(ctx, "Short", x + 154, ly, F, C.chalk);
-    ly += 28;
-    ctx.fillStyle = C.flood;
-    ctx.fillRect(x + 18, ly - 13, 18, 12);
-    T.text(ctx, "Flood, cut at checkpoints", x + 44, ly, F, C.chalk);
-    ly += 28;
-    ctx.save();
-    ctx.setLineDash([7, 5]);
-    ctx.strokeStyle = C.chalk;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x + 16, ly - 6);
-    ctx.lineTo(x + 38, ly - 6);
-    ctx.stroke();
-    ctx.restore();
-    T.text(ctx, "Cut line, ringed summits under it", x + 44, ly, F, C.chalk);
-    ly += 28;
-    T.text(ctx, `Altitude is equity. Contours every $${step}.`, x + 18, ly, T.font("c", 500, 16), rgba(C.ink, 0.85));
   }
 
   // ---------- final ----------
@@ -1069,36 +1133,33 @@ export class Scene {
       ctx.strokeStyle = C.sky;
       ctx.lineWidth = 2;
       ctx.stroke();
-      if (rank === 0) {
-        // survey flag on the winning summit
-        const fy = y - 26 - 70 * clamp(reveal);
-        ctx.strokeStyle = C.chalk;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(p.x, y - 24);
-        ctx.lineTo(p.x, fy);
-        ctx.stroke();
-        const wave = reduced ? 0 : Math.sin(this.real * 4) * 4;
-        ctx.fillStyle = C.profit;
-        ctx.beginPath();
-        ctx.moveTo(p.x, fy);
-        ctx.quadraticCurveTo(p.x + 24, fy + 4 + wave, p.x + 48, fy + 10);
-        ctx.lineTo(p.x, fy + 26);
-        ctx.closePath();
-        ctx.fill();
-      }
-      const lift = (1 - clamp(reveal)) * 30 + (rank === 0 ? 76 : 0);
-      const ly = y - 40 - lift;
+      // a survey flag on every finalist, sized by its share of the pot
+      const share = Number(units(f.player)) / maxU;
+      const fs = 0.55 + 0.9 * share;
+      const rise = clamp(reveal);
+      const poleH = (40 + 70 * fs) * rise;
+      const fy = y - 24 - poleH;
+      ctx.strokeStyle = C.chalk;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(p.x, y - 24);
+      ctx.lineTo(p.x, fy);
+      ctx.stroke();
+      const wave = reduced ? 0 : Math.sin(this.real * 4 + rank) * 4 * fs;
+      ctx.fillStyle = C.profit;
+      ctx.beginPath();
+      ctx.moveTo(p.x, fy);
+      ctx.quadraticCurveTo(p.x + 26 * fs, fy + 4 + wave, p.x + 54 * fs, fy + 12 * fs);
+      ctx.lineTo(p.x, fy + 30 * fs);
+      ctx.closePath();
+      ctx.fill();
+      const ly = fy - 14 - (1 - rise) * 30;
       const amt = "$" + commas(unitsToUsd(units(f.player)));
-      T.text(ctx, settled ? "paid" : "provisional", p.x, ly, T.font("c", 600, 18), rgba(C.chalk, 0.7), "center", C.sky);
-      T.roll(ctx, "pay" + f.player, amt, p.x, ly - 24, T.font("x", 800, 40), 40, C.profit, "center", this.real, reduced);
-      T.odo(ctx, p.eq, p.x, ly - 72, T.font("x", 600, 24), 24, col, "center", "", C.sky);
-      const nameF = T.font("c", 800, 30);
-      const nw = T.w(ctx, nameF, f.callsign);
-      const isBot = p.bot;
-      const bw = isBot ? T.w(ctx, T.font("c", 600, 15), "BOT") + 6 : 0;
-      T.text(ctx, f.callsign, p.x - (nw + bw) / 2, ly - 100, nameF, C.chalk, "left", C.sky);
-      if (isBot) T.text(ctx, "BOT", p.x - (nw + bw) / 2 + nw + 6, ly - 100, T.font("c", 600, 15), rgba(C.chalk, 0.6), "left", C.sky);
+      const payF = Math.round(34 + 22 * share);
+      T.text(ctx, settled ? "paid" : "provisional", p.x, ly, T.font("c", 600, 22), rgba(C.chalk, 0.75), "center", C.sky);
+      T.roll(ctx, "pay" + f.player, amt, p.x, ly - 26, T.font("x", 800, payF), payF, C.profit, "center", this.real, reduced);
+      T.odo(ctx, p.eq, p.x, ly - 32 - payF, T.font("x", 600, 26), 26, col, "center", "", C.sky);
+      this.nameTag(ctx, p, p.x, ly - 62 - payF, C.chalk, C.sky);
       ctx.restore();
     });
 
@@ -1113,7 +1174,7 @@ export class Scene {
       ? `${fin.finalists.length} finalists were paid $${commas(unitsToUsd(total.toString()))} from the pot.`
       : `${fin.finalists.length} finalists split $${commas(unitsToUsd(total.toString()))}. Payouts are provisional until settlement.`;
     T.text(ctx, sub, 960, 150, T.font("c", 600, 27), rgba(C.chalk, 0.8), "center");
-    T.text(ctx, `Book ${shortHash(fin.bookHash)}`, 960, 184, T.font("c", 500, 19), rgba(C.chalk, 0.55), "center");
+    T.text(ctx, `Book ${shortHash(fin.bookHash)}`, 960, 188, T.font("c", 500, 22), rgba(C.chalk, 0.6), "center");
     ctx.restore();
 
     if (settled && settledDt >= 0) this.drawStamp(ctx, settled.txHash, settled.mode, settledDt, reduced);
@@ -1177,7 +1238,7 @@ export class Scene {
     ctx.textBaseline = "alphabetic";
     T.text(ctx, "Settled", 0, 24, T.font("c", 800, 30), C.ink, "center");
     T.text(ctx, shortHash(tx), 0, 52, T.font("x", 600, 24), C.ink, "center");
-    T.text(ctx, mode === "simulated" ? "simulated report" : "onchain report", 0, R - 22, T.font("c", 600, 15), rgba(C.ink, 0.8), "center");
+    T.text(ctx, mode === "simulated" ? "simulated report" : "onchain report", 0, 96, T.font("c", 700, 22), rgba(C.ink, 0.85), "center");
     ctx.restore();
     // ink spread on impact
     if (!reduced && dt > 0.2 && dt < 1) {
