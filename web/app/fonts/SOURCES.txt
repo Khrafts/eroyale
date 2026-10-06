@@ -1,0 +1,14 @@
+Self-hosted copies of Google Fonts files, fetched 2026-10-06. Variable weight axis (1..1000), normal style, latin subset only.
+Each woff2 is the gstatic file that the Google Fonts CSS API (css2) returned for the /* latin */ block with a Chrome User-Agent.
+
+SofiaSansCondensed-latin-wght.woff2
+  file: https://fonts.gstatic.com/s/sofiasanscondensed/v6/r05EGKVS5aVKd567NYXawnFKJaTtoAuLnIcIptH3eXxF.woff2
+  css:  https://fonts.googleapis.com/css2?family=Sofia+Sans+Condensed:wght@1..1000&display=swap
+SofiaSansExtraCondensed-latin-wght.woff2
+  file: https://fonts.gstatic.com/s/sofiasansextracondensed/v6/raxoHjafvdAIOju4GcIfJH0i7zi50X3zRtuLNiMS0fSuJk52kCel.woff2
+  css:  https://fonts.googleapis.com/css2?family=Sofia+Sans+Extra+Condensed:wght@1..1000&display=swap
+
+SofiaSansCondensed-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/sofiasanscondensed/OFL.txt
+SofiaSansExtraCondensed-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/sofiasansextracondensed/OFL.txt
