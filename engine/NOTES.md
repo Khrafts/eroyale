@@ -1,8 +1,9 @@
 ## Status
-- Step: RPC read-lag handling: createLobby and start wait for a read showing Open/Live; lag-shaped reverts (LobbyNotOpen on join, NotEnoughPlayers on start, LobbyNotLive/SettleBeforeEnd on settle) retried 4 x 1.5 s; failed bots retried every 3 s while joins are open; ENGINE_READ_LAG_MS test transport.
-- Last gate: `bash gates/all.sh` -> GATE PASS x5. `npm run e2e:local` PASS with reads lagging 6 s (20/20 joins, all finalists + treasury match `final`).
-- Next: lead reruns `npm run e2e` on Base Sepolia.
-- Blockers: deployed-mode CRE trigger not wired.
+- Step: Phase 8 predict mode. Core (`src/predict.ts`), bots (`src/predict-bots.ts`), `PredictDriver`, sim `--mode predict` done.
+- Last gate: `bash gates/predict-engine.sh` -> GATE PASS; `bash gates/engine.sh` -> GATE PASS.
+- Next: live server (protocol round loop, POST /rounds, POST /predictions, GET /rounds), chain path (createRound).
+- Run: `npm run sim -- --mode predict --bots 20 --seed 42 --market BTC --out b.json --events e.jsonl`.
+- Blockers: none.
 
 # Engine notes
 

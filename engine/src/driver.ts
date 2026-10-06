@@ -2,6 +2,8 @@
 import type { Lobby } from "./lobby.ts";
 import type { Bots } from "./bots.ts";
 import type { PriceSource } from "./prices.ts";
+import type { PredictRound } from "./predict.ts";
+import type { PredictBots } from "./predict-bots.ts";
 import { TICKS_PER_SEC, type Prices } from "./types.ts";
 
 export interface Clock { now(): number } // ms since epoch
@@ -47,5 +49,31 @@ export class Driver {
       this.bots?.act(l, marks, k / TICKS_PER_SEC);
     }
     return l.k >= l.endK;
+  }
+}
+
+/** Drives a prediction round: ticks every 1/4 s from open, locks at lockK, pticks to endK. Same code in sim and server. */
+export class PredictDriver {
+  /** Called after each tick is processed (the server logs it for replay). */
+  onTick: ((k: number, mark: string) => void) | null = null;
+  /** While this returns true the lock tick waits (the server holds it for joins still in flight). */
+  holdLock: (() => boolean) | null = null;
+  constructor(readonly round: PredictRound, readonly clock: Clock, readonly prices: PriceSource, readonly bots: PredictBots | null) {}
+
+  /** Process every tick that is due. Returns true once the round has reached its resolve tick. */
+  advance(): boolean {
+    const r = this.round;
+    while ((r.status === "open" || r.status === "live") && this.clock.now() >= r.tickAtMs(r.k + 1)) {
+      const k = r.k + 1;
+      if (k === r.lockK && this.holdLock?.()) break;
+      if (k > 0) this.prices.onTick?.(k);
+      const marks = this.prices.current() ?? null;
+      const mark = marks?.[r.market] ?? r.mark;
+      if (!mark) break;
+      r.step(k, mark);
+      this.onTick?.(k, mark);
+      if (r.status === "open") this.bots?.act(r, mark, k);
+    }
+    return r.status === "settling" || r.status === "settled";
   }
 }
