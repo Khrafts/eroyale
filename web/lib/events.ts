@@ -13,11 +13,11 @@ export type LobbyEvent = {
   type: "lobby";
   status: LobbyStatus;
   players: LobbyPlayer[];
-  startsAt: number; // unix seconds
+  startsAt: number | null; // unix seconds, null until the countdown starts
   potUnits: string;
   lobbyId?: number;
   preset?: string;
-  endTime?: number;
+  endTime?: number | null;
 };
 
 export type TickEvent = {
@@ -41,7 +41,7 @@ export type LeaderboardEvent = {
   type: "leaderboard";
   t: number;
   rows: LeaderboardRow[];
-  cutEquity: string;
+  cutEquity: string | null; // null after the last checkpoint
 };
 
 export type FillKind = "open" | "close" | "liquidation";
@@ -103,6 +103,13 @@ export const STAGE = {
 } as const;
 
 export const START_BALANCE = 10000;
+
+export type Preset = { name: string; duration: number; checkpoints: number[]; zoneLines: string[] };
+export const PRESETS: Record<string, Preset> = {
+  stage: { name: "stage", duration: 120, checkpoints: [30, 60, 90], zoneLines: ["10050.00", "10150.00", "10300.00"] },
+  standard: { name: "standard", duration: 360, checkpoints: [90, 180, 270], zoneLines: ["10100.00", "10300.00", "10600.00"] },
+};
+export const presetOf = (name: string | null | undefined): Preset => PRESETS[name ?? ""] ?? PRESETS.stage;
 
 /** "10212.50" -> 10212.5, for drawing only. Never feed the result back into money math. */
 export const num = (s: string | undefined | null): number => (s ? Number(s) : 0);

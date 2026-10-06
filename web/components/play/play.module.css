@@ -87,8 +87,10 @@
 .gaugeMeLow { fill: var(--loss); }
 .sentence { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.2; padding: 10px 12px; border-left: 4px solid var(--chalk); background: var(--sky2); }
 .sentenceEdge { border-left-color: var(--floodHi); }
-.sentenceDanger { background: var(--flood); border-left-color: var(--chalk); color: #fff; animation: surge 1.4s ease-in-out infinite; }
-@keyframes surge { 50% { background: var(--floodDeep); } }
+.sentenceDanger { background: var(--flood); border-left-color: var(--chalk); color: #fff; position: relative; isolation: isolate; }
+/* The surge pulses a darker layer's opacity: compositor-only, no background animation. */
+.sentenceDanger::after { content: ""; position: absolute; inset: 0; background: var(--floodDeep); opacity: 0; z-index: -1; animation: surge 1.4s ease-in-out infinite; }
+@keyframes surge { 50% { opacity: 1; } }
 
 .markets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .market {
@@ -189,5 +191,5 @@
 .stampBody { margin: 2px 0 0; font-size: 16px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .sentenceDanger { animation: none; }
+  .sentenceDanger::after { animation: none; }
 }

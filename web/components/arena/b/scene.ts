@@ -2,7 +2,7 @@
 // altitude is their equity; the zone is a flood that climbs the contours and, at each
 // checkpoint, surges over the lowest peaks. Everything is drawn in a 1920x1080 design space.
 import type { EliminatedEvent, Market, Side } from "@/lib/events";
-import { MARKETS, STAGE, START_BALANCE, num, unitsToUsd } from "@/lib/events";
+import { MARKETS, STAGE, START_BALANCE, num, presetOf, unitsToUsd } from "@/lib/events";
 import type { MatchState } from "@/lib/useMatch";
 import {
   C,
@@ -186,7 +186,7 @@ export class Scene {
       if (p.alive) vals.push(p.target);
       else if (p.reason !== "liquidated" && p.deadT !== null && now - p.deadT < 3.6) vals.push(p.deathEq);
     }
-    if (s.board && s.status === "live") vals.push(num(s.board.cutEquity));
+    if (s.board && s.board.cutEquity !== null && s.status === "live") vals.push(num(s.board.cutEquity));
     let lo = Math.min(...vals);
     let hi = Math.max(...vals, base + 40);
     const span = Math.max(hi - lo, 180);
@@ -261,8 +261,9 @@ export class Scene {
       flood = Math.max(flood, lerp(base, Math.max(base, crest), this.surge(now - e.t, reduced)));
     }
 
-    const finalDt = s.final ? now - STAGE.duration : -1;
-    const settledDt = s.settled ? now - (STAGE.duration + 8) : -1;
+    // final and settled carry no t: time them from when they arrived (match clock, so frozen mock shots stay fixed).
+    const finalDt = s.final ? now - (s.finalT ?? now) : -1;
+    const settledDt = s.settled ? now - (s.settledT ?? now) : -1;
     const warn = this.warnLevel(s, now);
 
     // sky
@@ -431,13 +432,12 @@ export class Scene {
     T.odo(ctx, box.line, RX, y - 14, T.font("x", 800, 44), 44, C.chalk, "left", "", C.sky);
   }
 
-  /** Where the water will stand at the next checkpoint, extrapolated from the zone's straight climb. */
+  /** Where the water will stand at the next checkpoint: the lobby preset's zone line for it. */
   private zoneAtCheckpoint(s: MatchState): number | null {
     const nc = s.tick?.nextCheckpoint;
-    const p = s.prevTick;
-    if (s.status !== "live" || !nc || !s.tick || !p || s.tick.t <= p.t) return null;
-    const slope = (num(s.tick.zone) - num(p.zone)) / (s.tick.t - p.t);
-    return num(s.tick.zone) + slope * (nc.at - s.tick.t);
+    if (s.status !== "live" || !nc) return null;
+    const line = presetOf(s.preset).zoneLines[nc.index - 1];
+    return line ? num(line) : null;
   }
 
   /**
@@ -446,6 +446,7 @@ export class Scene {
    */
   private deathLine(s: MatchState): number | null {
     if (!s.board || s.status !== "live" || !s.tick?.nextCheckpoint) return null;
+    if (s.board.cutEquity === null) return null;
     let line = num(s.board.cutEquity);
     const z = this.zoneAtCheckpoint(s);
     if (z !== null) line = Math.max(line, z);
@@ -1040,7 +1041,7 @@ export class Scene {
       }
     } else {
       const nc = s.tick?.nextCheckpoint;
-      const end = STAGE.duration - now;
+      const end = s.duration - now;
       if (nc) {
         const left = nc.at - now;
         const warn = !!s.warning;

@@ -124,7 +124,10 @@ export function mockMatch(seed = 7): { events: Timed[]; cast: Cast } {
       type: "lobby",
       status,
       players: joined.map((p) => ({ ...p })),
-      startsAt: STARTS_AT,
+      startsAt: status === "open" ? null : STARTS_AT,
+      endTime: status === "open" ? null : STARTS_AT + STAGE.duration,
+      lobbyId: 1,
+      preset: "stage",
       potUnits: (BigInt(joined.length) * 5_000000n).toString(),
     });
   players.forEach((p, i) => {

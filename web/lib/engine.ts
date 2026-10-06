@@ -3,6 +3,7 @@
 // Signing uses viem, the same library the engine verifies with.
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import type { Market, Side } from "./events";
+import { engineHttp } from "./engineUrl";
 
 export const DOMAIN = { name: "TradingRoyale", version: "1" } as const;
 export const ORDER_TYPES = {
@@ -30,14 +31,6 @@ export type Order =
   | { action: "open"; market: Market; side: Side; margin: string; leverage: number }
   | { action: "close"; market: Market };
 
-/** HTTP base: NEXT_PUBLIC_ENGINE_HTTP, else NEXT_PUBLIC_ENGINE_WS with ws->http and the /ws path dropped. */
-export function engineHttp(): string {
-  const explicit = process.env.NEXT_PUBLIC_ENGINE_HTTP;
-  if (explicit) return explicit.replace(/\/$/, "");
-  const ws = process.env.NEXT_PUBLIC_ENGINE_WS ?? "ws://localhost:8787/ws";
-  return ws.replace(/^ws/, "http").replace(/\/ws\/?(\?.*)?$/, "");
-}
-
 const KEY = "royale.burner";
 const NONCE = "royale.nonce";
 
@@ -60,7 +53,7 @@ export function burner(): PrivateKeyAccount {
   return privateKeyToAccount(pk);
 }
 
-function nextNonce(player: string): bigint {
+function nextNonce(player: string, nowMs: number): bigint {
   const k = `${NONCE}.${player}`;
   let last = 0;
   try {
@@ -68,7 +61,7 @@ function nextNonce(player: string): bigint {
   } catch {
     /* ignore */
   }
-  const n = Math.max(last + 1, Date.now());
+  const n = Math.max(last + 1, nowMs);
   try {
     localStorage.setItem(k, String(n));
   } catch {
@@ -107,10 +100,11 @@ export async function join(acct: PrivateKeyAccount, lobbyId: number, callsign: s
   return post(`/lobbies/${lobbyId}/join`, await signJoin(acct, lobbyId, callsign));
 }
 
-export async function signOrder(acct: PrivateKeyAccount, lobbyId: number, order: Order) {
+/** `serverOffsetMs` (server clock minus local) keeps `ts` inside the engine's 30 s window on a skewed phone. */
+export async function signOrder(acct: PrivateKeyAccount, lobbyId: number, order: Order, serverOffsetMs = 0) {
   const player = acct.address.toLowerCase() as `0x${string}`;
-  const nonce = nextNonce(player);
-  const ts = Date.now();
+  const ts = Math.round(Date.now() + serverOffsetMs);
+  const nonce = nextNonce(player, ts);
   const open = order.action === "open";
   const signature = await acct.signTypedData({
     domain: DOMAIN,
@@ -131,6 +125,6 @@ export async function signOrder(acct: PrivateKeyAccount, lobbyId: number, order:
   return { lobbyId, player, nonce: nonce.toString(), ts, order, signature };
 }
 
-export async function sendOrder(acct: PrivateKeyAccount, lobbyId: number, order: Order) {
-  return post("/orders", await signOrder(acct, lobbyId, order));
+export async function sendOrder(acct: PrivateKeyAccount, lobbyId: number, order: Order, serverOffsetMs = 0) {
+  return post("/orders", await signOrder(acct, lobbyId, order, serverOffsetMs));
 }

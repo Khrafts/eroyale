@@ -85,6 +85,30 @@ export default function VariantB({ match }: ArenaProps) {
         aria-label={`Trading Royale arena, ${st.status ?? "loading"}, ${alive} players standing`}
         style={{ width: "100%", height: "100%", display: "block" }}
       />
+      {(st.error || st.status === "cancelled") && (
+        <div
+          role="alert"
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(23,41,48,0.86)",
+            color: C.chalk,
+            textAlign: "center",
+            padding: 48,
+          }}
+        >
+          <div>
+            <p style={{ fontSize: 72, fontWeight: 800, margin: 0 }}>
+              {st.error ? "The arena is not connected" : "This match was called off"}
+            </p>
+            <p style={{ fontSize: 30, margin: "16px auto 0", maxWidth: "40ch" }}>
+              {st.error ?? "Not enough players made it in. Every entry is refunded on chain. The next lobby opens here."}
+            </p>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

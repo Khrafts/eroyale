@@ -139,7 +139,15 @@ function Body({
     return null;
   }, [state.eliminations, me]);
 
+  if (state.error) return <Notice title="Not connected" body={state.error} />;
   if (!state.status) return <p className={s.waiting}>Finding the lobby</p>;
+  if (state.status === "cancelled")
+    return (
+      <Notice
+        title="This match was called off"
+        body="Not enough players made it in. Every entry is refunded on chain. Keep this page open; the next lobby shows up here."
+      />
+    );
   if (state.final || state.status === "settling" || state.status === "settled") {
     if (myElim) return <Eliminated match={match} me={me!} elim={myElim} />;
     return <Result match={match} me={me} />;
@@ -150,6 +158,19 @@ function Body({
   if (myElim) return <Eliminated match={match} me={me!} elim={myElim} />;
   if (!inLobby) return <Spectate match={match} />;
   return <Trade match={match} me={me!} acct={acct} />;
+}
+
+function Notice({ title, body }: { title: string; body: string }) {
+  return (
+    <section className={s.out} role="alert">
+      <h1 className={s.outTitle}>{title}</h1>
+      <p className={s.lede}>{body}</p>
+    </section>
+  );
+}
+
+function BotTag({ match, player }: { match: Match; player: string }) {
+  return match.state.players.find((p) => p.player === player)?.bot ? <span className={s.bot}>BOT</span> : null;
 }
 
 function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount | null; onJoined: (c: string) => void }) {
@@ -166,6 +187,7 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
       if (source === "mock") {
         onJoined(callsign.trim());
       } else {
+        if (state.lobbyId === null) throw new Error("No lobby is open yet. Wait a moment and try again.");
         const r = await join(acct, state.lobbyId, callsign.trim());
         if (!r.ok) throw new Error(String(r.data.error ?? `The engine refused the join (${r.status}).`));
         onJoined(callsign.trim());
@@ -257,7 +279,8 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
   const alive = rows.filter((r) => r.alive);
   const row = rows.find((r) => r.player === me);
   const equity = num(row?.equity ?? STAGE.startBalance);
-  const cut = num(state.board?.cutEquity ?? STAGE.startBalance);
+  const cutStr = state.board?.cutEquity ?? null;
+  const cut = cutStr === null ? START_BALANCE : num(cutStr);
   const zone = num(state.tick?.zone ?? STAGE.zoneStart);
   const marks = state.tick?.marks;
   const positions = state.positions[me] ?? {};
@@ -272,7 +295,11 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
   const onLine = Math.abs(gap) < 0.005;
   const nextIn = next ? clockStr(next.at - t) : null;
 
-  const sentence = onLine
+  const sentence = cutStr === null
+    ? gap >= 0
+      ? `No more cuts. You are $${usd(gap)} above the start, and that profit is your share of the pot.`
+      : `No more cuts, but you are $${usd(-gap)} below the start. Finish above it to be paid.`
+    : onLine
     ? "You are the last one above the cut line. One bad tick and you go under."
     : danger
       ? `You are $${usd(-gap)} below the cut line.${nextIn ? ` The flood rises in ${nextIn}.` : ""}`
@@ -283,7 +310,7 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
     setBusy(true);
     try {
       if (source === "mock") {
-        if (acct) await signOrder(acct, state.lobbyId, order);
+        if (acct) await signOrder(acct, state.lobbyId ?? 1, order);
         const mk = order.market;
         const price = marks?.[mk] ?? "0";
         const held = positions[mk];
@@ -294,7 +321,8 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
         match.inject(fill);
       } else {
         if (!acct) throw new Error("No game key yet. Reload the page.");
-        const r = await sendOrder(acct, state.lobbyId, order);
+        if (state.lobbyId === null) throw new Error("Not connected to a lobby yet.");
+        const r = await sendOrder(acct, state.lobbyId, order, state.serverOffsetMs);
         if (!r.ok) throw new Error(String(r.data.error ?? `The engine refused the order (${r.status}).`));
       }
       setToast({
@@ -329,7 +357,7 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
             </>
           ) : (
             <>
-              Final in <span className={s.fig}>{clockStr(STAGE.duration - t)}</span>
+              Final in <span className={s.fig}>{clockStr(state.duration - t)}</span>
             </>
           )}
         </span>
@@ -491,7 +519,9 @@ function Eliminated({
         </svg>
         <span className={s.drownedName}>{state.players.find((p) => p.player === me)?.callsign}</span>
       </div>
-      <p className={s.kicker}>{elim.ev.checkpoint ? `Checkpoint ${elim.ev.checkpoint}` : "Liquidated"}</p>
+      <p className={s.kicker}>
+        {elim.ev.checkpoint ? `Checkpoint ${elim.ev.checkpoint}` : elim.p.reason === "liquidated" ? "Liquidated" : "Out of the match"}
+      </p>
       <h1 className={s.outTitle}>You went under</h1>
       <p className={s.lede}>{REASON[elim.p.reason]}</p>
       <dl className={s.facts}>
@@ -515,7 +545,10 @@ function Eliminated({
           : alive.slice(0, 6)
         ).map((r) => (
           <li key={r.player}>
-            <span>{r.callsign}</span>
+            <span>
+              {r.callsign}
+              <BotTag match={match} player={r.player} />
+            </span>
             <span className={s.fig}>{usd(num(r.equity))}</span>
           </li>
         ))}
@@ -553,7 +586,10 @@ function Result({ match, me }: { match: Match; me: string | null }) {
       <ul className={s.standing}>
         {fin.finalists.map((f) => (
           <li key={f.player} className={f.player === me ? s.meRow : ""}>
-            <span>{f.callsign}</span>
+            <span>
+              {f.callsign}
+              <BotTag match={match} player={f.player} />
+            </span>
             <span className={s.fig}>${unitsToUsd(paid(f.player) ?? f.provisionalPayoutUnits)}</span>
           </li>
         ))}
