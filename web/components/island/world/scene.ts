@@ -300,7 +300,7 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
       cv.className = "stage-cv";
       const r = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
       r.outputColorSpace = THREE.LinearSRGBColorSpace;
-      r.setPixelRatio(Math.min(devicePixelRatio, 2));
+      r.setPixelRatio(Math.min(devicePixelRatio, mobile ? 1.75 : 2));
       const sc = new THREE.Scene();
       sc.add(new THREE.HemisphereLight("#E4DAFF", "#FFC9A8", 0.7 * PI));
       const dl = new THREE.DirectionalLight("#FFF1D6", 0.85 * PI);

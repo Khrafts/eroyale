@@ -882,11 +882,13 @@ function resume(): Match | null {
 }
 
 // ---------- HTTP
-/** Distinct players in lobbies and rounds whose status is not settled or cancelled. */
+/** Distinct players in lobbies and rounds whose status is not settled or cancelled. A settlement that failed on chain
+ * (chainError set while settling) no longer counts: it waits for a hand settlement, nobody is playing in it. */
 function playingNow(): number {
   const who = new Set<string>();
-  for (const m of matches.values()) if (m.lobby.status !== "settled" && m.lobby.status !== "cancelled") for (const p of m.lobby.players) who.add(p.player);
-  for (const m of rounds.values()) if (m.round.status !== "settled" && m.round.status !== "cancelled") for (const p of m.round.players) who.add(p.player);
+  const counts = (status: string, chainError: string | null) => status !== "settled" && status !== "cancelled" && !(status === "settling" && chainError);
+  for (const m of matches.values()) if (counts(m.lobby.status, m.chainError)) for (const p of m.lobby.players) who.add(p.player);
+  for (const m of rounds.values()) if (counts(m.round.status, m.chainError)) for (const p of m.round.players) who.add(p.player);
   return who.size;
 }
 function send(res: ServerResponse, code: number, body: unknown, raw = false) {

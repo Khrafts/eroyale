@@ -1,6 +1,6 @@
 "use client";
 // Live engine data into the island store (CLAUDE.md "Island" > "What each part shows").
-// Polling: /lobbies, /rounds, /marks, /health, /stats every 3 s (backing off to 15 s while the engine is down),
+// Polling: /lobbies, /rounds, /marks, /health, /stats every 3 s (backing off to 5 s while the engine is down),
 // paused while the tab is hidden. WebSockets go through useMatch: the current royale lobby (it follows the next one
 // by itself), the open protocol round, and every locked protocol round still waiting for its result.
 import { useEffect, useRef, useState } from "react";
