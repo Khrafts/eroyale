@@ -7,7 +7,9 @@ import { MockUSDC } from "../src/MockUSDC.sol";
 import { RoyaleEscrow } from "../src/RoyaleEscrow.sol";
 
 /// @notice Deploys MockUSDC (unless TOKEN_ADDRESS is set) and RoyaleEscrow, funds and approves the relayer,
-///         and writes the addresses to deployments/<CHAIN>.json.
+///         and writes the addresses to deployments/<CHAIN>.json. The escrow supports royale lobbies
+///         (createLobby) and prediction rounds (createRound); maxCreatorFeeBps in the JSON marks that build.
+///         Set TOKEN_ADDRESS to the existing MockUSDC on a redeploy so balances carry over.
 /// @dev    Env (names from .env.example): CHAIN, CHAIN_SELECTOR, FORWARDER_ADDRESS, PRIVATE_KEY_DEPLOYER,
 ///         PRIVATE_KEY_RELAYER, TREASURY_ADDRESS, optional TOKEN_ADDRESS, optional RELAYER_MINT (token units).
 contract Deploy is Script {
@@ -61,6 +63,7 @@ contract Deploy is Script {
         vm.serializeAddress(key, "relayer", relayer);
         vm.serializeAddress(key, "owner", vm.addr(deployerKey));
         vm.serializeAddress(key, "token", token);
+        vm.serializeUint(key, "maxCreatorFeeBps", escrow.MAX_CREATOR_FEE_BPS());
         string memory json = vm.serializeAddress(key, "escrow", address(escrow));
 
         vm.writeJson(json, string.concat(vm.projectRoot(), "/deployments/", chain, ".json"));
