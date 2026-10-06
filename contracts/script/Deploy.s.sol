@@ -13,7 +13,14 @@ import { RoyaleEscrow } from "../src/RoyaleEscrow.sol";
 contract Deploy is Script {
     uint256 internal constant _DEFAULT_RELAYER_MINT = 1_000_000 * 1e6;
 
+    /// @dev Base Sepolia, Ethereum Sepolia, local anvil. Anything else (a mainnet RPC by mistake) is refused.
+    error UnsupportedChain(uint256 chainId);
+
     function run() external {
+        if (block.chainid != 84532 && block.chainid != 11155111 && block.chainid != 31337) {
+            revert UnsupportedChain(block.chainid);
+        }
+
         string memory chain = vm.envString("CHAIN");
         uint64 chainSelector = uint64(vm.envUint("CHAIN_SELECTOR"));
         address forwarder = vm.envAddress("FORWARDER_ADDRESS");

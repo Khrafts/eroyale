@@ -77,7 +77,8 @@ function need(env: NodeJS.ProcessEnv, k: string): string {
   return v;
 }
 
-export function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void): Chain {
+/** Builds the relayer; with the chain on, refuses an RPC whose chain id is not the configured CHAIN's. */
+export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void): Promise<Chain> {
   const name = (env.CHAIN ?? "off").trim();
   if (name === "off" || name === "") return offChain;
   // anvil: a local dev chain (chain id 31337) for scripts/e2e-local.sh.
@@ -85,6 +86,8 @@ export function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void): Cha
   if (!chain) throw new Error(`CHAIN must be off, base-sepolia, ethereum-sepolia or anvil, got ${name}`);
   const transport = http(need(env, "RPC_URL"));
   const pub = createPublicClient({ chain, transport });
+  const rpcChainId = await pub.getChainId().catch((e) => { throw new Error(`RPC_URL chain id check failed: ${failReason(e)}`); });
+  if (rpcChainId !== chain.id) throw new Error(`RPC_URL serves chain id ${rpcChainId}, but CHAIN=${name} is chain id ${chain.id}`);
   const owner = createWalletClient({ chain, transport, account: privateKeyToAccount(need(env, "PRIVATE_KEY_DEPLOYER") as Hex) });
   const relayer = createWalletClient({ chain, transport, account: privateKeyToAccount(need(env, "PRIVATE_KEY_RELAYER") as Hex) });
   const escrow = need(env, "ESCROW_ADDRESS") as Address;

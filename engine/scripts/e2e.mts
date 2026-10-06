@@ -25,6 +25,10 @@ const say = (m: string) => console.log(`[e2e] ${m}`);
 const pub = createPublicClient({ transport: http(process.env.RPC_URL) });
 const token = process.env.TOKEN_ADDRESS as Address;
 const escrow = process.env.ESCROW_ADDRESS as Address;
+// Testnets and local anvil only: refuse before the engine sends anything.
+const ALLOWED_CHAIN_IDS = [84532, 11155111, 31337];
+const rpcChainId = await pub.getChainId().catch(() => { console.error("e2e: cannot read the RPC chain id"); process.exit(2); });
+if (!ALLOWED_CHAIN_IDS.includes(rpcChainId)) { console.error(`e2e: RPC chain id ${rpcChainId} is not one of ${ALLOWED_CHAIN_IDS.join(", ")}`); process.exit(2); }
 const ERC20 = parseAbi(["function balanceOf(address) view returns (uint256)"]);
 const ESCROW = parseAbi(["function treasury() view returns (address)"]);
 
