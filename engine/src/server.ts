@@ -333,7 +333,9 @@ async function settle(m: Match, marks: Prices, pot: bigint) {
   const book = books.get(l.id)!;
   // `pot` is the on-chain pot `final` was computed from; once Live it cannot change, so this is the report's pot too.
   if (onchain.pot !== pot && onchain.status !== LOBBY_SETTLED) throw new Error(`on-chain pot moved from ${pot} to ${onchain.pot} after final`);
-  const r = buildReport(new TextEncoder().encode(book), marks, pot, FEE_BPS, BigInt(CHAIN_SELECTOR));
+  const r = buildReport(new TextEncoder().encode(book), marks, pot, FEE_BPS, BigInt(CHAIN_SELECTOR), {
+    creator: onchain.creator, creatorFeeBps: onchain.creatorFeeBps, entry: onchain.entry, playerCount: onchain.playerCount,
+  });
   if (BigInt(r.lobbyId) !== BigInt(l.id)) throw new Error(`book lobbyId ${r.lobbyId} != ${l.id}`);
   const done = (hash: string) => {
     m.chainError = null;
