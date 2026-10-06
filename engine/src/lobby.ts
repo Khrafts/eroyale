@@ -117,8 +117,9 @@ export class Lobby {
     this.emitLobby();
   }
 
+  /** Open or countdown; also live, for a match whose on-chain start never landed (entries are refunded). */
   cancel() {
-    if (this.status !== "open" && this.status !== "countdown") throw new Error(`cannot cancel from ${this.status}`);
+    if (this.status !== "open" && this.status !== "countdown" && this.status !== "live") throw new Error(`cannot cancel from ${this.status}`);
     this.status = "cancelled";
     this.emitLobby();
   }
@@ -309,12 +310,12 @@ export class Lobby {
     return this.bookJson;
   }
 
-  /** Emit `final` for the frozen book at the final marks. */
-  emitFinal(finalMarks: Prices): EngineEvent {
+  /** Emit `final` for the frozen book at the final marks. `potUnits`: the on-chain pot when the chain is on. */
+  emitFinal(finalMarks: Prices, potUnits: bigint = this.potUnits): EngineEvent {
     if (!this.bookJson) throw new Error("emitFinal needs a frozen book");
     if (this.finalEvent) return this.finalEvent;
     const book = JSON.parse(this.bookJson) as FinalBook;
-    const s = settle(book, finalMarks, this.potUnits, this.feeBps);
+    const s = settle(book, finalMarks, potUnits, this.feeBps);
     const pay = new Map(s.winners.map((w, i) => [w, s.amounts[i]]));
     const final: EngineEvent = {
       type: "final", marks: finalMarks, bookHash: keccak256(toBytes(this.bookJson)),

@@ -39,15 +39,23 @@ const SEED = Number(args.seed ?? Date.now() % 2 ** 31);
 const PRICE_URL = (process.env.PRICE_SOURCE_URL ?? "").trim();
 const SIG_OFF = process.env.ORDER_SIG === "off";
 const STALE_MS = 3000;
-// ENGINE_DATA_DIR: a separate store for throwaway runs (e2e on a fresh anvil reuses lobby ids).
-const DATA = process.env.ENGINE_DATA_DIR ? resolve(process.env.ENGINE_DATA_DIR) : resolve(import.meta.dirname, "../data");
 const SETTLE_MODE = (process.env.SETTLE_MODE ?? "simulated").trim();
 const FEE_BPS = 500n;
-mkdirSync(DATA, { recursive: true });
 
-const START_LEAD_MS = 2000; // send the on-chain start this long before startsAt so the chain end lands near the book's
+const JOIN_CLOSE_MS = 7000; // joins close this long before startsAt
+const START_LEAD_MS = 6000; // first on-chain start() this long before startsAt, so the chain end lands near the book's
+const START_DEADLINE_MS = 1500; // no new start attempt after startsAt minus this; cancel instead
+const DEPLOYED_SETTLE_WAIT_MS = 15 * 60_000; // SETTLE_MODE=deployed: stop watching for Settled after this
 const log = (m: string) => console.log(`${new Date().toISOString()} ${m}`);
-const chain = makeChain(process.env, log);
+const chain = await makeChain(process.env, log);
+// Store for logs and books. With the chain on, one directory per escrow, so a new escrow (whose lobby ids restart at 1)
+// never serves or resumes another escrow's lobby. ENGINE_DATA_DIR overrides (e2e uses a temp dir).
+const DATA = process.env.ENGINE_DATA_DIR
+  ? resolve(process.env.ENGINE_DATA_DIR)
+  : chain.on
+    ? resolve(import.meta.dirname, "../data", `${process.env.CHAIN!.trim()}-${process.env.ESCROW_ADDRESS!.trim().toLowerCase()}`)
+    : resolve(import.meta.dirname, "../data");
+mkdirSync(DATA, { recursive: true });
 // With the chain on, the final marks must be the settlement candle the workflow reads; never live marks.
 if (chain.on && !PRICE_URL) throw new Error("PRICE_SOURCE_URL is required when CHAIN is not off");
 if (SETTLE_MODE !== "simulated" && SETTLE_MODE !== "deployed") throw new Error(`SETTLE_MODE must be simulated or deployed, got ${SETTLE_MODE}`);
@@ -112,7 +120,7 @@ function newMatch(id: number, p: Preset, seed: number, nBots: number): Match {
 async function createLobbyRetrying(): Promise<void> {
   for (;;) {
     try { await createLobby(); return; } catch (e) {
-      log(`[chain] createLobby failed, retrying in 10 s: ${(e as Error).message}`);
+      log(`[chain] createLobby failed, retrying in 10 s: ${failReason(e)}`);
       await new Promise((r) => setTimeout(r, 10_000));
     }
   }
@@ -125,6 +133,12 @@ async function createLobby(): Promise<Match> {
   const m = newMatch(id, preset, SEED + id, N_BOTS);
   // A fresh run reusing an id keeps the old log beside it rather than appending to it.
   if (existsSync(m.logFile)) renameSync(m.logFile, m.logFile.replace(/\.jsonl$/, `.${Date.now()}.jsonl.old`));
+  // A new on-chain lobby is a new match: never serve a stored book left under the same id.
+  if (chainId !== null && (books.has(id) || existsSync(bookFile(id)))) {
+    if (existsSync(bookFile(id))) renameSync(bookFile(id), bookFile(id).replace(/\.json$/, `.${Date.now()}.json.old`));
+    books.delete(id);
+    log(`[lobby ${id}] moved a stored book for this id aside`);
+  }
   record(m, { in: "create", id, preset: preset.name, seed: m.seed, maxPlayers: MAX_PLAYERS });
   wire(m);
   m.lobby.emitLobby();
@@ -144,9 +158,9 @@ async function join(m: Match, player: string, callsign: string, botIndex: number
   const bot = botIndex !== null;
   player = player.toLowerCase();
   const l = m.lobby;
-  // Joins stay open through the countdown, closing 5 s before the on-chain start is sent.
+  // Joins stay open through the countdown, closing JOIN_CLOSE_MS before startsAt (before the on-chain start is sent).
   if (l.status !== "open" && l.status !== "countdown") return { error: `lobby is ${l.status}` };
-  if (l.status === "countdown" && Date.now() > l.startsAt! * 1000 - START_LEAD_MS - 5000) return { error: "lobby is about to start" };
+  if (l.status === "countdown" && Date.now() > l.startsAt! * 1000 - JOIN_CLOSE_MS) return { error: "lobby is about to start" };
   if (l.find(player) || m.pendingJoins.has(player)) return { error: "already joined" };
   if (l.players.length + m.pendingJoins.size >= l.maxPlayers) return { error: "lobby is full" };
   if (!/^0x[0-9a-f]{40}$/.test(player)) return { error: "player must be an address" };
@@ -159,7 +173,7 @@ async function join(m: Match, player: string, callsign: string, botIndex: number
     record(m, { in: "join", player, callsign, bot, botIndex });
     return { txHash };
   } catch (e) {
-    return { error: `joinFor failed: ${(e as Error).message}` };
+    return { error: `joinFor failed: ${failReason(e)}` };
   } finally {
     m.pendingJoins.delete(player);
   }
@@ -179,7 +193,11 @@ function scheduleCountdown(m: Match, at: number) {
   check();
 }
 
-/** Send escrow start() just before startsAt so the chain's end time lands within seconds of the book's. Retries. */
+/**
+ * Send escrow start() just before startsAt so the chain's end time lands within seconds of the book's. Retries until
+ * START_DEADLINE_MS before startsAt; after the last failure, cancels the lobby (engine first, so it never goes live,
+ * then on chain, which refunds every entry).
+ */
 function scheduleChainStart(m: Match) {
   if (!chain.on) return;
   const l = m.lobby;
@@ -190,13 +208,31 @@ function scheduleChainStart(m: Match) {
       m.chainError = null;
       log(`[lobby ${l.id}] chain start ${m.startTx}`);
     } catch (e) {
-      m.chainError = `start attempt ${n} failed: ${(e as Error).message}`.slice(0, 500);
+      m.chainError = `start attempt ${n} failed: ${failReason(e)}`.slice(0, 500);
       log(`[lobby ${l.id}] ${m.chainError}`);
-      if (n < 10) setTimeout(() => attempt(n + 1), 3000);
-      else log(`[lobby ${l.id}] chain start gave up; the escrow is not live for this match`);
+      if (n < 10 && Date.now() + 1000 < l.startsAt! * 1000 - START_DEADLINE_MS) setTimeout(() => attempt(n + 1), 1000);
+      else await cancelMatch(m, `chain start failed ${n} times`);
     }
   };
   setTimeout(() => attempt(1), Math.max(0, l.startsAt! * 1000 - START_LEAD_MS - Date.now()));
+}
+
+/** Cancel a match whose escrow never went live: stop it here, then refund the entries on chain. */
+async function cancelMatch(m: Match, why: string) {
+  const l = m.lobby;
+  if (l.status === "open" || l.status === "countdown" || l.status === "live") {
+    l.cancel();
+    record(m, { in: "cancel", why });
+  }
+  log(`[lobby ${l.id}] cancelled: ${why}`);
+  try {
+    const tx = await chain.cancel(l.id);
+    m.chainError = `${why}; lobby cancelled, entries refunded (${tx})`;
+  } catch (e) {
+    m.chainError = `${why}; cancel failed too: ${failReason(e)}`.slice(0, 500);
+  }
+  log(`[lobby ${l.id}] ${m.chainError}`);
+  if (args.loop && current === m) setTimeout(() => void createLobbyRetrying(), 5000);
 }
 
 // ---------- the clock
@@ -233,21 +269,34 @@ async function finish(m: Match) {
       }
     }
   }
-  record(m, { in: "final", marks });
-  l.emitFinal(marks);
-  if (chain.on) await settle(m, marks).catch((e) => { m.chainError = `settle: ${failReason(e)}`.slice(0, 500); log(`[lobby ${l.id}] ${m.chainError}`); });
+  // With the chain on, payouts in `final` use the escrow's pot, the same number the report is built from.
+  const pot = chain.on ? await onchainPot(l.id) : l.potUnits;
+  if (pot !== l.potUnits) log(`[lobby ${l.id}] warning: on-chain pot ${pot} != engine pot ${l.potUnits}; final and report use the on-chain pot`);
+  record(m, { in: "final", marks, potUnits: pot.toString() });
+  l.emitFinal(marks, pot);
+  if (chain.on) await settle(m, marks, pot).catch((e) => { m.chainError = `settle: ${failReason(e)}`.slice(0, 500); log(`[lobby ${l.id}] ${m.chainError}`); });
   if (args.loop && current === m) setTimeout(() => void createLobbyRetrying(), 5000);
 }
 
 // ---------- settlement
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** The escrow's pot for a lobby; retries until the RPC answers (final waits on it, as it waits on the candle). */
+async function onchainPot(id: number): Promise<bigint> {
+  for (let attempt = 1; ; attempt++) {
+    try { return (await chain.getLobby(id)).pot; } catch (e) {
+      log(`[lobby ${id}] getLobby for the pot failed (attempt ${attempt}), retrying: ${failReason(e)}`);
+      await sleep(5000);
+    }
+  }
+}
+
 /**
  * simulated: build the report from the exact book bytes with workflow's buildReport, wait for block time past the
  * on-chain end, owner calls settleFallback. deployed: the CRE workflow writes the report; we watch for Settled.
  * Retries every 5 s; gives up when one failure reason repeats.
  */
-async function settle(m: Match, marks: Prices) {
+async function settle(m: Match, marks: Prices, pot: bigint) {
   const l = m.lobby;
   let onchain = null;
   for (let attempt = 1; !onchain; attempt++) {
@@ -258,9 +307,10 @@ async function settle(m: Match, marks: Prices) {
     }
   }
   const book = books.get(l.id)!;
-  const r = buildReport(new TextEncoder().encode(book), marks, onchain.pot, FEE_BPS, BigInt(CHAIN_SELECTOR));
+  // `pot` is the on-chain pot `final` was computed from; once Live it cannot change, so this is the report's pot too.
+  if (onchain.pot !== pot && onchain.status !== LOBBY_SETTLED) throw new Error(`on-chain pot moved from ${pot} to ${onchain.pot} after final`);
+  const r = buildReport(new TextEncoder().encode(book), marks, pot, FEE_BPS, BigInt(CHAIN_SELECTOR));
   if (BigInt(r.lobbyId) !== BigInt(l.id)) throw new Error(`book lobbyId ${r.lobbyId} != ${l.id}`);
-  if (onchain.pot !== l.potUnits) log(`[lobby ${l.id}] warning: on-chain pot ${onchain.pot} != engine pot ${l.potUnits}`);
   const done = (hash: string) => {
     m.chainError = null;
     l.markSettled(hash, SETTLE_MODE as "simulated" | "deployed", r.winners, r.amounts.map(String));
@@ -270,11 +320,15 @@ async function settle(m: Match, marks: Prices) {
     // Triggering the deployed workflow's HTTP trigger needs a signed gateway request that contracts/NOTES.md does
     // not document, so it is not wired: the workflow must be triggered outside the engine. We only watch for it.
     log(`[lobby ${l.id}] SETTLE_MODE=deployed: CRE trigger not wired; trigger royale-settle with {"lobbyId": ${l.id}} and the engine will pick up Settled`);
-    for (;;) {
+    const deadline = Date.now() + DEPLOYED_SETTLE_WAIT_MS;
+    while (Date.now() < deadline) {
       const hash = await chain.findSettled(l.id, 5_000n).catch(() => null);
       if (hash) return done(hash);
       await sleep(10_000);
     }
+    m.chainError = `no Settled log within ${DEPLOYED_SETTLE_WAIT_MS / 60_000} min; settle by hand (contracts/NOTES.md)`;
+    log(`[lobby ${l.id}] ${m.chainError}`);
+    return;
   }
   if (onchain.status === LOBBY_SETTLED) {
     const hash = await chain.findSettled(l.id, 50_000n);
@@ -290,6 +344,12 @@ async function settle(m: Match, marks: Prices) {
   let last = "";
   for (let attempt = 1; attempt <= 10; attempt++) {
     try { return done(await chain.settleFallback(r.report)); } catch (e) {
+      // The tx may have landed even though this call failed (dropped receipt, RPC error): pick it up instead of retrying.
+      const now = await chain.getLobby(l.id).catch(() => null);
+      if (now?.status === LOBBY_SETTLED) {
+        const hash = await chain.findSettled(l.id, 50_000n).catch(() => null);
+        if (hash) return done(hash);
+      }
       const why = failReason(e);
       m.chainError = `settleFallback attempt ${attempt} failed: ${why}`.slice(0, 500);
       log(`[lobby ${l.id}] ${m.chainError}`);
@@ -307,7 +367,7 @@ function resume(): Match | null {
   if (!last) return null;
   const inputs = readFileSync(resolve(DATA, last), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.in);
   const create = inputs.find((x) => x.in === "create");
-  if (!create || inputs.some((x) => x.in === "final")) return null; // finished: its book is served from disk
+  if (!create || inputs.some((x) => x.in === "final" || x.in === "cancel")) return null; // finished: its book is served from disk
   const m = newMatch(create.id, PRESETS[create.preset as Preset["name"]], create.seed, 0);
   localId = Math.max(localId, create.id);
   const l = m.lobby;
