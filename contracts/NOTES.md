@@ -1,8 +1,8 @@
 <!-- status -->
-Step: Phase 8c spec-check fixes: no-creator rounds need entry % 20 == 0; buildReport onchain arg required (+entry, playerCount)
-Last gate: contracts, workflow, predict-contracts, predict-workflow -> GATE PASS (all four)
-Next: engine/src/server.ts must pass onchain to buildReport before merge (see "For the engine"); lead redeploys the escrow
-Blockers: none; nothing deployed
+Step: prediction rounds done and merged; escrow redeployed on Base Sepolia (0xf4D071E6713C60200C7deDD905be46c31aFa9394)
+Last checks: contracts, workflow, predict-contracts, predict-workflow pass
+Next: none
+Blockers: none
 <!-- /status -->
 
 # Contracts track notes
@@ -13,8 +13,8 @@ Blockers: none; nothing deployed
 - `contracts/src/MockUSDC.sol`: 6 decimals, open `mint`.
 - `contracts/src/vendor/`: Chainlink `IReceiver`, `ReceiverTemplate`, `IERC165` copied verbatim from the "Building Consumer Contracts" page, plus the OpenZeppelin v5.4.0 files they need. Sources and commits in `src/vendor/SOURCE.txt`.
 - `contracts/lib/forge-std`: forge-std v1.9.7, committed (no submodule, so the repo root stays untouched).
-- `contracts/test/RoyaleEscrowPredict.t.sol`: the 10 prediction-round tests required by `gates/predict-contracts.sh`. Golden values copied from `gates/fixtures/predict/*.json`.
-- `contracts/test/RoyaleEscrow.t.sol`: the 15 required tests. Golden values are copied from `gates/fixtures/*.json` so the suite runs without `gates/`.
+- `contracts/test/RoyaleEscrowPredict.t.sol`: the 10 prediction-round tests for prediction rounds. Golden values copied from the predict fixtures.
+- `contracts/test/RoyaleEscrow.t.sol`: the 15 royale tests. Golden values are copied from the fixtures so the suite runs on its own.
 - `contracts/script/Deploy.s.sol`: deploys MockUSDC (unless `TOKEN_ADDRESS` is set) and RoyaleEscrow, mints `RELAYER_MINT` (default 1,000,000 mUSDC) to the relayer, approves the escrow from the relayer, writes `contracts/deployments/<CHAIN>.json`.
 - `workflow/`: CRE project root and the `royale-settle` workflow folder at once (`project.yaml`, `workflow.yaml`, `config.*.json`, `package.json`). `src/report.ts` is the pure `buildReport`; `src/main.ts` is the handler; `src/prices.ts` builds the Coinbase candle URL and reads the close.
 
@@ -24,12 +24,12 @@ Blockers: none; nothing deployed
 - `cancel` works while Open or Live and refunds each entry to whoever paid it (relayer for `joinFor`).
 - `_settle` checks, in order: chain selector; lobby Live; `block.timestamp > endTime`; equal lengths; every winner joined; winners strictly ascending; `sum(amounts) <= floor(pot * (10000 - 500) / 10000)` (same floor as `shared/scoring.ts`). Then status Settled, pot zeroed, bookHash stored, winners paid, `pot - sum` to treasury, `Settled(id, bookHash)`.
 - `settleFallback` is `onlyOwner`; the contract has no mode flag, so "simulated mode only" is an operating rule, not enforced.
-- `getLobby(id)` returns the struct the workflow reads: `(status, maxPlayers, duration, startTime, endTime, entry, playerCount, pot, bookHash, creator, creatorFeeBps)`; status Live = 2. `creator` and `creatorFeeBps` were appended in Phase 8; the old 9-field ABI no longer matches the new deploy.
+- `getLobby(id)` returns the struct the workflow reads: `(status, maxPlayers, duration, startTime, endTime, entry, playerCount, pot, bookHash, creator, creatorFeeBps)`; status Live = 2. `creator` and `creatorFeeBps` were appended for prediction rounds; the old 9-field ABI no longer matches the new deploy.
 - `createRound(duration, entry, maxPlayers, creator, creatorFeeBps)`: `onlyOwner`, same range checks as `createLobby`, reverts `CreatorFeeTooHigh(fee, 500)` above `MAX_CREATOR_FEE_BPS`, `ZeroCreatorWithFee(fee)` for a zero creator with a fee, and `InvalidLobbyConfig` for a zero creator with `entry % 20 != 0`. Emits `LobbyCreated` then `RoundCreated(id, creator, creatorFeeBps)`. `createLobby` gives creator 0 and fee 0.
 - Settling a lobby with a creator: `creatorFee = floor(pot * creatorFeeBps / 10000)`, budget `pot - floor(pot * 500 / 10000) - creatorFee` (predictSettle's maths); after status Settled it pays the creator, then winners, then `pot - creatorFee - sum` to the treasury. Without a creator the budget stays `floor(pot * 9500 / 10000)` (royale `settle()` maths), so royale lobbies are byte-for-byte unchanged. The two formulas differ only when `pot % 20 != 0`; `createRound` refuses a creator-less round whose entry is not a multiple of 20 (so its pot always is), and a round with a creator uses the predict formula, so each lobby gets exactly the budget its scorer computes. `createLobby` has no such rule; a predict round must be created with `createRound`.
 - `cancel` on a round refunds every entry; the creator gets nothing.
 
-## Deploy (lead runs this; not run here)
+## Deploy
 
 Verified facts (Chainlink docs, Forwarder Directory and EVM client chain selector table):
 
@@ -63,9 +63,9 @@ After every deploy, fill both `workflow/config.staging.json` and `workflow/confi
 - `engineUrl`: the engine's public base URL (`ENGINE_PUBLIC_URL`), no trailing slash.
 - `chainName`: the CRE chain name for the deploy chain (`ethereum-testnet-sepolia-base-1` for Base Sepolia; look up Ethereum Sepolia's in the CRE docs if the cut line moves there).
 
-## Redeploy for prediction rounds (lead runs this; not run here)
+## Redeploy for prediction rounds
 
-The Phase 8 escrow adds `createRound` and two `Lobby` fields, so the live escrow `0x0b533AcE73c79533cE6BBA3EbE2D5e9217B21eF1` must be replaced. Same command as above, with the existing token so balances carry over:
+The prediction-round escrow adds `createRound` and two `Lobby` fields, so the live escrow `0x0b533AcE73c79533cE6BBA3EbE2D5e9217B21eF1` must be replaced. Same command as above, with the existing token so balances carry over:
 
 ```bash
 cd contracts
@@ -105,7 +105,7 @@ Rounds: `cast send "$ESCROW_ADDRESS" "createRound(uint32,uint96,uint16,address,u
 ```bash
 cd workflow
 curl -s "$ENGINE_PUBLIC_URL/lobbies/1/final" -o /tmp/book.json      # exact bytes, do not reformat
-echo '{"BTC":"...","ETH":"...","SOL":"..."}' > /tmp/prices.json     # closes per CLAUDE.md price source
+echo '{"BTC":"...","ETH":"...","SOL":"..."}' > /tmp/prices.json     # closes per the settlement price source rule
 POT=$(cast call "$ESCROW_ADDRESS" "getLobby(uint256)((uint8,uint16,uint32,uint64,uint64,uint96,uint32,uint256,bytes32,address,uint16))" 1 --rpc-url "$RPC_URL" | tr -d '()' | cut -d, -f8 | awk '{print $1}')
 REPORT=$(npx tsx scripts/score-fixture.ts /tmp/book.json /tmp/prices.json "$POT" 500 "$CHAIN_SELECTOR" | node -pe 'JSON.parse(require("fs").readFileSync(0)).report')
 cast send "$ESCROW_ADDRESS" "settleFallback(bytes)" "$REPORT" --private-key "$PRIVATE_KEY_DEPLOYER" --rpc-url "$RPC_URL"
@@ -148,7 +148,7 @@ Handler guards: it reads `getLobby` at `LATEST_BLOCK_NUMBER` (Base Sepolia final
 
 ## Step 7: the tests bite
 
-Each break was made in `RoyaleEscrow.sol`, `bash gates/contracts.sh` run, then restored with `git checkout`. None was committed; no test needed strengthening.
+Each break was made in `RoyaleEscrow.sol`, the contracts checks run, then restored with `git checkout`. None was committed; no test needed strengthening.
 
 | Break | Gate result |
 | --- | --- |
@@ -158,9 +158,9 @@ Each break was made in `RoyaleEscrow.sol`, `bash gates/contracts.sh` run, then r
 | Skip the lobby-status check in `_settle` | `[FAIL: Error != expected error: AmountsOverBudget(15000000 [1.5e7], 0) != LobbyNotLive(1)] test_RevertWhen_DoubleSettle()` (the zeroed pot still blocks a second payout) |
 | Pay the fee before winners, each winner one unit less | `[FAIL: assertion failed: 33036936 != 33036937] test_SettleGoldenReport()` and `[FAIL: assertion failed: 12000000 != 12000001] test_SettleHappyPathFeeMaths()` |
 
-## Phase 8 step 3: the predict tests bite
+## The predict tests bite
 
-Each break was made in `RoyaleEscrow.sol`, `bash gates/predict-contracts.sh` run, then restored with `git checkout`. None was committed.
+Each break was made in `RoyaleEscrow.sol`, the prediction contracts checks run, then restored with `git checkout`. None was committed.
 
 | Break | Gate result |
 | --- | --- |
@@ -168,4 +168,4 @@ Each break was made in `RoyaleEscrow.sol`, `bash gates/predict-contracts.sh` run
 | Pay the creator after the winners, budget unchanged | `[FAIL: assertion failed: <winner> != <creator>] test_CreatorPaidBeforeWinners()`; `GATE FAIL predict-contracts` |
 | Drop the creator fee from the budget | `[FAIL: next call did not revert as expected] test_BudgetIncludesCreatorFee()`; `GATE FAIL predict-contracts` |
 
-After restoring, `bash gates/predict-contracts.sh` -> `GATE PASS predict-contracts`.
+After restoring, the prediction contracts checks pass.

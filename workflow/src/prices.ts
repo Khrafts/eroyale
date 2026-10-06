@@ -1,4 +1,4 @@
-// Settlement price helpers (CLAUDE.md "Settlement price source"). Pure; no Node built-ins.
+// Settlement price helpers (spec: "Settlement price source"). Pure; no Node built-ins.
 import type { Market, Prices } from "../../shared/scoring.ts";
 
 export const MARKETS: readonly Market[] = ["BTC", "ETH", "SOL"];

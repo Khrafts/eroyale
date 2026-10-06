@@ -11,7 +11,7 @@ import { MockUSDC } from "../src/MockUSDC.sol";
 import { RoyaleEscrow } from "../src/RoyaleEscrow.sol";
 
 contract RoyaleEscrowTest is Test {
-    // Values from gates/fixtures/expected-report.json and expected-payouts.json, copied so the
+    // Values from the golden fixtures expected-report.json and expected-payouts.json, copied so the
     // suite runs without the gate fixtures present.
     uint64 internal constant CHAIN_SELECTOR = 10344971235874465080;
 
