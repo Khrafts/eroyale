@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PrivateKeyAccount } from "viem/accounts";
 import { condensed, extra } from "@/components/arena/b/fonts";
-import { MARKETS, unitsToUsd } from "@/lib/events";
+import { MARKETS, isTxHash, unitsToUsd } from "@/lib/events";
 import type { RoundInfo } from "@/lib/events";
 import { burner, createRound, join, sendPrediction, signCreateRound, signJoin, signPrediction } from "@/lib/engine";
 import { useMatch, type Match } from "@/lib/useMatch";
@@ -926,7 +926,7 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
           <h1 className={s.title}>{win.rank === 1 ? "Closest call in the round" : `${ordinal(win.rank)} closest. You win.`}</h1>
           <p className={`${s.payout} ${s.profit}`}>${unitsToUsd(units ?? "0")}</p>
           <p className={s.sub}>
-            {settled ? "Paid to your address" : "Provisional, until the settlement report lands"}. You called{" "}
+            {settled ? (isTxHash(settled.txHash) ? "Paid to your address" : "Settled offline (no chain), nothing paid") : "Provisional, until the settlement report lands"}. You called{" "}
             <span className={s.fig}>{commas(win.price)}</span>, off by <span className={s.fig}>{commas(win.distance)}</span>.
           </p>
         </>
@@ -955,13 +955,20 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
         ))}
       </ol>
       {settled ? (
-        <div className={s.stamp}>
-          <p className={s.stampTitle}>Verified by Chainlink</p>
-          <p className={s.stampBody}>
-            Settled on chain, tx <span className={s.fig}>{shortAddr(settled.txHash)}</span>
-          </p>
-          <p className={s.stampBody}>{settled.mode === "deployed" ? "Paid by the CRE workflow report" : "Paid from a simulated CRE report"}</p>
-        </div>
+        isTxHash(settled.txHash) ? (
+          <div className={s.stamp}>
+            <p className={s.stampTitle}>Verified by Chainlink</p>
+            <p className={s.stampBody}>
+              Settled on chain, tx <span className={s.fig}>{shortAddr(settled.txHash)}</span>
+            </p>
+            <p className={s.stampBody}>{settled.mode === "deployed" ? "Paid by the CRE workflow report" : "Paid from a simulated CRE report"}</p>
+          </div>
+        ) : (
+          <div className={s.stamp}>
+            <p className={s.stampTitle}>Settled offline (no chain)</p>
+            <p className={s.stampBody}>This engine runs without a chain, so nothing was paid on chain.</p>
+          </div>
+        )
       ) : (
         <p className={s.fine}>Payouts are provisional until the Chainlink report settles the pot.</p>
       )}
