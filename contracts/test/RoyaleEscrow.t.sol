@@ -278,6 +278,42 @@ contract RoyaleEscrowTest is Test {
         escrow.onReport("", report);
     }
 
+    function test_RevertWhen_AmountsOverFlooredBudget() public {
+        // pot 20_000004: budget is floor(pot * 9500 / 10000) = 19_000003, matching shared/scoring.ts,
+        // not pot - floor(pot * 500 / 10000) = 19_000004.
+        vm.prank(owner);
+        uint256 id = escrow.createLobby(DURATION, ENTRY + 1, 10);
+
+        address[] memory players = new address[](4);
+
+        for (uint256 i; i < 4; ++i) {
+            players[i] = _player(i);
+
+            vm.prank(relayer);
+            escrow.joinFor(id, players[i]);
+        }
+
+        vm.prank(owner);
+        escrow.start(id);
+
+        vm.warp(block.timestamp + DURATION + 1);
+
+        (address[] memory winners, uint256[] memory amounts) = _twoWinners(players, 19_000002, 2);
+        bytes memory report = abi.encode(CHAIN_SELECTOR, id, bytes32(0), winners, amounts);
+
+        vm.expectRevert(abi.encodeWithSelector(IRoyaleEscrow.AmountsOverBudget.selector, 19_000004, 19_000003));
+        vm.prank(forwarder);
+        escrow.onReport("", report);
+
+        amounts[1] = 1;
+        report = abi.encode(CHAIN_SELECTOR, id, bytes32(0), winners, amounts);
+
+        vm.prank(forwarder);
+        escrow.onReport("", report);
+
+        assertEq(usdc.balanceOf(treasury), 20_000004 - 19_000003);
+    }
+
     function test_RevertWhen_DoubleSettle() public {
         // Second lobby keeps extra funds in the escrow, so a second payout would not fail on
         // balance alone.

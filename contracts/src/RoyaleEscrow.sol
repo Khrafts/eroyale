@@ -189,7 +189,7 @@ contract RoyaleEscrow is IRoyaleEscrow, ReceiverTemplate {
         }
 
         uint256 pot = lobby.pot;
-        uint256 budget = pot - (pot * FEE_BPS) / _BPS;
+        uint256 budget = (pot * (_BPS - FEE_BPS)) / _BPS;
         uint256 total;
 
         for (uint256 i; i < amounts.length; ++i) {
