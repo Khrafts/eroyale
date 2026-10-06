@@ -1,9 +1,9 @@
 ## Status
-- Step: Phase 8 predict mode. Core (`src/predict.ts`), bots (`src/predict-bots.ts`), `PredictDriver`, sim `--mode predict` done.
+- Step: Phase 8 predict mode: core, bots, sim, live server (protocol loop, POST /rounds, POST /predictions, GET /rounds), chain path (createRound, start 6 s before lock, buildReport with on-chain values).
 - Last gate: `bash gates/predict-engine.sh` -> GATE PASS; `bash gates/engine.sh` -> GATE PASS.
-- Next: live server (protocol round loop, POST /rounds, POST /predictions, GET /rounds), chain path (createRound).
-- Run: `npm run sim -- --mode predict --bots 20 --seed 42 --market BTC --out b.json --events e.jsonl`.
-- Blockers: none.
+- Next: record the CHAIN=off live run (`scripts/predict-live.mts`) evidence below.
+- Run predict: `CHAIN=off npm run dev -- --predict-bots 10`, then `npx tsx scripts/predict-live.mts`. Sim: `npm run sim -- --mode predict --bots 20 --seed 42 --market BTC --out b.json --events e.jsonl`.
+- Blockers: chain path untested on chain (needs the Phase 8 escrow redeploy and predict-contracts' buildReport).
 
 # Engine notes
 
@@ -94,3 +94,30 @@ Bot addresses are `keccak256("royale-bot:<seed>:<i>")[12:]`: valid addresses wit
 - `createLobby`, `start`, `cancel`, `settleFallback` are `onlyOwner` (`PRIVATE_KEY_DEPLOYER`); `joinFor` uses `PRIVATE_KEY_RELAYER`. The on-chain lobby id becomes the engine's lobby id.
 - No `cancel` route: a lobby that never reaches 4 players just stays open.
 - Human orders fill at the latest feed price; `t` is the wall-clock offset clamped inside the current tick.
+
+## Prediction mode (Phase 8)
+
+Run:
+
+    npm run sim -- --mode predict --bots 20 --seed 42 --market BTC --out b.json --events e.jsonl
+    npm run sim -- --mode predict --bots 20 --seed 7 --market SOL --winner-bps 4000 --split steep --creator-fee-bps 300 --out b.json --events e.jsonl
+    CHAIN=off npm run dev -- --predict-bots 10            # royale lobby + the protocol round loop, 10 bots per protocol round
+    CHAIN=off npm run dev -- --predict-only --predict-bots 10   # no royale lobby
+    npx tsx scripts/predict-live.mts http://localhost:8787 # live check: 2 protocol rounds + a signed user round to final
+
+`dev` flags: `--predict` (protocol round loop on), `--predict-bots N` (0 to 50 bots per protocol round; N > 0 implies `--predict`), `--predict-only` (no royale lobby). Without any of them the engine is royale only, as before.
+
+Layout: `src/predict.ts` (`PredictRound`: the state machine, no clock or I/O; book, `final` and payouts from `predictSettle`), `src/predict-bots.ts` (seeded bots), `PredictDriver` in `src/driver.ts` (the same tick loop in sim and server), server code under "prediction rounds" in `src/server.ts`.
+
+Rules as implemented:
+- Times: `t` is seconds since the round opened. Ticks every 1/4 s from open. The resolve time is pushed up to a whole minute (the settlement candle is the minute before `endTime`), `lockTime = endTime - resolveAfter`; so `lockAfter` may be up to 59 s longer than asked. Back-to-back protocol rounds open at the previous lock, which is on a minute, so their `lockAfter` is exactly 60 (the first one after boot is 60 to 119).
+- Joins: until 7 s before the lock. Predictions: only from joined players, positive, exactly 2 decimals, before the lock; the latest one counts. `predicted {t, count, lobbyId}` on every accepted prediction (replacements too; count never falls).
+- Lock: fewer than 4 players, or no predictions: `cancelled {lobbyId, reason}` + `lobby` status `cancelled`; with the chain on, the escrow `cancel` refunds every entry. Otherwise `locked` reveals every prediction, status `live`, and `ptick` runs at 4 Hz from `t = lockAfter` (same instant as `locked`) to `t = lockAfter + resolveAfter` inclusive (481 pticks for 120 s). The lock tick waits for any join still in flight.
+- `ptick`: leaders = top `k` by distance to the mark (ties: earlier joiner), band = low/high of their predicted prices. `k` per `predictSettle`.
+- Resolve tick: status `settling`, book frozen and written to `lobby-<id>.final.json` (served by `GET /lobbies/:id/final`). Players and predictions ascending by address, joinIndex = join order. `final` follows once the settlement candle for the round's market is final (`endTime + 60 s`); with `CHAIN=off` and no candle after 6 tries, the last live mark. `final.winners` are predictSettle's winners in rank order with `{player, callsign, price, distance, rank, provisionalPayoutUnits}`, plus `creatorFeeUnits` and `feeUnits`.
+- Protocol rounds: exactly one open; the next opens when the current one locks (or is cancelled). Markets rotate BTC, ETH, SOL. Bots: `--predict-bots`, seeded `SEED + lobbyId`. Each bot predicts once at a random moment (10% to 85% of the open window), 35% revise once, ~5% never predict; guess = mark x momentum lean (follower or fader) + gaussian spread scaled to the observed volatility over the time left. Sim seeds 1-30 x BTC/ETH/SOL: 89 of 90 have no equal-distance tie among the first k+1 and >= 90% distinct prices.
+- User rounds: `POST /rounds {params: {creator, market, entryUnits (string), maxPlayers, lockAfter, resolveAfter, winnerBps, split, creatorFeeBps}, nonce, signature}` -> `{lobbyId, txHash, lockTime, endTime}`. Range check per CLAUDE.md, EIP-712 `CreateRound` (`createRoundMessage()` in `src/orders.ts`), nonce strictly increasing per creator (in memory). No bots join user rounds.
+- `POST /predictions {lobbyId, player, price, nonce, ts, signature}` -> `{ok, count, price}`. EIP-712 `Prediction` (`predictionMessage()`); `ts` is not signed, checked within 30 s when present; nonce strictly increasing per player per round. `ORDER_SIG=off` skips the CreateRound and Prediction checks too.
+- `GET /rounds` -> `{protocol, rounds (open: protocol first, then user by lockTime), active (live/settling), recent (last 10 finished)}`, each `{lobbyId, protocol, status, params, maxPlayers, lockAfter, resolveAfter, openTime, lockTime, endTime, players, predicted, potUnits, mark}`. `GET /lobbies/:id` and `POST /lobbies/:id/join` work for rounds (same Join signature). `GET /marks` and `WS /ws?feed=marks` (`{type: "marks", marks, at}` at 4 Hz) give the live price before the lock. `WS /ws?lobby=:id` catches up with `lobby, round, predicted, locked, ptick, final, settled`.
+- Chain: protocol rounds `createLobby(resolveAfter, 5_000000, 50)`; user rounds `createRound(resolveAfter, entry, maxPlayers, creator, creatorFeeBps)`. `start()` is sent 6 s before the lock (joins closed at 7 s), so the on-chain end is within seconds of the book's `endTime` (the workflow refuses > 60 s). Settlement uses the royale path: `buildReport(book, {BTC,ETH,SOL} all = settlement price, onchain pot, 500, CHAIN_SELECTOR, {creator, creatorFeeBps, entry, playerCount})`, then `settleFallback`. The 6th argument is passed for royale lobbies too. `getLobby` decodes the 11-field Phase 8 tuple and falls back to the 9-field one for an older escrow (creator zero, fee 0). Every escrow call still goes through the one serialized queue with local nonces, so concurrent royale and predict lobbies never race a nonce. Logs: `round-<id>.jsonl` (inputs + events). Rounds are not resumed after a restart.
+- With the chain on and `--predict` but no players, every protocol round costs a `createLobby` and a `cancel` per minute.

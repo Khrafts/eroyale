@@ -86,3 +86,68 @@ export async function verifyJoin(lobbyId: number, player: string, callsign: stri
     return false;
   }
 }
+
+// Prediction mode (CLAUDE.md "Signed messages"): same domain.
+export const CREATE_ROUND_TYPES = {
+  CreateRound: [
+    { name: "creator", type: "address" },
+    { name: "market", type: "string" },
+    { name: "entryUnits", type: "uint256" },
+    { name: "maxPlayers", type: "uint16" },
+    { name: "lockAfter", type: "uint32" },
+    { name: "resolveAfter", type: "uint32" },
+    { name: "winnerBps", type: "uint16" },
+    { name: "split", type: "string" },
+    { name: "creatorFeeBps", type: "uint16" },
+    { name: "nonce", type: "uint256" },
+  ],
+} as const;
+
+export type CreateRoundParams = {
+  creator: string; market: string; entryUnits: string | number; maxPlayers: number; lockAfter: number; resolveAfter: number;
+  winnerBps: number; split: string; creatorFeeBps: number;
+};
+
+export function createRoundMessage(p: CreateRoundParams, nonce: number | string) {
+  return {
+    creator: p.creator.toLowerCase() as Address, market: p.market, entryUnits: BigInt(p.entryUnits), maxPlayers: p.maxPlayers,
+    lockAfter: p.lockAfter, resolveAfter: p.resolveAfter, winnerBps: p.winnerBps, split: p.split, creatorFeeBps: p.creatorFeeBps, nonce: BigInt(nonce),
+  };
+}
+
+export async function verifyCreateRound(p: CreateRoundParams, nonce: number | string, signature: unknown): Promise<boolean> {
+  if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) return false;
+  try {
+    return await verifyTypedData({
+      address: p.creator as Address, domain: ORDER_DOMAIN, types: CREATE_ROUND_TYPES, primaryType: "CreateRound",
+      message: createRoundMessage(p, nonce), signature: signature as Hex,
+    });
+  } catch {
+    return false;
+  }
+}
+
+export const PREDICTION_TYPES = {
+  Prediction: [
+    { name: "lobbyId", type: "uint256" },
+    { name: "player", type: "address" },
+    { name: "price", type: "string" },
+    { name: "nonce", type: "uint256" },
+  ],
+} as const;
+
+export function predictionMessage(lobbyId: number, player: string, price: string, nonce: number | string) {
+  return { lobbyId: BigInt(lobbyId), player: player.toLowerCase() as Address, price, nonce: BigInt(nonce) };
+}
+
+export async function verifyPrediction(lobbyId: number, player: string, price: string, nonce: number | string, signature: unknown): Promise<boolean> {
+  if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) return false;
+  try {
+    return await verifyTypedData({
+      address: player as Address, domain: ORDER_DOMAIN, types: PREDICTION_TYPES, primaryType: "Prediction",
+      message: predictionMessage(lobbyId, player, price, nonce), signature: signature as Hex,
+    });
+  } catch {
+    return false;
+  }
+}

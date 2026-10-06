@@ -20,7 +20,9 @@ export class PredictBots {
     const rng = new Rng(hashSeed(this.seed, "pbot", i));
     const lockK = round.lockK;
     const willPredict = rng.chance(0.95);
-    const predictAt = willPredict ? rng.int(Math.max(1, Math.floor(lockK * 0.1)), Math.floor(lockK * 0.85)) : Infinity;
+    // A bot that joins late (slow on-chain joins) picks from the time still left.
+    const lo = Math.max(1, Math.floor(lockK * 0.1), round.k + 1), hi = Math.max(lo, Math.floor(lockK * 0.85));
+    const predictAt = willPredict && lo < lockK ? rng.int(lo, Math.min(hi, lockK - 1)) : Infinity;
     const reviseAt = willPredict && rng.chance(0.35) ? rng.int(Math.min(predictAt + 4, lockK - 1), lockK - 1) : null;
     // trend in [-1, 1]: >0 follows momentum, <0 fades it. spread: how wide this bot guesses around its centre.
     this.brains.push({ player, rng, predictAt, reviseAt, trend: rng.next() * 2 - 1, spread: 0.3 + rng.next() * 1.5 });

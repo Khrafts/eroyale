@@ -4,7 +4,8 @@ import { BaseError, ContractFunctionRevertedError, HttpRequestError, numberToHex
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, foundry, sepolia } from "viem/chains";
 
-export type OnchainLobby = { status: number; endTime: bigint; pot: bigint; playerCount: number };
+export type OnchainLobby = { status: number; endTime: bigint; pot: bigint; entry: bigint; playerCount: number; creator: string; creatorFeeBps: number };
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const LOBBY_OPEN = 1; // IRoyaleEscrow.Status.Open
 export const LOBBY_LIVE = 2; // IRoyaleEscrow.Status.Live
 export const LOBBY_SETTLED = 3; // IRoyaleEscrow.Status.Settled
@@ -12,6 +13,8 @@ export const LOBBY_SETTLED = 3; // IRoyaleEscrow.Status.Settled
 export interface Chain {
   readonly on: boolean;
   createLobby(duration: number, entry: bigint, maxPlayers: number): Promise<number | null>;
+  /** A user-created prediction round (creator and creator fee on chain). Null with CHAIN=off. */
+  createRound(duration: number, entry: bigint, maxPlayers: number, creator: string, creatorFeeBps: number): Promise<{ id: number; txHash: string } | null>;
   joinFor(id: number, player: string): Promise<string | null>;
   start(id: number): Promise<string | null>;
   cancel(id: number): Promise<string | null>;
@@ -48,15 +51,19 @@ export function retryable(e: unknown): boolean {
   return !!hit || /nonce|missing or invalid parameters|timed? ?out|fetch failed|socket|ECONN/i.test(e.message);
 }
 
-// Signatures from CLAUDE.md "Contract"; approve/allowance are standard ERC-20.
+// Signatures from CLAUDE.md "Contract" and "Prediction mode > Contract changes"; approve/allowance are standard ERC-20.
 const ESCROW_ABI = parseAbi([
   "function createLobby(uint32 duration, uint96 entry, uint16 maxPlayers) returns (uint256 id)",
+  "function createRound(uint32 duration, uint96 entry, uint16 maxPlayers, address creator, uint16 creatorFeeBps) returns (uint256 id)",
   "function joinFor(uint256 id, address player)",
   "function start(uint256 id)",
   "function cancel(uint256 id)",
   "function settleFallback(bytes report)",
-  "struct Lobby { uint8 status; uint16 maxPlayers; uint32 duration; uint64 startTime; uint64 endTime; uint96 entry; uint32 playerCount; uint256 pot; bytes32 bookHash; }",
+  // Phase 8 layout: creator and creatorFeeBps appended after bookHash. GET_LOBBY_V1 reads an escrow deployed before it.
+  "struct Lobby { uint8 status; uint16 maxPlayers; uint32 duration; uint64 startTime; uint64 endTime; uint96 entry; uint32 playerCount; uint256 pot; bytes32 bookHash; address creator; uint16 creatorFeeBps; }",
   "function getLobby(uint256 id) view returns (Lobby)",
+  "error CreatorFeeTooHigh(uint16 creatorFeeBps, uint16 max)", "error ZeroCreatorWithFee(uint16 creatorFeeBps)", "error InvalidLobbyConfig()",
+  "error LobbyNotCancellable(uint256 id)",
   // Errors from contracts/src/interfaces/IRoyaleEscrow.sol, so reverts decode to a name.
   "error LobbyNotOpen(uint256 id)", "error LobbyNotLive(uint256 id)", "error AlreadyJoined(uint256 id, address player)",
   "error LobbyFull(uint256 id)", "error NotEnoughPlayers(uint256 id, uint256 count)", "error NotRelayer(address caller)",
@@ -64,6 +71,10 @@ const ESCROW_ABI = parseAbi([
   "error LengthMismatch(uint256 winners, uint256 amounts)", "error NotPlayer(uint256 id, address winner)",
   "error WinnersNotAscending(uint256 index)", "error AmountsOverBudget(uint256 total, uint256 budget)", "error TransferFailed()",
   "error OwnableUnauthorizedAccount(address account)",
+]);
+const GET_LOBBY_V1 = parseAbi([
+  "struct Lobby { uint8 status; uint16 maxPlayers; uint32 duration; uint64 startTime; uint64 endTime; uint96 entry; uint32 playerCount; uint256 pot; bytes32 bookHash; }",
+  "function getLobby(uint256 id) view returns (Lobby)",
 ]);
 const SETTLED_EVENT = parseAbiItem("event Settled(uint256 indexed id, bytes32 bookHash)");
 const ERC20_ABI = parseAbi([
@@ -115,6 +126,7 @@ export function laggedTransport(base: Transport, lagMs: number): Transport {
 export const offChain: Chain = {
   on: false,
   createLobby: async () => null,
+  createRound: async () => null,
   joinFor: async () => null,
   start: async () => null,
   cancel: async () => null,
@@ -177,12 +189,12 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
   };
 
   // Reverts that, at the moment each call is made, can only come from a node that has not seen our last tx yet.
-  type EscrowFn = "createLobby" | "joinFor" | "start" | "cancel" | "settleFallback";
+  type EscrowFn = "createLobby" | "createRound" | "joinFor" | "start" | "cancel" | "settleFallback";
   const LAG_REVERTS: Record<EscrowFn, string[]> = {
     joinFor: ["LobbyNotOpen("], // the engine only joins while its lobby is open, after createLobby was confirmed
     start: ["LobbyNotOpen(", "NotEnoughPlayers("], // start follows confirmed joins
     settleFallback: ["LobbyNotLive(", "SettleBeforeEnd("], // the engine checked block time and status first
-    cancel: [], createLobby: [],
+    cancel: [], createLobby: [], createRound: [],
   };
   async function simulate(wallet: typeof owner, fn: EscrowFn, args: readonly unknown[]) {
     for (let attempt = 1; ; attempt++) {
@@ -207,7 +219,23 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       await sleep(500);
     }
   }
-  const lobbyStatus = async (id: bigint) => (await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [id] })).status;
+  /** getLobby in the Phase 8 layout; an escrow deployed before it answers in the old one (no creator, fee 0). */
+  let v1 = false;
+  async function readLobby(id: bigint): Promise<OnchainLobby> {
+    if (!v1) {
+      try {
+        const l = await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [id] });
+        return { status: l.status, endTime: l.endTime, pot: l.pot, entry: l.entry, playerCount: l.playerCount, creator: l.creator.toLowerCase(), creatorFeeBps: l.creatorFeeBps };
+      } catch (e) {
+        if (!(e instanceof BaseError) || !/decod|data size|out of bounds|position/i.test(e.message)) throw e;
+        v1 = true;
+        log("[chain] escrow getLobby has the pre-prediction layout; reading creator as zero");
+      }
+    }
+    const l = await pub.readContract({ address: escrow, abi: GET_LOBBY_V1, functionName: "getLobby", args: [id] });
+    return { status: l.status, endTime: l.endTime, pot: l.pot, entry: l.entry, playerCount: l.playerCount, creator: ZERO_ADDRESS, creatorFeeBps: 0 };
+  }
+  const lobbyStatus = async (id: bigint) => (await readLobby(id)).status;
 
   async function send(wallet: typeof owner, fn: EscrowFn, args: readonly unknown[]) {
     const { request, result } = await simulate(wallet, fn, args);
@@ -225,6 +253,12 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       const id = result as bigint;
       await confirmRead(`lobby ${id} Open`, async () => (await lobbyStatus(id)) === LOBBY_OPEN);
       return Number(id);
+    }),
+    createRound: (duration, entry, maxPlayers, creator, creatorFeeBps) => serial(async () => {
+      const { hash, result } = await send(owner, "createRound", [duration, entry, maxPlayers, creator as Address, creatorFeeBps]);
+      const id = result as bigint;
+      await confirmRead(`round ${id} Open`, async () => (await lobbyStatus(id)) === LOBBY_OPEN);
+      return { id: Number(id), txHash: hash };
     }),
     joinFor: (id, player) => serial(async () => {
       if (!approved) {
@@ -268,10 +302,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       return hash;
     }),
     cancel: (id) => serial(async () => (await send(owner, "cancel", [BigInt(id)])).hash),
-    getLobby: async (id) => {
-      const l = await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [BigInt(id)] });
-      return { status: l.status, endTime: l.endTime, pot: l.pot, playerCount: l.playerCount };
-    },
+    getLobby: (id) => readLobby(BigInt(id)),
     blockTime: async () => (await pub.getBlock({ blockTag: "latest" })).timestamp,
     settleFallback: (report) => serial(async () => (await send(owner, "settleFallback", [report])).hash),
     findSettled: async (id, lookback) => {
