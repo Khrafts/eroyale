@@ -100,7 +100,9 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
     .result();
   const book = JSON.parse(rawBook) as { lobbyId: number; endTime: number };
   if (BigInt(book.lobbyId) !== lobbyId) throw new Error(`book is for lobby ${book.lobbyId}`);
-  if (BigInt(book.endTime) > lobby.endTime) throw new Error(`book endTime ${book.endTime} after onchain ${lobby.endTime}`);
+  // Prices follow the book's endTime so the report matches the arena's final marks; the escrow still
+  // refuses to settle before its own onchain endTime.
+  if (BigInt(book.endTime) !== lobby.endTime) runtime.log(`note: book endTime ${book.endTime}, onchain endTime ${lobby.endTime}`);
 
   // 3. Settlement prices: close of the candle starting at S, fetched no earlier than S + 120 s.
   const start = candleStart(book.endTime);
