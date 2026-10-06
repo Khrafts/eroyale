@@ -1,7 +1,8 @@
 ## Status
 - Step: island-engine (Phase 9): `GET /stats` from `settlements.jsonl`; CHAIN=off now emits `settled` (mode `simulated`, txHash `offline`) right after `final`.
 - Last check: `gates/engine.sh` and `gates/predict-engine.sh` PASS; live CHAIN=off run on :8801 settled royale + protocol + user round, /stats identical after restart.
-- Next: run `gates/island-engine.sh` once it exists. Blockers: none.
+- Draft gate `gates.next-island/island-engine.sh` (run against this branch from a scratch root): GATE PASS, 6 settlements, 24 winner entries.
+- Next: run `gates/island-engine.sh` once the lead copies it into gates/. Blockers: none.
 
 # Engine notes
 
