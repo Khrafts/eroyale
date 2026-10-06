@@ -230,3 +230,6 @@ export type LobbiesInfo = {
 };
 /** GET /rounds. */
 export type RoundsInfo = { protocol: number | null; rounds: RoundInfo[]; active?: RoundInfo[]; recent?: RoundInfo[] };
+
+/** A real settlement transaction. An engine run with CHAIN=off settles offline (txHash "offline"): nothing on chain. */
+export const isTxHash = (tx: string | null | undefined): boolean => !!tx && /^0x[0-9a-fA-F]{64}$/.test(tx);

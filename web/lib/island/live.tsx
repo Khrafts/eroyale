@@ -8,7 +8,7 @@ import { useMatch, type Match, type MatchState } from "../useMatch";
 import { engineHttp } from "../engineUrl";
 import { burner } from "../engine";
 import type { Health, LobbiesInfo, Marks, MarksInfo, RoundInfo, RoundsInfo, Stats } from "../events";
-import { MARKETS } from "../events";
+import { MARKETS, isTxHash } from "../events";
 import { emit, getSnapshot, setSnap, type FeedItem, type PredictInfo, type RoyaleInfo, type UserRound } from "./store";
 import { usdc } from "./format";
 import { commas } from "../predict";
@@ -99,6 +99,8 @@ function payout(s: MatchState, game: string, key: string) {
     if (BigInt(a) > BigInt(st.amounts[top])) top = i;
   });
   const mine = me ? st.winners.indexOf(me) : -1;
+  // CHAIN=off engines settle offline (txHash "offline"): nothing is paid, so say so
+  if (!isTxHash(st.txHash)) game += " (offline run, nothing paid on chain)";
   if (mine >= 0) emit({ kind: "victory", amountUnits: st.amounts[mine], game });
   else {
     const others = st.winners.length - 1;

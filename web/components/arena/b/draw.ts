@@ -1,5 +1,6 @@
 // Palette, maths and the two number renderers (odometer for spring values, roller for strings).
 // Digits are laid out in fixed-width cells, which gives tabular figures on a canvas.
+import { isTxHash } from "@/lib/events";
 
 export const C = {
   sky: "#172930",
@@ -300,7 +301,8 @@ export function stamp(ctx: CanvasRenderingContext2D, T: Type, tx: string, mode: 
   ctx.arc(0, 0, R - 52, 0, Math.PI * 2);
   ctx.stroke();
   // lettering around the rim
-  const ring = "Verified by Chainlink";
+  const onchain = isTxHash(tx);
+  const ring = onchain ? "Verified by Chainlink" : "Offline run · no chain";
   ctx.font = T.font("c", 800, 26);
   ctx.fillStyle = C.ink;
   ctx.textAlign = "center";
@@ -328,8 +330,8 @@ export function stamp(ctx: CanvasRenderingContext2D, T: Type, tx: string, mode: 
   ctx.fill();
   ctx.textBaseline = "alphabetic";
   T.text(ctx, "Settled", 0, 24, T.font("c", 800, 30), C.ink, "center");
-  T.text(ctx, shortHash(tx), 0, 52, T.font("x", 600, 24), C.ink, "center");
-  T.text(ctx, mode === "simulated" ? "simulated report" : "onchain report", 0, 96, T.font("c", 700, 22), rgba(C.ink, 0.85), "center");
+  T.text(ctx, onchain ? shortHash(tx) : "offline", 0, 52, T.font("x", 600, 24), C.ink, "center");
+  T.text(ctx, onchain ? (mode === "simulated" ? "simulated report" : "onchain report") : "no chain", 0, 96, T.font("c", 700, 22), rgba(C.ink, 0.85), "center");
   ctx.restore();
   // ink spread on impact
   if (!reduced && dt > 0.2 && dt < 1) {

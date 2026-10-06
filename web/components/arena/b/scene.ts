@@ -2,7 +2,7 @@
 // altitude is their equity; the zone is a flood that climbs the contours and, at each
 // checkpoint, surges over the lowest peaks. Everything is drawn in a 1920x1080 design space.
 import type { EliminatedEvent, Market, Side } from "@/lib/events";
-import { MARKETS, STAGE, START_BALANCE, num, presetOf, unitsToUsd } from "@/lib/events";
+import { MARKETS, STAGE, START_BALANCE, isTxHash, num, presetOf, unitsToUsd } from "@/lib/events";
 import type { MatchState } from "@/lib/useMatch";
 import {
   C,
@@ -1172,7 +1172,9 @@ export class Scene {
     ctx.globalAlpha = hA;
     const total = fin.finalists.reduce((a, f) => a + BigInt(units(f.player)), 0n);
     T.text(ctx, `${w.callsign} holds the high ground`, 960, 104, T.font("x", 800, 92), C.chalk, "center");
-    const sub = settled
+    const sub = settled && !isTxHash(settled.txHash)
+      ? `${fin.finalists.length} finalists split $${commas(unitsToUsd(total.toString()))}. Settled offline (no chain), nothing paid.`
+      : settled
       ? `${fin.finalists.length} finalists were paid $${commas(unitsToUsd(total.toString()))} from the pot.`
       : `${fin.finalists.length} finalists split $${commas(unitsToUsd(total.toString()))}. Payouts are provisional until settlement.`;
     T.text(ctx, sub, 960, 150, T.font("c", 600, 27), rgba(C.chalk, 0.8), "center");
