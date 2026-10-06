@@ -1,5 +1,7 @@
 // Usage: tsx scripts/score-fixture.ts <book> <prices> <potUnits> <feeBps> <chainSelector>
 // Prints {winners, amounts, bookHash, report} as one line of JSON.
+// Royale book (no mode) or predict book (mode "predict": the settlement price is prices[params.market]).
+// No chain here, so the on-chain creator / creatorFeeBps check in buildReport is skipped.
 import { readFileSync } from "node:fs";
 
 import type { Prices } from "../../shared/scoring.ts";
