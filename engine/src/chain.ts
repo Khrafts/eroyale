@@ -52,7 +52,7 @@ export function retryable(e: unknown): boolean {
   return !!hit || /nonce|missing or invalid parameters|timed? ?out|fetch failed|socket|ECONN/i.test(e.message);
 }
 
-// Signatures from CLAUDE.md "Contract" and "Prediction mode > Contract changes"; approve/allowance are standard ERC-20.
+// Signatures from the spec "Contract" and "Prediction mode > Contract changes"; approve/allowance are standard ERC-20.
 const ESCROW_ABI = parseAbi([
   "function createLobby(uint32 duration, uint96 entry, uint16 maxPlayers) returns (uint256 id)",
   "function createRound(uint32 duration, uint96 entry, uint16 maxPlayers, address creator, uint16 creatorFeeBps) returns (uint256 id)",
@@ -60,7 +60,7 @@ const ESCROW_ABI = parseAbi([
   "function start(uint256 id)",
   "function cancel(uint256 id)",
   "function settleFallback(bytes report)",
-  // Phase 8 layout: creator and creatorFeeBps appended after bookHash. GET_LOBBY_V1 reads an escrow deployed before it.
+  // Prediction-mode layout: creator and creatorFeeBps appended after bookHash. GET_LOBBY_V1 reads an escrow deployed before it.
   "struct Lobby { uint8 status; uint16 maxPlayers; uint32 duration; uint64 startTime; uint64 endTime; uint96 entry; uint32 playerCount; uint256 pot; bytes32 bookHash; address creator; uint16 creatorFeeBps; }",
   "function getLobby(uint256 id) view returns (Lobby)",
   "error CreatorFeeTooHigh(uint16 creatorFeeBps, uint16 max)", "error ZeroCreatorWithFee(uint16 creatorFeeBps)", "error InvalidLobbyConfig()",
@@ -220,7 +220,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       await sleep(500);
     }
   }
-  /** getLobby in the Phase 8 layout; an escrow deployed before it answers in the old one (no creator, fee 0). */
+  /** getLobby in the Prediction-mode layout; an escrow deployed before it answers in the old one (no creator, fee 0). */
   let v1 = false;
   async function readLobby(id: bigint): Promise<OnchainLobby> {
     if (!v1) {

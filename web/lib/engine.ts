@@ -1,5 +1,5 @@
 "use client";
-// Engine HTTP client for the phone: burner key, signed joins and signed orders (CLAUDE.md "Order signatures").
+// Engine HTTP client for the phone: burner key, signed joins and signed orders (the spec "Order signatures").
 // Signing uses viem, the same library the engine verifies with.
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import type { Market, Side } from "./events";
@@ -129,7 +129,7 @@ export async function sendOrder(acct: PrivateKeyAccount, lobbyId: number, order:
   return post("/orders", await signOrder(acct, lobbyId, order, serverOffsetMs));
 }
 
-// ---------- Prediction mode (CLAUDE.md "Prediction mode" > "Signed messages"), same domain as orders ----------
+// ---------- Prediction mode (the spec "Prediction mode" > "Signed messages"), same domain as orders ----------
 export const CREATE_ROUND_TYPES = {
   CreateRound: [
     { name: "creator", type: "address" },

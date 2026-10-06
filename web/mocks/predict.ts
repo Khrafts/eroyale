@@ -1,4 +1,4 @@
-// Prediction rounds, generated deterministically from a seed. Every wire event matches CLAUDE.md "Prediction mode" >
+// Prediction rounds, generated deterministically from a seed. Every wire event matches the spec "Prediction mode" >
 // "Events"; payouts go through predictSettle in shared/scoring.ts. Times (`at`) are unix seconds.
 //
 // Lobby 41: the protocol round (BTC, 20 players, 18 predict, top 5 win, linear), the one the screens follow.

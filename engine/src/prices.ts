@@ -131,7 +131,7 @@ export class FallbackPrices implements PriceSource {
 }
 
 /**
- * Settlement close per CLAUDE.md "Settlement price source": the close of the one-minute candle
+ * Settlement close per the spec "Settlement price source": the close of the one-minute candle
  * starting at S = floor(endTime/60)*60 - 60, fetched no earlier than S + 120.
  */
 export function settlementMinute(endTime: number) { return Math.floor(endTime / 60) * 60 - 60; }

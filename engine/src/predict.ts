@@ -8,7 +8,7 @@ import { FEE_BPS, MARKETS, TICKS_PER_SEC, type EngineEvent } from "./types.ts";
 export type { PredictParams, Split };
 export type RoundStatus = "open" | "live" | "settling" | "settled" | "cancelled";
 
-/** CLAUDE.md "Prediction mode": protocol values and user-created ranges. */
+/** The spec "Prediction mode": protocol values and user-created ranges. */
 export const PROTOCOL = {
   entryUnits: 5_000000n, maxPlayers: 50, lockAfter: 60, resolveAfter: 120, winnerBps: 2500, split: "linear" as Split, creatorFeeBps: 0,
 };

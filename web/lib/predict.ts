@@ -11,7 +11,7 @@ import type { Match } from "./useMatch";
 
 export const PROTOCOL_FEE_BPS = 500;
 
-/** CLAUDE.md "Prediction mode": the user-created ranges, with the step each control moves in. */
+/** The spec "Prediction mode": the user-created ranges, with the step each control moves in. */
 export const RANGES = {
   entryUnits: { min: 1_000000, max: 50_000000, step: 1_000000 },
   maxPlayers: { min: 4, max: 50, step: 1 },

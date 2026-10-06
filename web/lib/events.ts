@@ -1,4 +1,4 @@
-// Wire types for every event in CLAUDE.md "Events". Phantom money is a 2-decimal string,
+// Wire types for every event in the spec "Events". Phantom money is a 2-decimal string,
 // token amounts are 6-decimal integer strings, addresses are lowercase.
 
 export type Market = "BTC" | "ETH" | "SOL";
@@ -87,7 +87,7 @@ export type SettledEvent = {
   amounts: string[];
 };
 
-// ---------- Prediction mode (CLAUDE.md "Prediction mode" > "Events") ----------
+// ---------- Prediction mode (the spec "Prediction mode" > "Events") ----------
 export type Split = "equal" | "linear" | "steep";
 export type PredictParams = {
   market: Market;

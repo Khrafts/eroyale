@@ -1,5 +1,5 @@
 // A full 120-second Stage match for 20 players, generated deterministically from a seed.
-// Every event matches CLAUDE.md "Events". Scoring goes through shared/scoring.ts.
+// Every event matches the spec "Events". Scoring goes through shared/scoring.ts.
 import { cut, equityCents, fromCents, settle, toCents } from "../../shared/scoring";
 import type { FinalBook, Finalist, Position } from "../../shared/scoring";
 import type {

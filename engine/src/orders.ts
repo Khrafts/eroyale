@@ -87,7 +87,7 @@ export async function verifyJoin(lobbyId: number, player: string, callsign: stri
   }
 }
 
-// Prediction mode (CLAUDE.md "Signed messages"): same domain.
+// Prediction mode (the spec "Signed messages"): same domain.
 export const CREATE_ROUND_TYPES = {
   CreateRound: [
     { name: "creator", type: "address" },
