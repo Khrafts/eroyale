@@ -1,0 +1,7 @@
+node_modules/
+.env
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+web/.next/
+*.log
