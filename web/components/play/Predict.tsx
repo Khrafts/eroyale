@@ -31,7 +31,7 @@ import { useRolling } from "@/lib/useRolling";
 import s from "./play.module.css";
 import p from "./predict.module.css";
 
-type View = { kind: "rounds" } | { kind: "create" } | { kind: "round"; lobby: number };
+type View = { kind: "rounds" } | { kind: "create" } | { kind: "round"; lobby: number; createdLock?: number };
 
 const ordinal = (n: number) => {
   const m100 = n % 100;
@@ -116,7 +116,7 @@ function Screens({ view, go }: { view: View; go: (v: View) => void }) {
   const me = match.source === "mock" ? match.me : (acct?.address.toLowerCase() ?? null);
   if (view.kind === "rounds") return <Rounds match={match} go={go} />;
   if (view.kind === "create") return <Create match={match} acct={acct} go={go} />;
-  return <Round match={match} me={me} acct={acct} go={go} />;
+  return <Round match={match} me={me} acct={acct} go={go} createdLock={view.createdLock} />;
 }
 
 // ---------- rounds list ----------
@@ -286,7 +286,8 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
         const r = await createRound(acct, params);
         if (!r.ok) throw new Error(String(r.data.error ?? `The engine refused the round (${r.status}).`));
         const id = Number(r.data.lobbyId);
-        if (id) go({ kind: "round", lobby: id });
+        const lock = Number(r.data.lockTime);
+        if (id) go({ kind: "round", lobby: id, createdLock: lock > 0 ? lock : undefined });
       }
     } catch (e) {
       setMsg({ tone: "bad", text: e instanceof Error ? e.message : "The round was not created." });
@@ -360,7 +361,10 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
           {busy ? "Creating the round" : "Create round"}
         </button>
         {msg && <p className={msg.tone === "bad" ? s.error : s.fine}>{msg.text}</p>}
-        <p className={s.fine}>The protocol keeps 5% of every pot. You do not have to play your own round.</p>
+        <p className={s.fine}>
+          Calls close on a whole minute, so the lock can land up to 59 s after the time you pick. The protocol keeps 5% of every
+          pot. You do not have to play your own round.
+        </p>
       </div>
     </section>
   );
@@ -392,7 +396,19 @@ function Slider({
 }
 
 // ---------- one round: join, predict, locked, result ----------
-function Round({ match, me, acct, go }: { match: Match; me: string | null; acct: PrivateKeyAccount | null; go: (v: View) => void }) {
+function Round({
+  match,
+  me,
+  acct,
+  go,
+  createdLock,
+}: {
+  match: Match;
+  me: string | null;
+  acct: PrivateKeyAccount | null;
+  go: (v: View) => void;
+  createdLock?: number;
+}) {
   const st = match.state;
   if (st.error) return <Notice title="Not connected" body={st.error} go={go} />;
   if (!st.round) return <p className={s.waiting}>Finding the round</p>;
@@ -407,7 +423,7 @@ function Round({ match, me, acct, go }: { match: Match; me: string | null; acct:
   const joined = !!me && st.players.some((x) => x.player === me);
   if (st.pfinal) return <Result match={match} me={me} go={go} />;
   if (st.locked) return <Locked match={match} me={me} go={go} />;
-  if (!joined) return <JoinRound match={match} acct={acct} me={me} go={go} />;
+  if (!joined) return <JoinRound match={match} acct={acct} me={me} go={go} createdLock={createdLock} />;
   return <Call match={match} me={me!} acct={acct} go={go} />;
 }
 
@@ -438,6 +454,9 @@ function RoundBar({ match, go, right }: { match: Match; go: (v: View) => void; r
   );
 }
 
+/** Local wall-clock time of a unix-seconds timestamp, to the second. */
+const clockOf = (t: number) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
 const sentenceCase = (x: string) => x.charAt(0).toUpperCase() + x.slice(1).replace(/[.\s]+$/, "");
 
 /** The live price, rolling toward each new mark instead of jumping (display only; nothing signed reads it). */
@@ -452,7 +471,19 @@ const liveMark = (match: Match): bigint | null => {
   return centsOf(last);
 };
 
-function JoinRound({ match, acct, me, go }: { match: Match; acct: PrivateKeyAccount | null; me: string | null; go: (v: View) => void }) {
+function JoinRound({
+  match,
+  acct,
+  me,
+  go,
+  createdLock,
+}: {
+  match: Match;
+  acct: PrivateKeyAccount | null;
+  me: string | null;
+  go: (v: View) => void;
+  createdLock?: number;
+}) {
   useTick();
   const st = match.state;
   const r = st.round!;
@@ -489,6 +520,11 @@ function JoinRound({ match, acct, me, go }: { match: Match; acct: PrivateKeyAcco
   return (
     <section className={p.page}>
       <RoundBar match={match} go={go} right={<>Locks in <span className={s.fig}>{countdown(left)}</span></>} />
+      {createdLock ? (
+        <p className={s.fine}>
+          Round created. Calls close at <span className={s.fig}>{clockOf(createdLock)}</span>, lined up with the minute.
+        </p>
+      ) : null}
       <p className={s.kicker}>{r.params.market} now</p>
       <LivePrice match={match} mark={mark} />
       <p className={s.lede}>
