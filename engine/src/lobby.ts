@@ -5,7 +5,7 @@ import type { Finalist, FinalBook, Position } from "../../shared/scoring.ts";
 import { keccak256, toBytes } from "viem";
 import {
   ENTRY_UNITS, FEE_BPS, MARKETS, START_BALANCE, TICKS_PER_SEC, ZONE_START_CENTS,
-  type EngineEvent, type Market, type Order, type Preset, type Prices, type Status,
+  type EngineEvent, type Market, type Order, type Preset, type Prices, type SettleVia, type Status,
 } from "./types.ts";
 
 type Pos = { side: 1 | -1; notional: bigint; entry: bigint; margin: bigint; leverage: number };
@@ -334,9 +334,9 @@ export class Lobby {
     return { bookJson, final: this.emitFinal(finalMarks) };
   }
 
-  markSettled(txHash: string, mode: "deployed" | "simulated", winners: string[], amounts: string[]) {
+  markSettled(txHash: string, mode: "deployed" | "simulated", via: SettleVia, winners: string[], amounts: string[]) {
     this.status = "settled";
-    this.emit({ type: "settled", txHash, mode, winners, amounts });
+    this.emit({ type: "settled", txHash, mode, via, winners, amounts });
     this.emitLobby();
   }
 

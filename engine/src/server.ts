@@ -15,7 +15,8 @@ import { Stats, playersInLog } from "./stats.ts";
 import { LOBBY_CANCELLED, LOBBY_LIVE, LOBBY_OPEN, LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
 import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyCreateRound, verifyJoin, verifyOrder, verifyPrediction, type CreateRoundParams } from "./orders.ts";
-import { ENTRY_UNITS, MARKETS, PRESETS, type EngineEvent, type Order, type Preset, type Prices } from "./types.ts";
+import { ENTRY_UNITS, MARKETS, PRESETS, type EngineEvent, type Order, type Preset, type Prices, type SettleVia } from "./types.ts";
+import type { Hex } from "viem";
 
 // ---------- config
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -79,7 +80,10 @@ const DATA = process.env.ENGINE_DATA_DIR
 mkdirSync(DATA, { recursive: true });
 // With the chain on, the final marks must be the settlement candle the workflow reads; never live marks.
 if (chain.on && !PRICE_URL) throw new Error("PRICE_SOURCE_URL is required when CHAIN is not off");
-if (SETTLE_MODE !== "simulated" && SETTLE_MODE !== "deployed") throw new Error(`SETTLE_MODE must be simulated or deployed, got ${SETTLE_MODE}`);
+if (SETTLE_MODE !== "simulated" && SETTLE_MODE !== "deployed" && SETTLE_MODE !== "cre") throw new Error(`SETTLE_MODE must be simulated, cre or deployed, got ${SETTLE_MODE}`);
+// SETTLE_MODE=cre: how long after `final` the engine waits for the CRE settler before its own settleFallback.
+const CRE_WAIT_MS = Number(process.env.CRE_WAIT_MS ?? 360_000);
+const ESCROW = (process.env.ESCROW_ADDRESS ?? "").trim().toLowerCase();
 const CHAIN_SELECTOR = (process.env.CHAIN_SELECTOR ?? "").trim();
 if (chain.on && !/^\d+$/.test(CHAIN_SELECTOR)) throw new Error("CHAIN_SELECTOR is required when CHAIN is not off");
 const prices: PriceSource = new FallbackPrices(new CoinbaseFeed(log).start()!, new KrakenFeed(log).start()!);
@@ -121,9 +125,9 @@ function settledHere(m: { logFile: string }, mode: "royale" | "predict", id: num
   stats.record(mode, id, bookHash, e as unknown as { txHash: string; winners: string[]; amounts: string[] }, whoOf(players), at);
 }
 /** CHAIN=off: nothing to pay on chain, so `settled` follows `final` with its provisional payouts (non-zero, by address). */
-function settleOffline(l: { markSettled(txHash: string, mode: "simulated", winners: string[], amounts: string[]): void }, pay: { player: string; provisionalPayoutUnits: string }[]) {
+function settleOffline(l: { markSettled(txHash: string, mode: "simulated", via: SettleVia, winners: string[], amounts: string[]): void }, pay: { player: string; provisionalPayoutUnits: string }[]) {
   const paid = pay.filter((x) => BigInt(x.provisionalPayoutUnits) > 0n).sort((a, b) => (a.player < b.player ? -1 : a.player > b.player ? 1 : 0));
-  l.markSettled("offline", "simulated", paid.map((x) => x.player), paid.map((x) => x.provisionalPayoutUnits));
+  l.markSettled("offline", "simulated", "offline", paid.map((x) => x.player), paid.map((x) => x.provisionalPayoutUnits));
 }
 
 const record = (m: { logFile: string }, line: unknown) => appendFileSync(m.logFile, JSON.stringify(line) + "\n");
@@ -353,10 +357,12 @@ async function onchainPot(id: number): Promise<bigint> {
 
 /**
  * simulated: build the report from the exact book bytes with workflow's buildReport, wait for block time past the
- * on-chain end, owner calls settleFallback. deployed: the CRE workflow writes the report; we watch for Settled.
- * Retries every 5 s; gives up when one failure reason repeats.
+ * on-chain end, owner calls settleFallback. cre: wait CRE_WAIT_MS for an external CRE settlement (the royale-settle
+ * workflow run in the CRE CLI simulator by `npm run cre-settler`, written through the MockKeystoneForwarder); if no
+ * Settled shows up, settle with settleFallback. deployed: the CRE workflow writes the report; we only watch for Settled.
+ * settleFallback retries every 5 s; gives up when one failure reason repeats.
  */
-type Settles = { readonly id: number; markSettled(txHash: string, mode: "deployed" | "simulated", winners: string[], amounts: string[]): void };
+type Settles = { readonly id: number; markSettled(txHash: string, mode: "deployed" | "simulated", via: SettleVia, winners: string[], amounts: string[]): void };
 async function settle(m: { chainError: string | null }, l: Settles, marks: Prices, pot: bigint) {
   let onchain = null;
   for (let attempt = 1; !onchain; attempt++) {
@@ -374,29 +380,41 @@ async function settle(m: { chainError: string | null }, l: Settles, marks: Price
   const r = buildReport(new TextEncoder().encode(book), marks, pot, FEE_BPS, BigInt(CHAIN_SELECTOR),
     { creator: onchain.creator, creatorFeeBps: onchain.creatorFeeBps, entry: onchain.entry, playerCount: onchain.playerCount });
   if (BigInt(r.lobbyId) !== BigInt(l.id)) throw new Error(`book lobbyId ${r.lobbyId} != ${l.id}`);
-  const done = (hash: string) => {
+  // Where to look for a Settled log: from a little before the lobby ended (counting >= 1 s per block).
+  const head = await chain.blockNumber();
+  const behind = BigInt(Math.max(0, Math.floor(Date.now() / 1000) - Number(onchain.endTime))) + 300n;
+  const scanFrom = head > behind ? head - behind : 0n;
+  const mode: "deployed" | "simulated" = SETTLE_MODE === "deployed" ? "deployed" : "simulated";
+  const done = (hash: string, via: SettleVia) => {
     m.chainError = null;
-    l.markSettled(hash, SETTLE_MODE as "simulated" | "deployed", r.winners, r.amounts.map(String));
-    log(`[lobby ${l.id}] settled (${SETTLE_MODE}) ${hash}`);
+    l.markSettled(hash, mode, via, r.winners, r.amounts.map(String));
+    log(`[lobby ${l.id}] settled (${mode} via ${via}) ${hash}`);
   };
-  if (SETTLE_MODE === "deployed") {
-    // Triggering the deployed workflow's HTTP trigger needs a signed gateway request that contracts/NOTES.md does
-    // not document, so it is not wired: the workflow must be triggered outside the engine. We only watch for it.
-    log(`[lobby ${l.id}] SETTLE_MODE=deployed: CRE trigger not wired; trigger royale-settle with {"lobbyId": ${l.id}} and the engine will pick up Settled`);
-    const deadline = Date.now() + DEPLOYED_SETTLE_WAIT_MS;
-    while (Date.now() < deadline) {
-      const hash = await chain.findSettled(l.id, 5_000n).catch(() => null);
-      if (hash) return done(hash);
-      await sleep(10_000);
-    }
-    m.chainError = `no Settled log within ${DEPLOYED_SETTLE_WAIT_MS / 60_000} min; settle by hand (contracts/NOTES.md)`;
-    log(`[lobby ${l.id}] ${m.chainError}`);
-    return;
-  }
+  /** A settlement this engine did not send (or whose call errored): checked receipt, and which path sent it. */
+  const pickUp = async (hash: string) => {
+    const rc = await chain.settlementReceipt(l.id, hash as Hex).catch(() => null);
+    if (rc && !rc.ok) log(`[lobby ${l.id}] warning: ${rc.reason}`);
+    if (rc?.ok && rc.bookHash !== r.bookHash) log(`[lobby ${l.id}] warning: Settled bookHash ${rc.bookHash} != engine book ${r.bookHash}`);
+    done(hash, rc?.to === ESCROW ? "owner-fallback" : SETTLE_MODE === "deployed" ? "cre-don" : "cre-simulator");
+  };
   if (onchain.status === LOBBY_SETTLED) {
-    const hash = await chain.findSettled(l.id, 50_000n);
-    if (hash) return done(hash);
+    const hash = await chain.findSettled(l.id, scanFrom);
+    if (hash) return pickUp(hash);
     throw new Error("escrow says settled but no Settled log found");
+  }
+  if (SETTLE_MODE === "deployed" || SETTLE_MODE === "cre") {
+    // deployed: triggering the deployed workflow's HTTP trigger needs a signed gateway request that is not wired here.
+    // cre: the CRE CLI needs a logged-in user, so the simulator runs on an operator's machine (npm run cre-settler).
+    const wait = SETTLE_MODE === "deployed" ? DEPLOYED_SETTLE_WAIT_MS : CRE_WAIT_MS;
+    log(`[lobby ${l.id}] SETTLE_MODE=${SETTLE_MODE}: waiting up to ${wait / 1000}s for royale-settle {"lobbyId": ${l.id}} to settle it`);
+    const hash = await watchSettled(l.id, scanFrom, Date.now() + wait);
+    if (hash) return pickUp(hash);
+    if (SETTLE_MODE === "deployed") {
+      m.chainError = `no Settled log within ${wait / 60_000} min; settle by hand (contracts/NOTES.md)`;
+      log(`[lobby ${l.id}] ${m.chainError}`);
+      return;
+    }
+    log(`[lobby ${l.id}] no CRE settlement within ${wait / 1000}s; settling with settleFallback`);
   }
   for (;;) {
     const now = await chain.blockTime();
@@ -406,12 +424,12 @@ async function settle(m: { chainError: string | null }, l: Settles, marks: Price
   }
   let last = "";
   for (let attempt = 1; attempt <= 10; attempt++) {
-    try { return done(await chain.settleFallback(r.report)); } catch (e) {
-      // The tx may have landed even though this call failed (dropped receipt, RPC error): pick it up instead of retrying.
+    try { return done(await chain.settleFallback(r.report), "owner-fallback"); } catch (e) {
+      // Settled meanwhile (by the CRE settler racing us, or our tx landed although this call errored): pick it up.
       const now = await chain.getLobby(l.id).catch(() => null);
       if (now?.status === LOBBY_SETTLED) {
-        const hash = await chain.findSettled(l.id, 50_000n).catch(() => null);
-        if (hash) return done(hash);
+        const hash = await chain.findSettled(l.id, scanFrom).catch((e2) => { log(`[lobby ${l.id}] Settled log search failed: ${failReason(e2)}`); return null; });
+        if (hash) return pickUp(hash);
       }
       const why = failReason(e);
       m.chainError = `settleFallback attempt ${attempt} failed: ${why}`.slice(0, 500);
@@ -421,6 +439,31 @@ async function settle(m: { chainError: string | null }, l: Settles, marks: Price
       await sleep(5000);
     }
   }
+}
+
+/**
+ * Watches for Settled(id) until `until`: every 10 s scans the blocks it has not scanned yet (the RPC caps eth_getLogs
+ * at a few blocks per call, so each block is read once) and checks the lobby status. Errors are logged, not swallowed.
+ */
+async function watchSettled(id: number, from: bigint, until: number): Promise<string | null> {
+  let next = from;
+  while (Date.now() < until) {
+    try {
+      const top = await chain.blockNumber();
+      if (top >= next) {
+        const hash = await chain.findSettled(id, next, top);
+        if (hash) return hash;
+        next = top + 1n;
+      }
+      if ((await chain.getLobby(id)).status === LOBBY_SETTLED) {
+        const hash = await chain.findSettled(id, from, next - 1n);
+        if (hash) return hash;
+        log(`[lobby ${id}] escrow says Settled but no Settled log since block ${from}`);
+      }
+    } catch (e) { log(`[lobby ${id}] watching for Settled: ${failReason(e)}`); }
+    await sleep(10_000);
+  }
+  return null;
 }
 
 // ---------- prediction rounds (the spec "Prediction mode")
@@ -789,8 +832,8 @@ async function recoverRounds() {
       log(`[round ${id}] restart: reached final before the restart, settling from the stored book`);
       const price = final.settlementPrice as string;
       const target = {
-        id, markSettled: (txHash: string, mode: "deployed" | "simulated", winners: string[], amounts: string[]) => {
-          appendFileSync(file, JSON.stringify({ type: "settled", lobbyId: id, txHash, mode, winners, amounts }) + "\n");
+        id, markSettled: (txHash: string, mode: "deployed" | "simulated", via: SettleVia, winners: string[], amounts: string[]) => {
+          appendFileSync(file, JSON.stringify({ type: "settled", lobbyId: id, txHash, mode, via, winners, amounts }) + "\n");
           const at = Date.now();
           appendFileSync(file, JSON.stringify({ in: "settled", at }) + "\n");
           stats.record("predict", id, final.bookHash ?? null, { txHash, winners, amounts }, playersInLog(lines), at);
@@ -906,6 +949,14 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/rounds") return send(res, 200, listRounds());
     if (req.method === "GET" && url.pathname === "/stats") return send(res, 200, stats.view(Date.now(), playingNow()));
+    // Lobbies and rounds that reached `final` and are not settled yet: what `npm run cre-settler` settles.
+    if (req.method === "GET" && url.pathname === "/settlements/pending") {
+      const pending = [
+        ...[...matches.values()].filter((m) => m.lobby.status === "settling" && m.lobby.finalEvent).map((m) => ({ lobbyId: m.lobby.id, mode: "royale", endTime: m.lobby.endTime })),
+        ...[...rounds.values()].filter((m) => m.round.status === "settling" && m.round.finalEvent).map((m) => ({ lobbyId: m.round.id, mode: "predict", endTime: m.round.endTime })),
+      ].sort((a, b) => a.lobbyId - b.lobbyId);
+      return send(res, 200, { chain: chain.on ? process.env.CHAIN : "off", escrow: chain.on ? ESCROW : null, settleMode: SETTLE_MODE, pending });
+    }
     if (req.method === "GET" && url.pathname === "/marks") return send(res, 200, { marks: prices.current(), stale: prices.ageMs(Date.now()) > STALE_MS, now: Date.now() });
     if (req.method === "POST" && url.pathname === "/rounds") {
       const [code, out] = await createUserRound(await readJson(req));
@@ -1000,7 +1051,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(PORT, async () => {
-  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
+  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
   void recoverRounds().catch((e) => log(`round recovery failed: ${failReason(e)}`));
   if (PREDICT_ON) void openProtocolRound(null);
