@@ -1,10 +1,12 @@
 // Relayer: escrow calls through RPC_URL. CHAIN=off turns every call into a no-op so the engine runs before deploy.
 // Owner-only calls (createLobby, start, cancel, settleFallback) use PRIVATE_KEY_DEPLOYER; joinFor uses PRIVATE_KEY_RELAYER.
-import { BaseError, ContractFunctionRevertedError, HttpRequestError, InvalidInputRpcError, InvalidParamsRpcError, NonceTooHighError, NonceTooLowError, TimeoutError, createPublicClient, createWalletClient, http, maxUint256, parseAbi, parseAbiItem, type Address, type Hex } from "viem";
+import { BaseError, ContractFunctionRevertedError, HttpRequestError, numberToHex, type Transport, InvalidInputRpcError, InvalidParamsRpcError, NonceTooHighError, NonceTooLowError, TimeoutError, createPublicClient, createWalletClient, http, maxUint256, parseAbi, parseAbiItem, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, foundry, sepolia } from "viem/chains";
 
 export type OnchainLobby = { status: number; endTime: bigint; pot: bigint; playerCount: number };
+export const LOBBY_OPEN = 1; // IRoyaleEscrow.Status.Open
+export const LOBBY_LIVE = 2; // IRoyaleEscrow.Status.Live
 export const LOBBY_SETTLED = 3; // IRoyaleEscrow.Status.Settled
 
 export interface Chain {
@@ -74,6 +76,41 @@ const ERC20_ABI = parseAbi([
 const RELAYER_FLOOR = 1_000n * 10n ** 6n;
 const RELAYER_MINT = 1_000_000n * 10n ** 6n;
 const JOIN_TRIES = 4; // first send plus 3 retries
+// A load-balanced RPC can answer from a node a few blocks behind. A revert that contradicts what we just saw mined
+// (LobbyNotOpen right after createLobby, NotEnoughPlayers right after the joins, ...) is retried this many times.
+const LAG_TRIES = 4;
+const LAG_WAIT_MS = 1500;
+// After a state-changing receipt, poll reads until the RPC shows the new state, for at most this long.
+const CONFIRM_READ_MS = 30_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Test-only (ENGINE_READ_LAG_MS): answers eth_call and eth_estimateGas at the newest block that was already the head
+ * lagMs ago, the way a load-balanced RPC node that is behind does. Sends, receipts and nonces are untouched.
+ */
+export function laggedTransport(base: Transport, lagMs: number): Transport {
+  return (opts) => {
+    const b = base(opts);
+    const heads: { t: number; n: bigint }[] = [];
+    const poll = async () => {
+      try { heads.push({ t: Date.now(), n: BigInt(await b.request({ method: "eth_blockNumber" }) as Hex) }); } catch { /* next poll */ }
+      while (heads.length > 1 && heads[1].t <= Date.now() - lagMs) heads.shift();
+    };
+    void poll();
+    setInterval(poll, 100).unref();
+    const request = (async (args: { method: string; params?: unknown[] }) => {
+      if ((args.method === "eth_call" || args.method === "eth_estimateGas") && heads.length) {
+        const params = [...(args.params ?? [])];
+        if (params[1] === undefined || params[1] === "latest" || params[1] === "pending") {
+          params[1] = numberToHex(heads[0].n);
+          return b.request({ ...args, params } as never);
+        }
+      }
+      return b.request(args as never);
+    }) as typeof b.request;
+    return { ...b, request };
+  };
+}
 
 export const offChain: Chain = {
   on: false,
@@ -100,8 +137,11 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
   // anvil: a local dev chain (chain id 31337) for scripts/e2e-local.sh.
   const chain = name === "base-sepolia" ? baseSepolia : name === "ethereum-sepolia" ? sepolia : name === "anvil" ? foundry : null;
   if (!chain) throw new Error(`CHAIN must be off, base-sepolia, ethereum-sepolia or anvil, got ${name}`);
-  const transport = http(need(env, "RPC_URL"));
-  const pub = createPublicClient({ chain, transport });
+  const lagMs = Number(env.ENGINE_READ_LAG_MS ?? 0);
+  const transport = lagMs > 0 ? laggedTransport(http(need(env, "RPC_URL")), lagMs) : http(need(env, "RPC_URL"));
+  if (lagMs > 0) log(`[chain] test mode: reads lag ${lagMs} ms behind the head (ENGINE_READ_LAG_MS)`);
+  // Receipts polled every second (viem defaults to 4 s): joins are sequential, so this sets the join rate.
+  const pub = createPublicClient({ chain, transport, pollingInterval: 1_000 });
   const rpcChainId = await pub.getChainId().catch((e) => { throw new Error(`RPC_URL chain id check failed: ${failReason(e)}`); });
   if (rpcChainId !== chain.id) throw new Error(`RPC_URL serves chain id ${rpcChainId}, but CHAIN=${name} is chain id ${chain.id}`);
   const owner = createWalletClient({ chain, transport, account: privateKeyToAccount(need(env, "PRIVATE_KEY_DEPLOYER") as Hex) });
@@ -136,8 +176,41 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
     return p;
   };
 
-  async function send(wallet: typeof owner, fn: "createLobby" | "joinFor" | "start" | "cancel" | "settleFallback", args: readonly unknown[]) {
-    const { request, result } = await pub.simulateContract({ address: escrow, abi: ESCROW_ABI, functionName: fn, args: args as never, account: wallet.account });
+  // Reverts that, at the moment each call is made, can only come from a node that has not seen our last tx yet.
+  type EscrowFn = "createLobby" | "joinFor" | "start" | "cancel" | "settleFallback";
+  const LAG_REVERTS: Record<EscrowFn, string[]> = {
+    joinFor: ["LobbyNotOpen("], // the engine only joins while its lobby is open, after createLobby was confirmed
+    start: ["LobbyNotOpen(", "NotEnoughPlayers("], // start follows confirmed joins
+    settleFallback: ["LobbyNotLive(", "SettleBeforeEnd("], // the engine checked block time and status first
+    cancel: [], createLobby: [],
+  };
+  async function simulate(wallet: typeof owner, fn: EscrowFn, args: readonly unknown[]) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await pub.simulateContract({ address: escrow, abi: ESCROW_ABI, functionName: fn, args: args as never, account: wallet.account });
+      } catch (e) {
+        const why = failReason(e);
+        if (attempt >= LAG_TRIES || !LAG_REVERTS[fn].some((p) => why.startsWith(p))) throw e;
+        log(`[chain] ${fn} simulation reverted ${why}; RPC may lag, retry ${attempt}/${LAG_TRIES - 1} in ${LAG_WAIT_MS} ms`);
+        await sleep(LAG_WAIT_MS);
+      }
+    }
+  }
+
+  /** Poll a read until it shows the state a mined tx produced (a lagging node may not have it yet). */
+  async function confirmRead(what: string, ok: () => Promise<boolean>) {
+    const until = Date.now() + CONFIRM_READ_MS;
+    for (let n = 1; ; n++) {
+      if (await ok().catch(() => false)) return;
+      if (Date.now() > until) throw new Error(`RPC still does not show ${what} after ${CONFIRM_READ_MS / 1000} s`);
+      if (n === 2) log(`[chain] waiting for the RPC to show ${what}`);
+      await sleep(500);
+    }
+  }
+  const lobbyStatus = async (id: bigint) => (await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [id] })).status;
+
+  async function send(wallet: typeof owner, fn: EscrowFn, args: readonly unknown[]) {
+    const { request, result } = await simulate(wallet, fn, args);
     const hash = await write(wallet, request as never);
     const rc = await pub.waitForTransactionReceipt({ hash });
     if (rc.status !== "success") throw new Error(`${fn} reverted: ${hash}`);
@@ -149,7 +222,9 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
     on: true,
     createLobby: (duration, entry, maxPlayers) => serial(async () => {
       const { result } = await send(owner, "createLobby", [duration, entry, maxPlayers]);
-      return Number(result as bigint);
+      const id = result as bigint;
+      await confirmRead(`lobby ${id} Open`, async () => (await lobbyStatus(id)) === LOBBY_OPEN);
+      return Number(id);
     }),
     joinFor: (id, player) => serial(async () => {
       if (!approved) {
@@ -159,6 +234,8 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
           const rc = await pub.waitForTransactionReceipt({ hash });
           if (rc.status !== "success") throw new Error(`mint reverted: ${hash}`);
           log(`[chain] relayer minted ${RELAYER_MINT} MockUSDC units ${hash}`);
+          await confirmRead("the relayer's minted balance", async () =>
+            (await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [relayer.account.address] })) >= RELAYER_FLOOR);
         }
         const have = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, escrow] });
         if (have < 10n ** 30n) {
@@ -166,6 +243,8 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
           const rc = await pub.waitForTransactionReceipt({ hash });
           if (rc.status !== "success") throw new Error(`approve reverted: ${hash}`);
           log(`[chain] relayer approved escrow ${hash}`);
+          await confirmRead("the relayer's allowance", async () =>
+            (await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, escrow] })) >= 10n ** 30n);
         }
         approved = true;
       }
@@ -175,7 +254,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       for (let attempt = 1; attempt <= JOIN_TRIES; attempt++) {
         try { return (await send(relayer, "joinFor", [BigInt(id), player as Address])).hash; } catch (e) {
           lastErr = e;
-          if (attempt > 1 && failReason(e).startsWith("AlreadyJoined(")) { log(`[chain] joinFor(${id}, ${player}) landed on an earlier attempt`); return null; }
+          if (failReason(e).startsWith("AlreadyJoined(")) { log(`[chain] joinFor(${id}, ${player}): already joined on chain`); return null; }
           if (!retryable(e) || attempt === JOIN_TRIES) throw e;
           log(`[chain] joinFor(${id}, ${player}) attempt ${attempt} failed, resending: ${failReason(e)}`);
           await new Promise((r) => setTimeout(r, 1000 * attempt));
@@ -183,7 +262,11 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       }
       throw lastErr;
     }),
-    start: (id) => serial(async () => (await send(owner, "start", [BigInt(id)])).hash),
+    start: (id) => serial(async () => {
+      const { hash } = await send(owner, "start", [BigInt(id)]);
+      await confirmRead(`lobby ${id} Live`, async () => (await lobbyStatus(BigInt(id))) === LOBBY_LIVE);
+      return hash;
+    }),
     cancel: (id) => serial(async () => (await send(owner, "cancel", [BigInt(id)])).hash),
     getLobby: async (id) => {
       const l = await pub.readContract({ address: escrow, abi: ESCROW_ABI, functionName: "getLobby", args: [BigInt(id)] });

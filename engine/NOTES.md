@@ -1,6 +1,6 @@
 ## Status
-- Step: testnet e2e fixes: local relayer/owner nonces + joinFor resend on nonce/transport errors; RPC URLs redacted in every engine and e2e print; e2e retries historical balanceOf, falls back to receipt Transfer logs, table lists every finalist from `final`.
-- Last gate: `bash gates/all.sh` -> GATE PASS x5. `npm run e2e:local` PASS (20/20 joins, all finalists + treasury match `final`; Transfer-log fallback also checked).
+- Step: RPC read-lag handling: createLobby and start wait for a read showing Open/Live; lag-shaped reverts (LobbyNotOpen on join, NotEnoughPlayers on start, LobbyNotLive/SettleBeforeEnd on settle) retried 4 x 1.5 s; failed bots retried every 3 s while joins are open; ENGINE_READ_LAG_MS test transport.
+- Last gate: `bash gates/all.sh` -> GATE PASS x5. `npm run e2e:local` PASS with reads lagging 6 s (20/20 joins, all finalists + treasury match `final`).
 - Next: lead reruns `npm run e2e` on Base Sepolia.
 - Blockers: deployed-mode CRE trigger not wired.
 
@@ -58,6 +58,8 @@ Seeds 1-30, 20 bots, stage: 27 end with 4-9 finalists, 28 have at least one liqu
 - Nonces are tracked locally per account (`write()` in `src/chain.ts`): read once with blockTag `pending`, then incremented. A load-balanced RPC's pending count can lag a tx we already saw mined. On a nonce error it resyncs to max(local + 1, RPC count). Sends stay serialized.
 - `joinFor` resends up to 3 times on nonce or transport errors (`retryable()`); an `AlreadyJoined` revert on a resend means an earlier attempt landed and counts as joined.
 - `redact()` replaces any http(s)/ws(s) URL with `<rpc>`. `failReason()` uses viem's `shortMessage` and redacts; the server's `log` redacts every line; uncaught errors exit through a redacted `fatal`. The e2e relays engine output line by line through `redact()` and has its own redacted top-level handler.
+- Read lag: after `createLobby` the engine polls `getLobby` until it reads Open (30 s deadline) before any join; after `start`, until Live. The relayer's mint and approve are confirmed the same way. A simulation that reverts with a lag-shaped error (`LobbyNotOpen` on joinFor, `LobbyNotOpen`/`NotEnoughPlayers` on start, `LobbyNotLive`/`SettleBeforeEnd` on settleFallback) is retried 4 times, 1.5 s apart, before it counts. `AlreadyJoined` counts as joined. Bots whose join still failed are retried every 3 s until joins close. Receipts are polled every 1 s.
+- `ENGINE_READ_LAG_MS` (test only, off unless set): eth_call and eth_estimateGas answer at the head from that many ms ago. `scripts/e2e.mts` sets 6000 when `CHAIN=anvil` (so `e2e:local` runs with lag; `ENGINE_READ_LAG_MS=0` turns it off) and clears it on any other chain.
 - e2e: refuses a busy `E2E_PORT` (default 8799; `e2e:local` uses 8811). Historical `balanceOf` is retried 10 x 2 s, then the settlement receipt's Transfer logs give the deltas.
 
 ## Settlement (Phase 6)

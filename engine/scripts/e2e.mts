@@ -27,6 +27,10 @@ for (const k of ["CHAIN", "RPC_URL", "PRIVATE_KEY_DEPLOYER", "PRIVATE_KEY_RELAYE
   if (!process.env[k]) { console.error(`e2e: ${k} is not set`); process.exit(2); }
 }
 if (process.env.CHAIN === "off") { console.error("e2e: CHAIN must not be off"); process.exit(2); }
+// On anvil, engine reads answer 6 s behind the head, like a lagging load-balanced RPC node, so a local run exercises
+// the engine's lag handling. Never on a testnet. ENGINE_READ_LAG_MS=0 turns it off.
+if (process.env.CHAIN === "anvil") process.env.ENGINE_READ_LAG_MS ??= "6000";
+else delete process.env.ENGINE_READ_LAG_MS;
 const PORT = Number(process.env.E2E_PORT ?? 8799);
 const TIMEOUT_S = Number(process.env.E2E_TIMEOUT_S ?? 600);
 const say = (m: string) => console.log(`[e2e] ${m}`);

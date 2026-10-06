@@ -42,6 +42,7 @@ const STALE_MS = 3000;
 const SETTLE_MODE = (process.env.SETTLE_MODE ?? "simulated").trim();
 const FEE_BPS = 500n;
 
+const BOT_RETRY_MS = 3000; // retry a bot whose joinFor failed this often while joins are open
 const JOIN_CLOSE_MS = 7000; // joins close this long before startsAt
 const START_LEAD_MS = 6000; // first on-chain start() this long before startsAt, so the chain end lands near the book's
 const START_DEADLINE_MS = 1500; // no new start attempt after startsAt minus this; cancel instead
@@ -147,14 +148,33 @@ async function createLobby(): Promise<Match> {
   wire(m);
   m.lobby.emitLobby();
   current = m;
-  for (let i = 0; i < N_BOTS; i++) {
-    const addr = botAddress(m.seed, i);
-    const r = await join(m, addr, botCallsign(i), i);
-    if ("error" in r) log(`[lobby ${id}] bot ${i} could not join: ${r.error}`);
-    else m.bots.add(addr, i);
-  }
+  const failed: number[] = [];
+  for (let i = 0; i < N_BOTS; i++) if (!(await joinBot(m, i))) failed.push(i);
+  if (failed.length) void retryBots(m, failed);
   scheduleCountdown(m, Date.now() + OPEN_S * 1000);
   return m;
+}
+
+async function joinBot(m: Match, i: number): Promise<boolean> {
+  const addr = botAddress(m.seed, i);
+  const r = await join(m, addr, botCallsign(i), i);
+  if ("error" in r) { log(`[lobby ${m.lobby.id}] bot ${i} could not join: ${r.error}`); return false; }
+  m.bots.add(addr, i);
+  return true;
+}
+
+/** Bots whose join failed are retried every BOT_RETRY_MS while the lobby still takes joins, never dropped early. */
+async function retryBots(m: Match, failed: number[]) {
+  const l = m.lobby;
+  const open = () => l.status === "open" || (l.status === "countdown" && Date.now() < l.startsAt! * 1000 - JOIN_CLOSE_MS);
+  while (failed.length && open()) {
+    await new Promise((r) => setTimeout(r, BOT_RETRY_MS));
+    for (const i of [...failed]) {
+      if (!open()) break;
+      if (l.find(botAddress(m.seed, i)) || (await joinBot(m, i))) failed.splice(failed.indexOf(i), 1);
+    }
+  }
+  if (failed.length) log(`[lobby ${l.id}] ${failed.length} bots never joined: seats ${failed.join(", ")}`);
 }
 
 /** botIndex is the bot's seat index (null for a human); replay uses it to rebuild the same bot. */
