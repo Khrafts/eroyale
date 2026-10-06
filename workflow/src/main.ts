@@ -1,6 +1,8 @@
 // CRE workflow royale-settle: settles one lobby of RoyaleEscrow.
 // HTTP trigger {"lobbyId": N} -> read the lobby onchain -> GET the final book -> GET the three
 // settlement prices -> buildReport -> signed report -> writeReport to the escrow.
+// Royale and prediction lobbies share this path: buildReport branches on the book's mode and, for a
+// prediction book, refuses unless its creator, creator fee, entry and player count equal the on-chain lobby's.
 import {
   EVMClient,
   HTTPCapability,
@@ -36,7 +38,7 @@ type Config = {
 };
 
 const ESCROW_ABI = parseAbi([
-  "function getLobby(uint256 id) view returns ((uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash))",
+  "function getLobby(uint256 id) view returns ((uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps))",
 ]);
 
 const STATUS_LIVE = 2;
@@ -124,7 +126,16 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   runtime.log(`prices at ${start}: BTC ${prices.BTC} ETH ${prices.ETH} SOL ${prices.SOL}`);
 
   // 4. Score and encode with the shared scoring code.
-  const out = buildReport(rawBook, prices, lobby.pot, BigInt(config.feeBps), chainSelector);
+  const onchain = {
+    creator: lobby.creator,
+    creatorFeeBps: Number(lobby.creatorFeeBps),
+    entry: BigInt(lobby.entry),
+    playerCount: Number(lobby.playerCount),
+  };
+  runtime.log(
+    `lobby ${lobbyId}: creator ${onchain.creator}, creatorFeeBps ${onchain.creatorFeeBps}, entry ${onchain.entry}, players ${onchain.playerCount}`,
+  );
+  const out = buildReport(rawBook, prices, lobby.pot, BigInt(config.feeBps), chainSelector, onchain);
   runtime.log(`bookHash ${out.bookHash}, winners ${out.winners.join(",")}, amounts ${out.amounts.join(",")}`);
   // Logged before the write so SETTLE_MODE=simulated can pass these exact bytes to settleFallback.
   runtime.log(`report ${out.report}`);
