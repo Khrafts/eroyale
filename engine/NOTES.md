@@ -1,8 +1,8 @@
 ## Status
-- Step: review fixes: per-escrow data dir, RPC error redaction, cancel on failed start, chain id checks, on-chain pot in `final`, settlement pick-up and deployed-mode deadline.
-- Last gate: `bash gates/all.sh` -> GATE PASS x5. `npm run e2e:local` PASS (3 winners + treasury deltas equal `final`). Stale `data/lobby-1.final.json` not served (404) with the chain on.
-- Next: lead fills .env (RPC_URL, keys, TOKEN/ESCROW after deploy) and runs `npm run e2e` on Base Sepolia.
-- Blockers: no testnet RPC/keys in this session; deployed-mode CRE trigger not wired.
+- Step: testnet e2e fixes: local relayer/owner nonces + joinFor resend on nonce/transport errors; RPC URLs redacted in every engine and e2e print; e2e retries historical balanceOf, falls back to receipt Transfer logs, table lists every finalist from `final`.
+- Last gate: `bash gates/all.sh` -> GATE PASS x5. `npm run e2e:local` PASS (20/20 joins, all finalists + treasury match `final`; Transfer-log fallback also checked).
+- Next: lead reruns `npm run e2e` on Base Sepolia.
+- Blockers: deployed-mode CRE trigger not wired.
 
 # Engine notes
 
@@ -52,6 +52,13 @@ EIP-712, domain `{name: "TradingRoyale", version: "1"}` (no chainId), primary ty
 
 20 bots cycle through styles `degen, trend, steady, fade` (two of each per 8). Degen: 80-100x, 85-100% of free margin, no stop. Trend/fade: 10-40x following or fading 2 s momentum, take-profit/stop on margin. Steady: 5-20x. All bank profits when above the next zone line within 6 s of a checkpoint, and press (more leverage) when behind with under 12 s left. On a quiet tape they raise leverage until a half-sigma move over the time left reaches the line (live markets move ~10x less than the sim walk). Sim walk: per-tick vol BTC 0.04%, ETH 0.05%, SOL 0.07%, with a wandering drift.
 Seeds 1-30, 20 bots, stage: 27 end with 4-9 finalists, 28 have at least one liquidation. Live on a calm Coinbase tape (BTC moving ~0.02% in 2 min) the same bots ended with 3 finalists after two cuts; real price moves are the limit there, not the rules.
+
+## Chain robustness
+
+- Nonces are tracked locally per account (`write()` in `src/chain.ts`): read once with blockTag `pending`, then incremented. A load-balanced RPC's pending count can lag a tx we already saw mined. On a nonce error it resyncs to max(local + 1, RPC count). Sends stay serialized.
+- `joinFor` resends up to 3 times on nonce or transport errors (`retryable()`); an `AlreadyJoined` revert on a resend means an earlier attempt landed and counts as joined.
+- `redact()` replaces any http(s)/ws(s) URL with `<rpc>`. `failReason()` uses viem's `shortMessage` and redacts; the server's `log` redacts every line; uncaught errors exit through a redacted `fatal`. The e2e relays engine output line by line through `redact()` and has its own redacted top-level handler.
+- e2e: refuses a busy `E2E_PORT` (default 8799; `e2e:local` uses 8811). Historical `balanceOf` is retried 10 x 2 s, then the settlement receipt's Transfer logs give the deltas.
 
 ## Settlement (Phase 6)
 

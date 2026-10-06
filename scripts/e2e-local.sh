@@ -16,6 +16,7 @@ export TREASURY_ADDRESS=0x90F79bf6EB2c4f870365E785982E1f101E93b906    # account 
 export CHAIN_SELECTOR=10344971235874465080                            # Base Sepolia's; any value works locally
 export PRICE_SOURCE_URL='https://api.exchange.coinbase.com/products/{MARKET}-USD/candles?granularity=60&start={START}&end={END}'
 export SETTLE_MODE=simulated
+export E2E_PORT="${E2E_PORT:-8811}"   # not the testnet e2e's 8799, so both can run at once
 unset TOKEN_ADDRESS ESCROW_ADDRESS RELAYER_MINT
 
 if ! curl -sf -m 10 -o /dev/null "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=60"; then

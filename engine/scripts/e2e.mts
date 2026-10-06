@@ -2,14 +2,23 @@
 // MockUSDC balance change in the settlement block against the `final` event's provisionalPayoutUnits.
 // Env (process env, then ../.env for unset keys): CHAIN, RPC_URL, PRIVATE_KEY_DEPLOYER, PRIVATE_KEY_RELAYER,
 // TOKEN_ADDRESS, ESCROW_ADDRESS, CHAIN_SELECTOR, PRICE_SOURCE_URL. Optional E2E_PORT, E2E_TIMEOUT_S.
-// Secrets are passed to the engine through the environment and never printed.
+// Secrets are passed to the engine through the environment and never printed: every error and every engine line
+// goes through redact(), which replaces any URL (RPC URLs carry API keys) with <rpc>.
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseEnv } from "node:util";
-import { createPublicClient, http, parseAbi, type Address, type Hex } from "viem";
+import { createPublicClient, http, parseAbi, parseEventLogs, type Address, type Hex, type TransactionReceipt } from "viem";
 import WebSocket from "ws";
+import { failReason, redact } from "../src/chain.ts";
+
+// Before anything can throw: an uncaught viem error prints its full request URL.
+let stopEngine: (code: number) => never = (code) => process.exit(code);
+const die = (e: unknown): never => { console.error(`e2e: ${failReason(e)}`); return stopEngine(1); };
+process.on("uncaughtException", die);
+process.on("unhandledRejection", die);
 
 const ENGINE = resolve(import.meta.dirname, "..");
 const envFile = resolve(ENGINE, "../.env");
@@ -32,6 +41,10 @@ if (!ALLOWED_CHAIN_IDS.includes(rpcChainId)) { console.error(`e2e: RPC chain id 
 const ERC20 = parseAbi(["function balanceOf(address) view returns (uint256)"]);
 const ESCROW = parseAbi(["function treasury() view returns (address)"]);
 
+// Refuse a busy port: /health would answer from someone else's engine and the run would watch the wrong lobby.
+const portFree = await new Promise<boolean>((r) => { const s = createServer().once("error", () => r(false)).listen(PORT, () => s.close(() => r(true))); });
+if (!portFree) { console.error(`e2e: port ${PORT} is in use; set E2E_PORT to a free port`); process.exit(2); }
+
 // A fresh data dir: a new anvil reuses lobby ids, and a book is never rewritten once on disk.
 const data = mkdtempSync(join(tmpdir(), "royale-e2e-"));
 const engine = spawn("npx", ["tsx", "src/server.ts", "--bots", "20", "--preset", "stage", "--port", String(PORT), "--open", "5", "--countdown", "10"], {
@@ -40,8 +53,20 @@ const engine = spawn("npx", ["tsx", "src/server.ts", "--bots", "20", "--preset",
   stdio: ["ignore", "pipe", "pipe"],
   detached: true, // own process group, so stop() takes down npx, tsx and the server together
 });
-engine.stdout.on("data", (b: Buffer) => process.stdout.write(b.toString().replace(/^(?=.)/gm, "  engine | ")));
-engine.stderr.on("data", (b: Buffer) => process.stderr.write(b.toString().replace(/^(?=.)/gm, "  engine ! ")));
+// Whole lines only, so a URL split across two chunks is still redacted; an endless line is flushed at 64 KiB.
+function relay(from: NodeJS.ReadableStream, to: NodeJS.WriteStream, tag: string) {
+  let buf = "";
+  const out = (line: string) => to.write(`  engine ${tag} ${redact(line)}\n`);
+  from.on("data", (b: Buffer) => {
+    buf += b.toString();
+    let i: number;
+    while ((i = buf.indexOf("\n")) >= 0) { out(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    if (buf.length > 65536) { out(buf); buf = ""; }
+  });
+  from.on("end", () => { if (buf) out(buf); });
+}
+relay(engine.stdout, process.stdout, "|");
+relay(engine.stderr, process.stderr, "!");
 let exiting = false;
 engine.on("exit", (code) => { if (!exiting) { console.error(`e2e: engine exited early (${code})`); process.exit(1); } });
 const stop = (code: number): never => {
@@ -49,6 +74,7 @@ const stop = (code: number): never => {
   try { process.kill(-engine.pid!, "SIGTERM"); } catch { /* already gone */ }
   process.exit(code);
 };
+stopEngine = stop;
 process.on("SIGINT", () => stop(130));
 setTimeout(() => { console.error(`e2e: timed out after ${TIMEOUT_S}s`); stop(1); }, TIMEOUT_S * 1000).unref();
 
@@ -69,9 +95,11 @@ const { final, settled } = await new Promise<{ final: Final; settled: Settled }>
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws?lobby=${lobbyId}`);
   ws.on("error", rej);
   ws.on("message", (raw) => {
-    const e = JSON.parse(raw.toString());
-    if (e.type === "lobby" && e.status !== "live") say(`lobby ${e.lobbyId} ${e.status}, ${e.players.length} players`);
-    if (e.type === "eliminated") say(`checkpoint ${e.checkpoint}: ${e.players.length} out`);
+    let e;
+    try { e = JSON.parse(raw.toString()); } catch { say(`skipped an unparsable event (${raw.toString().length} bytes)`); return; }
+    if (!e || typeof e !== "object") return;
+    if (e.type === "lobby" && e.status !== "live") say(`lobby ${e.lobbyId} ${e.status}, ${e.players?.length} players`);
+    if (e.type === "eliminated") say(`checkpoint ${e.checkpoint}: ${e.players?.length} out`);
     if (e.type === "final") { final = e; say(`final: ${e.finalists.length} finalists, bookHash ${e.bookHash}`); }
     if (e.type === "settled" && final) { ws.close(); res({ final, settled: e }); }
   });
@@ -81,23 +109,67 @@ say(`settlement tx ${settled.txHash} (${settled.mode})`);
 const rc = await pub.waitForTransactionReceipt({ hash: settled.txHash });
 if (rc.status !== "success") { console.error("e2e: settlement receipt is not success"); stop(1); }
 const before = rc.blockNumber - 1n;
-const bal = (a: Address, blockNumber: bigint) => pub.readContract({ address: token, abi: ERC20, functionName: "balanceOf", args: [a], blockNumber });
-const treasury = await pub.readContract({ address: escrow, abi: ESCROW, functionName: "treasury" });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// A load-balanced RPC may not have the settlement block yet ("Requested resource not found"): retry.
+async function retry<T>(what: string, f: () => Promise<T>, tries = 10): Promise<T> {
+  for (let i = 1; ; i++) {
+    try { return await f(); } catch (e) {
+      if (i >= tries) throw e;
+      say(`${what} failed (attempt ${i}/${tries}), retrying in 2 s: ${failReason(e)}`);
+      await sleep(2000);
+    }
+  }
+}
+const treasury = (await retry("treasury()", () => pub.readContract({ address: escrow, abi: ESCROW, functionName: "treasury" }))).toLowerCase() as Address;
+
+// Token movement per address inside the settlement tx, from its Transfer logs: the fallback when the node cannot
+// answer historical balanceOf, and a cross-check otherwise.
+const TRANSFER = parseAbi(["event Transfer(address indexed from, address indexed to, uint256 value)"]);
+function logDeltas(r: TransactionReceipt): Map<string, bigint> {
+  const m = new Map<string, bigint>();
+  const add = (a: string, v: bigint) => m.set(a.toLowerCase(), (m.get(a.toLowerCase()) ?? 0n) + v);
+  for (const l of parseEventLogs({ abi: TRANSFER, logs: r.logs })) {
+    if (l.address.toLowerCase() !== token.toLowerCase()) continue;
+    add(l.args.from, -l.args.value);
+    add(l.args.to, l.args.value);
+  }
+  return m;
+}
+const fromLogs = logDeltas(rc);
+let source = "balanceOf";
+async function delta(a: Address): Promise<bigint> {
+  if (source === "balanceOf") {
+    try {
+      const bal = (blockNumber: bigint) => retry(`balanceOf(${a}) at ${blockNumber}`, () => pub.readContract({ address: token, abi: ERC20, functionName: "balanceOf", args: [a], blockNumber }));
+      return (await bal(rc.blockNumber)) - (await bal(before));
+    } catch (e) {
+      say(`historical balanceOf unavailable (${failReason(e)}); using the settlement receipt's Transfer logs`);
+      source = "Transfer logs";
+    }
+  }
+  return fromLogs.get(a.toLowerCase()) ?? 0n;
+}
 
 let ok = true;
-const payouts = final.finalists.filter((f) => BigInt(f.provisionalPayoutUnits) > 0n);
-const expected = payouts.map((f) => f.player).sort();
-if (JSON.stringify(expected) !== JSON.stringify(settled.winners)) { ok = false; console.error(`winners differ: final ${expected} settled ${settled.winners}`); }
-console.log("\n  winner                                      callsign      equity      payout (final)  balance change  match");
-for (const f of payouts) {
-  const d = (await bal(f.player as Address, rc.blockNumber)) - (await bal(f.player as Address, before));
-  const match = d === BigInt(f.provisionalPayoutUnits);
+const expectedWinners = final.finalists.filter((f) => BigInt(f.provisionalPayoutUnits) > 0n).map((f) => f.player.toLowerCase()).sort();
+const settledWinners = settled.winners.map((w) => w.toLowerCase());
+if (JSON.stringify(expectedWinners) !== JSON.stringify(settledWinners)) { ok = false; console.error(`winners differ: final ${expectedWinners} settled ${settledWinners}`); }
+const cell = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "~" : s);
+const rows: string[][] = [["finalist", "callsign", "equity", "expected (final)", "balance change", "match"]];
+for (const f of final.finalists) {
+  const want = BigInt(f.provisionalPayoutUnits);
+  const d = await delta(f.player as Address);
+  const match = d === want;
   ok &&= match;
-  console.log(`  ${f.player}  ${f.callsign.padEnd(12)}  ${f.equity.padStart(9)}  ${f.provisionalPayoutUnits.padStart(14)}  ${d.toString().padStart(14)}  ${match ? "yes" : "NO"}`);
+  rows.push([f.player, cell(String(f.callsign), 16), f.equity, want.toString(), d.toString(), match ? "yes" : "NO"]);
 }
-const td = (await bal(treasury, rc.blockNumber)) - (await bal(treasury, before));
+const td = await delta(treasury);
 const tmatch = td === BigInt(final.feeUnits);
 ok &&= tmatch;
-console.log(`  treasury ${treasury}                fee   ${final.feeUnits.padStart(14)}  ${td.toString().padStart(14)}  ${tmatch ? "yes" : "NO"}\n`);
+rows.push([treasury, "(treasury fee)", "", final.feeUnits, td.toString(), tmatch ? "yes" : "NO"]);
+const widths = rows[0].map((_, c) => Math.max(...rows.map((r) => r[c].length)));
+console.log("");
+for (const r of rows) console.log("  " + r.map((v, c) => (c >= 2 && c <= 4 ? v.padStart(widths[c]) : v.padEnd(widths[c]))).join("  "));
+console.log(`  (balance change from ${source})\n`);
 say(ok ? "PASS: every balance change equals the final event's payout" : "FAIL: balance changes differ from the final event");
 stop(ok ? 0 : 1);
