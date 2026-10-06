@@ -15,6 +15,9 @@ export type LobbyEvent = {
   players: LobbyPlayer[];
   startsAt: number; // unix seconds
   potUnits: string;
+  lobbyId?: number;
+  preset?: string;
+  endTime?: number;
 };
 
 export type TickEvent = {
@@ -68,6 +71,7 @@ export type FinalEvent = {
   type: "final";
   marks: Marks;
   bookHash: string;
+  feeUnits?: string;
   finalists: { player: string; callsign: string; equity: string; provisionalPayoutUnits: string }[];
 };
 

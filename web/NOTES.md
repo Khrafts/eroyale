@@ -1,7 +1,7 @@
 ## Status
-- Step: 2 of 6 done, three arena variants committed (f0ab669, branch arena-variants pushed); waiting for the judge's pick.
-- Last gate: not run (phone screens are placeholders); full `npm run build` passes with all three variants.
-- Next: keep the picked variant, carry over named ideas, delete the others, then build /play (orders per CLAUDE.md "Order signatures").
+- Step: 4 of 6, /play phone states done (join, lobby, trade, eliminated, result) with signed join and orders via viem; storm arena fixes in progress.
+- Last gate: not run since the pick; `next build` passes, phone shots reviewed.
+- Next: land the storm arena fixes, run `bash gates/ui.sh`, review all eight shots.
 - Blockers: none. Shots use installed Chrome because Playwright 1.63's Chromium is not downloaded.
 
 ## Running

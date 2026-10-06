@@ -1,7 +1,4 @@
-"use client";
-import { useMatch } from "@/lib/useMatch";
-
+import Play from "@/components/play/Play";
 export default function PlayPage() {
-  const { state, me } = useMatch();
-  return <main style={{ padding: 16 }}>Phone placeholder: {state.status} me={me}</main>;
+  return <Play />;
 }

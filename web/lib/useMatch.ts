@@ -8,6 +8,7 @@ import type {
   LeaderboardEvent,
   LobbyPlayer,
   LobbyStatus,
+  Market,
   MatchEvent,
   SettledEvent,
   TickEvent,
@@ -26,6 +27,8 @@ export type MatchState = {
   board: LeaderboardEvent | null;
   prevBoard: LeaderboardEvent | null;
   fills: FillEvent[]; // newest last, at most 60
+  /** Open positions per player, rebuilt from fills: the opening fill per market. */
+  positions: Record<string, Partial<Record<Market, FillEvent>>>;
   warning: WarningEvent | null;
   eliminations: EliminatedEvent[]; // oldest first
   final: FinalEvent | null;
@@ -47,6 +50,7 @@ export const emptyState = (lobbyId = 1): MatchState => ({
   board: null,
   prevBoard: null,
   fills: [],
+  positions: {},
   warning: null,
   eliminations: [],
   final: null,
@@ -78,12 +82,18 @@ export function applyEvent(s: MatchState, ev: MatchEvent): MatchState {
       break;
     case "fill":
       s.fills = [...s.fills.slice(-59), ev];
+      {
+        const p = (s.positions[ev.player] ??= {});
+        if (ev.kind === "open") p[ev.market] = ev;
+        else delete p[ev.market];
+      }
       break;
     case "warning":
       s.warning = ev;
       break;
     case "eliminated":
       s.eliminations = [...s.eliminations, ev];
+      for (const p of ev.players) delete s.positions[p.player];
       break;
     case "final":
       s.final = ev;
@@ -105,6 +115,8 @@ export type Match = {
   me: string | null;
   connected: boolean;
   reducedMotion: boolean;
+  /** Apply a local event (mock mode: echo the player's own orders). */
+  inject: (ev: MatchEvent) => void;
 };
 
 function readParams() {
@@ -130,6 +142,7 @@ export function useMatch(): Match {
   const [state, setState] = useState<MatchState>(() => emptyState());
   const ref = useRef<MatchState>(state);
   const clockRef = useRef<() => number>(() => 0);
+  const injectRef = useRef<(ev: MatchEvent) => void>(() => undefined);
   const [source, setSource] = useState<"mock" | "live">("mock");
   const [me, setMe] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -177,6 +190,10 @@ export function useMatch(): Match {
           changed = true;
         }
         if (changed) publish(s);
+      };
+      injectRef.current = (ev) => {
+        applyEvent(s, ev);
+        publish(s);
       };
       pump();
       setConnected(true);
@@ -233,5 +250,6 @@ export function useMatch(): Match {
   }, []);
 
   const clock = useMemo(() => () => clockRef.current(), []);
-  return { state, ref, clock, source, me, connected, reducedMotion };
+  const inject = useMemo(() => (ev: MatchEvent) => injectRef.current(ev), []);
+  return { state, ref, clock, source, me, connected, reducedMotion, inject };
 }
