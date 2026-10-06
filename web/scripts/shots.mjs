@@ -1,5 +1,5 @@
 // Screenshots of every screen against the mock. Starts `next start` itself.
-// Env: SHOTS_DIR (output dir, default ./shots), SHOTS_ONLY (comma list), ARENA_V (a|b|c), PORT.
+// Env: SHOTS_DIR (output dir, default ./shots), SHOTS_ONLY (comma list), PORT.
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -7,16 +7,15 @@ import { chromium } from "playwright";
 
 const OUT = process.env.SHOTS_DIR || "shots";
 const PORT = Number(process.env.PORT || 3123);
-const V = process.env.ARENA_V ? `&v=${process.env.ARENA_V}` : "";
 const BASE = `http://127.0.0.1:${PORT}`;
 const ARENA = { width: 1920, height: 1080 };
 const PHONE = { width: 390, height: 844 };
 
 const SHOTS = [
-  { name: "arena-lobby", path: `/arena?mock=1&speed=0&at=lobby${V}`, size: ARENA },
-  { name: "arena-live", path: `/arena?mock=1&speed=0&at=live${V}`, size: ARENA },
-  { name: "arena-checkpoint", path: `/arena?mock=1&speed=0&at=checkpoint${V}`, size: ARENA },
-  { name: "arena-final", path: `/arena?mock=1&speed=0&at=settled${V}`, size: ARENA },
+  { name: "arena-lobby", path: `/arena?mock=1&speed=0&at=lobby`, size: ARENA },
+  { name: "arena-live", path: `/arena?mock=1&speed=0&at=live`, size: ARENA },
+  { name: "arena-checkpoint", path: `/arena?mock=1&speed=0&at=checkpoint`, size: ARENA },
+  { name: "arena-final", path: `/arena?mock=1&speed=0&at=settled`, size: ARENA },
   { name: "trade", path: `/play?mock=1&speed=0&at=live`, size: PHONE },
   { name: "trade-danger", path: `/play?mock=1&speed=0&at=danger`, size: PHONE },
   { name: "eliminated", path: `/play?mock=1&speed=0&at=eliminated`, size: PHONE },
