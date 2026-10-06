@@ -1,9 +1,8 @@
 ## Status
-- Step: Phase 8 predict-engine spec-check fixes done (restart recovery, book/escrow drift cancel, cancel retries, persisted creator nonces, user-round limits, late-start cancel, early next-round createLobby, zero creator refused).
-- Last gate: `bash gates/engine.sh` -> GATE PASS; `bash gates/predict-engine.sh` -> GATE PASS. Live CHAIN=off: PREDICT LIVE PASS (23 checks); restart test passed (see "Prediction mode").
-- Next: lead runs protocol rounds on Base Sepolia against escrow 0xf4D071E6713C60200C7deDD905be46c31aFa9394.
-- Run predict: `CHAIN=off npm run dev -- --predict-bots 10`, then `npx tsx scripts/predict-live.mts`. Sim: `npm run sim -- --mode predict --bots 20 --seed 42 --market BTC --out b.json --events e.jsonl`.
-- Blockers: the chain path has not run on chain yet.
+- Step: Phase 8e integration: `npm run e2e -- --mode predict` (protocol round + signed user round with a 300 bps creator fee) passes on anvil and Base Sepolia; royale e2e passes on both.
+- Last gate: `bash gates/all.sh` and predict-scoring/contracts/workflow/engine -> GATE PASS (all).
+- Base Sepolia escrow 0xf4D071E6713C60200C7deDD905be46c31aFa9394: protocol round 1 settled 0x45c5611de8ed7ffdaade78c46d81141b2297a4753bc5fbbb6730372ed77ab7e8, user round 2 settled 0xd3a3c0f83308183feb2c1565e8978cd86a1e4ad8b09e41c8550c1d70a960f55b, royale lobby 3 settled 0x1cee1671c31772efbb1f9d8f3585781c5f9d349dbc65a01ee954b43a73309cc5; every balance change matched `final`.
+- Next: lead pushes main. Blockers: none.
 
 # Engine notes
 
@@ -84,8 +83,11 @@ Bot addresses are `keccak256("royale-bot:<seed>:<i>")[12:]`: valid addresses wit
 
     npm run e2e:local   # repo root: anvil + Deploy.s.sol with anvil dev keys + the e2e below; nothing public
     npm run e2e         # repo root: same e2e against RPC_URL / TOKEN_ADDRESS / ESCROW_ADDRESS from the env or .env
+    npm run e2e:local -- --mode predict   # either one with --mode predict: prediction rounds instead of a royale match
 
 `engine/scripts/e2e.mts` starts the engine (20 bots, stage, port `E2E_PORT` default 8799, temp data dir, `SETTLE_MODE=simulated`), waits for `final` and `settled` on the WebSocket, then reads each winner's and the treasury's MockUSDC balance at the settlement block and the block before, and exits non-zero unless every change equals the `final` event's `provisionalPayoutUnits` / `feeUnits` and the winner lists agree. Final marks always come from the real Coinbase candle endpoint. Takes about 4-5 minutes (minute-aligned start, 120 s match, candle final 60 s after the end). On a public chain it must not share the deployer key with a running engine (nonce races).
+
+`--mode predict`: the engine runs `--predict-only --predict-bots 20 --predict-rounds 1` (one protocol round, BTC, 20 bots). Once that round locks (so the user round's createRound and joins do not queue ahead of its on-chain start), the e2e creates a user round with a fresh creator key through a signed `POST /rounds` (ETH, entry 2000000, max 20, lockAfter 120, resolveAfter 60, winnerBps 2500, linear, creatorFeeBps 300), and 20 burner wallets it generates sign their joins and predictions (prices spread about 2 bp apart around the live mark). Both rounds must reach `final` and `settled` (a `cancelled` fails the run); then for each settlement it checks every winner (`provisionalPayoutUnits`), the creator (`creatorFeeUnits`), the treasury (`feeUnits`) and the escrow (minus the sum) the same way, and prints both tx hashes and tables. If both settlements share a block it uses the Transfer logs. About 8 minutes; default timeout 1500 s.
 
 ## Not done / for the lead
 
@@ -105,7 +107,7 @@ Run:
     CHAIN=off npm run dev -- --predict-only --predict-bots 10   # no royale lobby
     npx tsx scripts/predict-live.mts http://localhost:8787 # live check: 2 protocol rounds + a signed user round to final
 
-`dev` flags: `--predict` (protocol round loop on), `--predict-bots N` (0 to 50 bots per protocol round; N > 0 implies `--predict`), `--predict-only` (no royale lobby). Without any of them the engine is royale only, as before.
+`dev` flags: `--predict` (protocol round loop on), `--predict-bots N` (0 to 50 bots per protocol round; N > 0 implies `--predict`), `--predict-only` (no royale lobby). `--predict-rounds N` (test only; the e2e uses 1): open at most N protocol rounds, then stop the loop; 0 (default) = endless. Without any of them the engine is royale only, as before.
 
 Layout: `src/predict.ts` (`PredictRound`: the state machine, no clock or I/O; book, `final` and payouts from `predictSettle`), `src/predict-bots.ts` (seeded bots), `PredictDriver` in `src/driver.ts` (the same tick loop in sim and server), server code under "prediction rounds" in `src/server.ts`.
 
