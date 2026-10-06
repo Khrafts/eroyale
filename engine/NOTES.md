@@ -1,8 +1,7 @@
 ## Status
-- Step: review fixes: on-chain cancels confirmed with `cancel-done` and retried at boot, no cancel tx for an empty Open lobby, late royale starts cancelled, late round starts cancelled while settling before `final`, on-chain protocol-round bots capped at 20.
-- Last check: all checks pass; `npm run e2e:local -- --mode predict` and `npm run e2e:local` PASS on anvil.
-- Base Sepolia escrow 0xf4D071E6713C60200C7deDD905be46c31aFa9394: protocol round 1 settled 0x45c5611de8ed7ffdaade78c46d81141b2297a4753bc5fbbb6730372ed77ab7e8, user round 2 settled 0xd3a3c0f83308183feb2c1565e8978cd86a1e4ad8b09e41c8550c1d70a960f55b, royale lobby 3 settled 0x1cee1671c31772efbb1f9d8f3585781c5f9d349dbc65a01ee954b43a73309cc5; every balance change matched `final`.
-- Next: push main. Blockers: none.
+- Step: island-engine (Phase 9): `GET /stats` from `settlements.jsonl`; CHAIN=off now emits `settled` (mode `simulated`, txHash `offline`) right after `final`.
+- Last check: `gates/engine.sh` and `gates/predict-engine.sh` PASS; live CHAIN=off run on :8801 settled royale + protocol + user round, /stats identical after restart.
+- Next: run `gates/island-engine.sh` once it exists. Blockers: none.
 
 # Engine notes
 
@@ -96,6 +95,12 @@ Bot addresses are `keccak256("royale-bot:<seed>:<i>")[12:]`: valid addresses wit
 - `createLobby`, `start`, `cancel`, `settleFallback` are `onlyOwner` (`PRIVATE_KEY_DEPLOYER`); `joinFor` uses `PRIVATE_KEY_RELAYER`. The on-chain lobby id becomes the engine's lobby id.
 - No `cancel` route: a lobby that never reaches 4 players just stays open.
 - Human orders fill at the latest feed price; `t` is the wall-clock offset clamped inside the current tick.
+
+## Stats (Phase 9)
+
+`GET /stats` (CORS like every route) per the spec "Engine HTTP (added): GET /stats". Source: `<data dir>/settlements.jsonl`, one line per settlement `{lobbyId, mode: "royale"|"predict", at, txHash, winners: [{player, callsign, bot, amountUnits}]}`, appended once (keyed by mode and id) where `settled` is emitted (`wire`, `wireRound`, and the restart settle in `recoverRounds`). Amounts are the `settled` event's, never recomputed. `at` is wall-clock ms at the `settled` event. At boot the file is loaded, and any `lobby-<id>.jsonl` / `round-<id>.jsonl` with a `settled` line not yet in the file is backfilled (at = the log's mtime), so data dirs from before this change count too. `paidTodayUnits` is computed per request from 00:00 UTC; `playing` counts distinct players in loaded lobbies and rounds not `settled`/`cancelled` (finished lobbies from before a restart are not loaded, so they never count). Code: `src/stats.ts`.
+
+CHAIN=off settlement: there is no escrow, so after `final` the engine emits `settled` with `mode: "simulated"`, `txHash: "offline"` (not a hash), winners = `final`'s non-zero provisional payouts ascending by address, and the lobby/round goes to `settled`. With the chain on nothing changed. Note for web: `/play` prints "Settled on chain, tx offline" in this mode.
 
 ## Prediction mode
 
