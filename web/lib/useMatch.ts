@@ -413,6 +413,11 @@ export type MatchOptions = {
   lobby?: number | null;
   /** Prediction mode: follow the protocol round (GET /rounds) instead of the current royale lobby. */
   predict?: boolean;
+  /**
+   * Prediction mode only. false: no marks feed WebSocket and no pre-lock snapshot polling (the island watches a round
+   * for its locked, final and settled events alone). Default true.
+   */
+  feed?: boolean;
 };
 
 export function useMatch(opts: MatchOptions = {}): Match {
@@ -432,6 +437,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
     const mockPred = q.get("mock") === "predict";
     const mock = q.get("mock") === "1" || mockPred;
     const predict = !!opts.predict || mockPred || q.get("mode") === "predict";
+    const withFeed = opts.feed !== false;
     setSource(mock ? "mock" : "live");
     const publish = (s: MatchState) => {
       ref.current = s;
@@ -661,7 +667,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
     let feedRetry: ReturnType<typeof setTimeout> | undefined;
     let feedFailures = 0;
     const openFeed = () => {
-      if (closed || !predict) return;
+      if (closed || !predict || !withFeed) return;
       const f = new WebSocket(`${base}${base.includes("?") ? "&" : "?"}feed=marks`);
       feed = f;
       f.onopen = () => {
@@ -690,7 +696,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
     // The snapshot every few seconds before the lock: who has called (players[].predicted), and the price only as a
     // fallback when the marks feed has been quiet for 3 s.
     const marks = setInterval(async () => {
-      if (closed || s.mode !== "predict" || s.locked || s.lobbyId === null || s.cancelled) return;
+      if (closed || !withFeed || s.mode !== "predict" || s.locked || s.lobbyId === null || s.cancelled) return;
       const g = gen;
       try {
         const t0 = Date.now();
@@ -729,7 +735,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
       feed?.close();
       ws?.close();
     };
-  }, [opts.lobby, opts.predict]);
+  }, [opts.lobby, opts.predict, opts.feed]);
 
   const clock = useMemo(() => () => clockRef.current(), []);
   const inject = useMemo(() => (ev: MatchEvent) => injectRef.current(ev), []);

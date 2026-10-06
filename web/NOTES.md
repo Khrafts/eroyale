@@ -1,7 +1,7 @@
 ## Status
-- Step: island review fixes done (bot tags, offline labels, WS backoff 1/2/4/8 s, poll cap 5 s, royale from polls without a WS URL, crown only on #1, studio callsign).
-- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; /arena +0.6%, /play +0.7% first load vs main.
-- Next: none planned.
+- Step: review fixes U1-U6 (protocol rounds watched from /rounds.active until settled; feed dedupes eliminations by identity and skips past final/settled; bot tags on liquidation and "closest" lines; poll re-arms in finally; useMatch `feed: false` for island round watchers; world dispose frees GPU resources and contexts).
+- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; /arena +0.6%, /play +0.8% first load vs main.
+- Next: lead reviews and commits.
 - Blockers: none. maxPlayers still needs one GET /lobbies/:id per lobby (useMatch's snapshot drops it; /lobbies does not carry it).
 
 ## Running

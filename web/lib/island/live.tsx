@@ -85,14 +85,14 @@ export function sampleMarks(marks: Marks, atMs: number) {
 }
 
 // ---------- feed lines and payouts from one subscribed lobby ----------
-function nameOf(s: MatchState, player: string): [string, boolean | undefined] {
+function nameOf(s: MatchState, player: string, callsign?: string): [string, boolean | undefined] {
   const p = s.players.find((x) => x.player === player);
-  return [p?.callsign ?? `${player.slice(0, 6)}…`, p?.bot];
+  return [p?.callsign ?? callsign ?? `${player.slice(0, 6)}…`, p?.bot];
 }
 
 function payout(s: MatchState, game: string, key: string) {
   const st = s.settled;
-  if (!st || !st.winners.length) return;
+  if (!st || !st.winners.length || announced.has(key)) return;
   announced.add(key);
   const me = getSnapshot().me;
   let top = 0;
@@ -110,49 +110,70 @@ function payout(s: MatchState, game: string, key: string) {
   }
 }
 
-type Seen = { lobby: number | null; readyAt: number; ready: boolean; status: string | null; elims: number; locked: boolean; final: boolean; settled: boolean; cancelled: boolean };
+/** One elimination's identity: the same players out at the same checkpoint (null: liquidations, or already out). */
+const elimKey = (e: MatchState["eliminations"][number]) => `${e.checkpoint}:${e.players.map((p) => p.player).sort().join(",")}`;
+/**
+ * useMatch stamps what it learns from a snapshot or a reconnect's catch-up burst as long past (`final`/`settled` 60 s
+ * back, the already-out group 3600 s back): anything older than this is history, never announced.
+ */
+const PAST_S = 30;
+
+type Seen = { lobby: number | null; readyAt: number; ready: boolean; status: string | null; elims: Set<string>; locked: boolean; final: boolean; settled: boolean; cancelled: boolean };
 function useFeedFrom(m: Match, kind: "royale" | "predict") {
-  const seen = useRef<Seen>({ lobby: null, readyAt: 0, ready: false, status: null, elims: 0, locked: false, final: false, settled: false, cancelled: false });
+  const seen = useRef<Seen>({ lobby: null, readyAt: 0, ready: false, status: null, elims: new Set(), locked: false, final: false, settled: false, cancelled: false });
   const s = m.state;
+  const clockOf = m.clock;
   useEffect(() => {
     const k = seen.current;
     const now = performance.now();
-    if (s.lobbyId !== k.lobby) Object.assign(k, { lobby: s.lobbyId, readyAt: now + 1500, ready: false });
+    if (s.lobbyId !== k.lobby) Object.assign(k, { lobby: s.lobbyId, readyAt: now + 1500, ready: false, elims: new Set<string>() });
     const silent = !k.ready;
     if (silent && now >= k.readyAt && s.status !== null) k.ready = true;
     const id = s.lobbyId;
     if (id === null) return;
+    const clock = clockOf();
+    const past = (at: number | null) => at === null || clock - at > PAST_S;
     if (kind === "royale") {
       if (s.status === "live" && k.status !== "live" && !silent) feed("live", `Lobby #${id} is live with ${s.players.length} traders`);
-      for (let i = k.elims; i < s.eliminations.length && !silent; i++) {
-        const e = s.eliminations[i];
+      // Fresh eliminations are appended; a late snapshot prepends the players already out, so only the entries after
+      // the last one already seen can be news.
+      let last = -1;
+      s.eliminations.forEach((e, i) => {
+        if (k.elims.has(elimKey(e))) last = i;
+      });
+      s.eliminations.forEach((e, i) => {
+        const key = elimKey(e);
+        if (k.elims.has(key)) return;
+        k.elims.add(key);
+        if (silent || i < last || s.t - e.t > PAST_S) return;
         const out = new Set<string>();
         s.eliminations.slice(0, i + 1).forEach((x) => x.players.forEach((p) => out.add(p.player)));
         const left = s.players.length - out.size;
         if (e.checkpoint !== null) {
           feed("cut", `Checkpoint ${e.checkpoint}: ${e.players.length} cut in the Arena, ${left} left`);
           emit({ kind: "cut" });
-        } else e.players.forEach((p) => feed("cut", ` was liquidated in the Arena, ${left} left`, p.callsign));
-      }
-      if (s.final && !k.final && !silent) feed("final", `Lobby #${id} is over: ${s.final.finalists.length} finalists split the pot`);
-      if (s.settled && !k.settled && !silent) payout(s, `Trading Royale #${id}`, `royale:${id}`);
+        } else e.players.forEach((p) => feed("cut", ` was liquidated in the Arena, ${left} left`, ...nameOf(s, p.player, p.callsign)));
+      });
+      if (s.final && !k.final && !silent && !past(s.finalT)) feed("final", `Lobby #${id} is over: ${s.final.finalists.length} finalists split the pot`);
+      if (s.settled && !k.settled && !silent && !past(s.settledT)) payout(s, `Trading Royale #${id}`, `royale:${id}`);
     } else {
       const mk = s.round?.params.market ?? "";
       if (s.locked && !k.locked && !silent) feed("lock", `Round #${id} locked with ${s.locked.predictions.length} predictions on ${mk}`);
-      if (s.pfinal && !k.final && !silent) {
+      if (s.pfinal && !k.final && !silent && !past(s.pfinalT)) {
         const w = s.pfinal.winners.find((x) => x.rank === 1);
-        feed("final", `Round #${id} resolved at $${commas(s.pfinal.settlementPrice)}${w ? `. Closest: ${w.callsign}` : ""}`);
+        const at = `Round #${id} resolved at $${commas(s.pfinal.settlementPrice)}`;
+        if (w) feed("final", ` was closest: ${at}`, ...nameOf(s, w.player, w.callsign));
+        else feed("final", at);
       }
       if (s.cancelled && !k.cancelled && !silent) feed("lock", `Round #${id} was cancelled and every entry refunded`);
-      if (s.settled && !k.settled && !silent) payout(s, `Prediction #${id}`, `predict:${id}`);
+      if (s.settled && !k.settled && !silent && !past(s.settledT)) payout(s, `Prediction #${id}`, `predict:${id}`);
     }
     k.status = s.status;
-    k.elims = s.eliminations.length;
     k.locked = !!s.locked;
     k.final = !!(s.final || s.pfinal);
     k.settled = !!s.settled;
     k.cancelled = s.cancelled;
-  }, [s, kind]);
+  }, [s, kind, clockOf]);
 }
 
 function RoyaleWatch() {
@@ -205,7 +226,8 @@ function royaleFromSnapshot(s: RoyaleSnapshot): RoyaleInfo {
 }
 
 function PredictWatch({ lobby }: { lobby: number }) {
-  const m = useMatch({ predict: true, lobby });
+  // the island reads only locked, final, settled and cancelled: no marks feed, no pre-lock polling
+  const m = useMatch({ predict: true, lobby, feed: false });
   useFeedFrom(m, "predict");
   return null;
 }
@@ -237,68 +259,74 @@ export function IslandLive() {
       }
       const t0 = Date.now();
       busy = true;
-      const [lob, rnd, mk, hl, st] = await Promise.allSettled([
-        getJson<LobbiesInfo>("/lobbies"),
-        getJson<RoundsInfo>("/rounds"),
-        getJson<MarksInfo>("/marks"),
-        getJson<Health>("/health"),
-        getJson<Stats>("/stats"),
-      ]);
-      busy = false;
-      if (stop) return;
-      const ok = [lob, rnd, mk, hl].some((x) => x.status === "fulfilled" && x.value.body);
-      const patch: Parameters<typeof setSnap>[0] = { engine: ok ? "ok" : "down" };
-      if (mk.status === "fulfilled" && mk.value.body) {
-        const b = mk.value.body;
-        patch.offsetMs = b.now - (t0 + Date.now()) / 2;
-        if (b.marks && MARKETS.every((x) => b.marks![x])) sampleMarks(b.marks, b.now);
-      }
-      if (hl.status === "fulfilled") patch.health = hl.value.body;
-      const chainOff = (hl.status === "fulfilled" ? hl.value.body : getSnapshot().health)?.chain === false;
-      // No WebSocket configured: the royale lobby comes from the polled current lobby's snapshot instead.
-      if (!process.env.NEXT_PUBLIC_ENGINE_WS && lob.status === "fulfilled" && lob.value.body?.current != null) {
-        try {
-          const id = lob.value.body.current;
-          const { body: snap } = await getJson<RoyaleSnapshot>(`/lobbies/${id}`);
-          if (snap) patch.royale = royaleFromSnapshot(snap);
-        } catch {
-          /* next poll */
+      // a throw below (a malformed row) must not stop polling: always re-arm unless unmounted
+      try {
+        const [lob, rnd, mk, hl, st] = await Promise.allSettled([
+          getJson<LobbiesInfo>("/lobbies"),
+          getJson<RoundsInfo>("/rounds"),
+          getJson<MarksInfo>("/marks"),
+          getJson<Health>("/health"),
+          getJson<Stats>("/stats"),
+        ]);
+        if (stop) return;
+        const ok = [lob, rnd, mk, hl].some((x) => x.status === "fulfilled" && x.value.body);
+        const patch: Parameters<typeof setSnap>[0] = { engine: ok ? "ok" : "down" };
+        if (mk.status === "fulfilled" && mk.value.body) {
+          const b = mk.value.body;
+          patch.offsetMs = b.now - (t0 + Date.now()) / 2;
+          if (b.marks && MARKETS.every((x) => b.marks![x])) sampleMarks(b.marks, b.now);
         }
+        if (hl.status === "fulfilled") patch.health = hl.value.body;
+        const chainOff = (hl.status === "fulfilled" ? hl.value.body : getSnapshot().health)?.chain === false;
+        // No WebSocket configured: the royale lobby comes from the polled current lobby's snapshot instead.
+        if (!process.env.NEXT_PUBLIC_ENGINE_WS && lob.status === "fulfilled" && lob.value.body?.current != null) {
+          try {
+            const id = lob.value.body.current;
+            const { body: snap } = await getJson<RoyaleSnapshot>(`/lobbies/${id}`);
+            if (snap) patch.royale = royaleFromSnapshot(snap);
+          } catch {
+            /* next poll */
+          }
+        }
+        if (lob.status === "fulfilled" && lob.value.body && lob.value.body.current === null && getSnapshot().royale?.status !== "live") {
+          // the engine runs no royale lobby (predict only)
+          patch.royale = null;
+        }
+        if (rnd.status === "fulfilled" && rnd.value.body) {
+          const b = rnd.value.body;
+          const open = b.rounds ?? [];
+          const proto = open.find((r) => r.protocol);
+          patch.predict = proto ? roundFrom(proto) : null;
+          patch.userRounds = open.filter((r) => !r.protocol).map(userRoundFrom);
+          // locked protocol rounds until their `settled` (active is live or settling; a settling round is also in
+          // `recent` once it has a final, so `recent` must not drop it before the payout arrives)
+          const waiting = (b.active ?? []).filter((r) => r.protocol).map((r) => r.lobbyId).slice(0, 3);
+          const ids = [...new Set([...(proto ? [proto.lobbyId] : []), ...waiting])];
+          setWatch((w) => (w.join() === ids.join() ? w : ids));
+        }
+        if (st.status === "fulfilled") {
+          const { status, body } = st.value;
+          if (body) {
+            patch.stats = body;
+            patch.statsState = "ok";
+            const wins = body.recentWins ?? [];
+            const fresh = firstStats ? wins.slice(0, 1).filter((w) => Date.now() - w.at < 30 * 60_000) : wins.filter((w) => w.at > lastWinAt);
+            fresh
+              .reverse()
+              .filter((w) => !announced.has(`${w.mode}:${w.lobbyId}`))
+              .forEach((w) => feed("win", ` won ${usdc(w.amountUnits)} in ${w.mode === "royale" ? "Trading Royale" : "Prediction"} #${w.lobbyId}${chainOff ? ". Offline run, nothing paid on chain" : ""}`, w.callsign, w.bot));
+            if (wins[0]) lastWinAt = Math.max(lastWinAt, wins[0].at);
+            firstStats = false;
+          } else patch.statsState = status === 404 ? "missing" : "down";
+        } else patch.statsState = "down";
+        setSnap(patch);
+        wait = ok ? POLL_MS : Math.min(MAX_POLL_MS, wait * 2);
+      } catch {
+        wait = Math.min(MAX_POLL_MS, wait * 2);
+      } finally {
+        busy = false;
+        if (!stop) timer = setTimeout(poll, wait);
       }
-      if (lob.status === "fulfilled" && lob.value.body && lob.value.body.current === null && getSnapshot().royale?.status !== "live") {
-        // the engine runs no royale lobby (predict only)
-        patch.royale = null;
-      }
-      if (rnd.status === "fulfilled" && rnd.value.body) {
-        const b = rnd.value.body;
-        const open = b.rounds ?? [];
-        const proto = open.find((r) => r.protocol);
-        patch.predict = proto ? roundFrom(proto) : null;
-        patch.userRounds = open.filter((r) => !r.protocol).map(userRoundFrom);
-        // locked protocol rounds still waiting for their result (`recent` already holds the ones with a final)
-        const done = new Set((b.recent ?? []).map((r) => r.lobbyId));
-        const waiting = (b.active ?? []).filter((r) => r.protocol && !done.has(r.lobbyId)).map((r) => r.lobbyId).slice(0, 3);
-        const ids = [...(proto ? [proto.lobbyId] : []), ...waiting];
-        setWatch((w) => (w.join() === ids.join() ? w : ids));
-      }
-      if (st.status === "fulfilled") {
-        const { status, body } = st.value;
-        if (body) {
-          patch.stats = body;
-          patch.statsState = "ok";
-          const wins = body.recentWins ?? [];
-          const fresh = firstStats ? wins.slice(0, 1).filter((w) => Date.now() - w.at < 30 * 60_000) : wins.filter((w) => w.at > lastWinAt);
-          fresh
-            .reverse()
-            .filter((w) => !announced.has(`${w.mode}:${w.lobbyId}`))
-            .forEach((w) => feed("win", ` won ${usdc(w.amountUnits)} in ${w.mode === "royale" ? "Trading Royale" : "Prediction"} #${w.lobbyId}${chainOff ? ". Offline run, nothing paid on chain" : ""}`, w.callsign, w.bot));
-          if (wins[0]) lastWinAt = Math.max(lastWinAt, wins[0].at);
-          firstStats = false;
-        } else patch.statsState = status === 404 ? "missing" : "down";
-      } else patch.statsState = "down";
-      setSnap(patch);
-      wait = ok ? POLL_MS : Math.min(MAX_POLL_MS, wait * 2);
-      timer = setTimeout(poll, wait);
     };
     void poll();
     const vis = () => {

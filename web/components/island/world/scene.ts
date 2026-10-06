@@ -55,9 +55,34 @@ export type World = {
 export function webglAvailable(): boolean {
   try {
     const c = document.createElement("canvas");
-    return !!c.getContext("webgl2");
+    const gl = c.getContext("webgl2");
+    // release the probe context now: browsers cap live WebGL contexts
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    return !!gl;
   } catch {
     return false;
+  }
+}
+
+/** Free every geometry, material and texture under `root` (three ignores a second dispose of a shared one). */
+function disposeTree(root: THREE.Object3D) {
+  const texOf = (v: unknown) => {
+    if (v instanceof THREE.Texture) v.dispose();
+  };
+  const mats = new Set<THREE.Material>();
+  root.traverse((o) => {
+    const m = o as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
+    m.geometry?.dispose();
+    if (m.material) (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => mats.add(x));
+  });
+  mats.forEach((mat) => {
+    Object.values(mat).forEach(texOf);
+    if (mat instanceof THREE.ShaderMaterial) Object.values(mat.uniforms).forEach((u) => texOf(u.value));
+    mat.dispose();
+  });
+  if (root instanceof THREE.Scene) {
+    texOf(root.background);
+    texOf(root.environment);
   }
 }
 
@@ -512,9 +537,15 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
       cancelAnimationFrame(raf);
       disposers.forEach((d) => d());
       controls.dispose();
-      prev?.r.dispose();
-      prev?.cv.remove();
+      if (prev) {
+        disposeTree(prev.sc);
+        prev.r.dispose();
+        prev.r.forceContextLoss();
+        prev.cv.remove();
+      }
+      disposeTree(scene);
       renderer.dispose();
+      renderer.forceContextLoss();
       labelsHost.replaceChildren();
       (window as unknown as { __islandReady?: boolean }).__islandReady = false;
     },
