@@ -2,9 +2,11 @@
 // One append-only file per data dir, one line per settlement, written where `settled` is emitted and loaded at boot.
 import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { PRESETS } from "./types.ts";
 
 export type Win = { player: string; callsign: string; bot: boolean; amountUnits: string };
-export type Settlement = { lobbyId: number; mode: "royale" | "predict"; at: number; txHash: string; winners: Win[] };
+// bookHash identifies the match: a lobby id reused by a new escrow (same ENGINE_DATA_DIR) is a different settlement.
+export type Settlement = { lobbyId: number; mode: "royale" | "predict"; at: number; txHash: string; bookHash: string | null; winners: Win[] };
 type Who = { callsign: string; bot: boolean };
 
 const DAY_MS = 86_400_000;
@@ -16,6 +18,25 @@ export function playersInLog(lines: any[]): Map<string, Who> {
   const who = new Map<string, Who>();
   for (const x of lines) if (x.type === "lobby" && Array.isArray(x.players)) for (const p of x.players) who.set(String(p.player).toLowerCase(), { callsign: p.callsign, bot: !!p.bot });
   return who;
+}
+
+const keyOf = (mode: string, lobbyId: number, bookHash: string | null, txHash: string) => `${mode}:${lobbyId}:${bookHash ?? txHash}`;
+
+/**
+ * When a logged settlement happened, for logs written before settlements.jsonl: the `{"in":"settled","at"}` line the
+ * engine now writes beside `settled`; else the match's end time (royale: countdown startsAt + preset duration, predict:
+ * the round's endTime), which `final` and `settled` follow; else the log file's mtime.
+ */
+export function settledAt(lines: any[], path: string): number {
+  const mark = lines.find((x) => x.in === "settled" && Number.isFinite(x.at));
+  if (mark) return mark.at;
+  const create = lines.find((x) => x.in === "create");
+  const countdown = [...lines].reverse().find((x) => x.in === "countdown" && Number.isFinite(x.startsAt));
+  const duration = create?.preset ? PRESETS[create.preset as keyof typeof PRESETS]?.duration : undefined;
+  if (countdown && duration !== undefined) return (countdown.startsAt + duration) * 1000;
+  const round = lines.find((x) => x.type === "round" && Number.isFinite(x.endTime));
+  if (round) return round.endTime * 1000;
+  return Math.floor(statSync(path).mtimeMs);
 }
 
 export class Stats {
@@ -32,31 +53,32 @@ export class Stats {
       return m ? [{ f, mode: m[1] === "lobby" ? "royale" as const : "predict" as const, id: Number(m[2]) }] : [];
     }).sort((a, b) => a.id - b.id || a.mode.localeCompare(b.mode));
     for (const { f, mode, id } of logs) {
-      if (this.seen.has(`${mode}:${id}`)) continue;
       const path = resolve(dir, f);
       const lines = parseLines(path);
       const e = lines.find((x) => x.type === "settled");
-      if (e) this.record(mode, id, e, playersInLog(lines), Math.floor(statSync(path).mtimeMs));
+      if (!e) continue;
+      const bookHash = lines.find((x) => x.type === "final")?.bookHash ?? null;
+      if (!this.seen.has(keyOf(mode, id, bookHash, e.txHash))) this.record(mode, id, bookHash, e, playersInLog(lines), settledAt(lines, path));
     }
   }
 
   private keep(s: Settlement) {
-    const key = `${s.mode}:${s.lobbyId}`;
+    const key = keyOf(s.mode, s.lobbyId, s.bookHash ?? null, s.txHash);
     if (this.seen.has(key)) return false;
     this.seen.add(key);
     this.list.push(s);
     return true;
   }
 
-  /** Record one `settled` event (winners and amounts as paid). Once per lobby; later calls are ignored. */
-  record(mode: "royale" | "predict", lobbyId: number, e: { txHash: string; winners: string[]; amounts: string[] }, who: Map<string, Who>, at = Date.now()) {
-    if (this.seen.has(`${mode}:${lobbyId}`)) return;
+  /** Record one `settled` event (winners and amounts as paid). Once per match (mode, id, book); repeats are ignored. */
+  record(mode: "royale" | "predict", lobbyId: number, bookHash: string | null, e: { txHash: string; winners: string[]; amounts: string[] }, who: Map<string, Who>, at = Date.now()) {
+    if (this.seen.has(keyOf(mode, lobbyId, bookHash, e.txHash))) return;
     const winners = e.winners.map((w, i) => {
       const player = w.toLowerCase();
       const p = who.get(player);
       return { player, callsign: p?.callsign ?? "", bot: p?.bot ?? false, amountUnits: BigInt(e.amounts[i]).toString() };
     });
-    const s: Settlement = { lobbyId, mode, at, txHash: e.txHash, winners };
+    const s: Settlement = { lobbyId, mode, at, txHash: e.txHash, bookHash, winners };
     if (this.keep(s)) appendFileSync(this.file, JSON.stringify(s) + "\n");
   }
 

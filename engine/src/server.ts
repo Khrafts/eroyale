@@ -114,6 +114,12 @@ let current: Match | null = null;
 // Settlement results for GET /stats: settlements.jsonl in DATA, appended once per `settled`, loaded here.
 const stats = new Stats(DATA);
 const whoOf = (players: { player: string; callsign: string; bot: boolean }[]) => new Map(players.map((p) => [p.player, { callsign: p.callsign, bot: p.bot }]));
+/** A `settled` event was emitted: note its time in the log (an input line, so events stay as they were) and record it for /stats. */
+function settledHere(m: { logFile: string }, mode: "royale" | "predict", id: number, bookHash: string | null, e: EngineEvent, players: { player: string; callsign: string; bot: boolean }[]) {
+  const at = Date.now();
+  record(m, { in: "settled", at });
+  stats.record(mode, id, bookHash, e as unknown as { txHash: string; winners: string[]; amounts: string[] }, whoOf(players), at);
+}
 /** CHAIN=off: nothing to pay on chain, so `settled` follows `final` with its provisional payouts (non-zero, by address). */
 function settleOffline(l: { markSettled(txHash: string, mode: "simulated", winners: string[], amounts: string[]): void }, pay: { player: string; provisionalPayoutUnits: string }[]) {
   const paid = pay.filter((x) => BigInt(x.provisionalPayoutUnits) > 0n).sort((a, b) => (a.player < b.player ? -1 : a.player > b.player ? 1 : 0));
@@ -126,7 +132,7 @@ function wire(m: Match) {
   m.lobby.onEvent((e, line) => {
     appendFileSync(m.logFile, line + "\n");
     for (const c of m.clients) if (c.readyState === c.OPEN) c.send(line);
-    if (e.type === "settled") stats.record("royale", m.lobby.id, e as any, whoOf(m.lobby.players));
+    if (e.type === "settled") settledHere(m, "royale", m.lobby.id, (m.lobby.finalEvent?.bookHash as string) ?? null, e, m.lobby.players);
     if (e.type === "lobby") log(`[lobby ${m.lobby.id}] ${e.status}, ${(e.players as unknown[]).length} players, startsAt ${e.startsAt}`);
     else if (e.type === "eliminated" || e.type === "final" || e.type === "warning") log(`[lobby ${m.lobby.id}] ${line.slice(0, 400)}`);
   });
@@ -470,7 +476,7 @@ function wireRound(m: RoundMatch) {
   m.round.onEvent((e, line) => {
     appendFileSync(m.logFile, line + "\n");
     for (const c of m.clients) if (c.readyState === c.OPEN) c.send(line);
-    if (e.type === "settled") stats.record("predict", m.round.id, e as any, whoOf(m.round.players));
+    if (e.type === "settled") settledHere(m, "predict", m.round.id, (m.round.finalEvent?.bookHash as string) ?? null, e, m.round.players);
     if (e.type === "lobby") log(`[round ${m.round.id}] ${e.status}, ${(e.players as unknown[]).length} players, lock ${m.round.lockTime}, end ${m.round.endTime}`);
     else if (e.type === "locked" || e.type === "cancelled") log(`[round ${m.round.id}] ${e.type}${e.type === "cancelled" ? `: ${e.reason}` : `, ${(e.predictions as unknown[]).length} predictions`}`);
     else if (e.type === "final") log(`[round ${m.round.id}] ${line.slice(0, 400)}`);
@@ -785,7 +791,9 @@ async function recoverRounds() {
       const target = {
         id, markSettled: (txHash: string, mode: "deployed" | "simulated", winners: string[], amounts: string[]) => {
           appendFileSync(file, JSON.stringify({ type: "settled", lobbyId: id, txHash, mode, winners, amounts }) + "\n");
-          stats.record("predict", id, { txHash, winners, amounts }, playersInLog(lines));
+          const at = Date.now();
+          appendFileSync(file, JSON.stringify({ in: "settled", at }) + "\n");
+          stats.record("predict", id, final.bookHash ?? null, { txHash, winners, amounts }, playersInLog(lines), at);
         },
       };
       await settle(m, target, { BTC: price, ETH: price, SOL: price }, BigInt(fin.potUnits))
