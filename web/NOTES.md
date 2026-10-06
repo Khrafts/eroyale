@@ -1,9 +1,8 @@
 ## Status
-- Step: predict mode done; the phone shows the engine's lock time after creating a round, and the create screen says the lock aligns to the minute.
-- Last check: the UI checks pass; all six predict shots reviewed.
-- Next: run the phone and arena against a live predict engine (`/arena?mode=predict`, `/play?mode=predict`).
-- Blockers: none. Shots use installed Chrome because Playwright 1.63's Chromium is not downloaded.
-- Known: in the royale final view the flood holds at the last zone line, so finalists below it are drawn under water (still labelled and paid).
+- Step: island port (Phase 9) step 1 done: /island on mocks (?mock=island&at=overview|live|checkpoint|settled|studio|victory), matched to docs/island-prototype.html at 1440x900 and 390x844.
+- Last check: GATE PASS ui, GATE PASS predict-ui; typecheck clean. island-ui gate not written yet.
+- Next: step 2, live data against a local engine (port 8802).
+- Blockers: none. /stats is not on this branch yet; the park, top bar and lighthouse show their empty states.
 
 ## Running
 
