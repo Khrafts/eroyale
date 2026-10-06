@@ -9,7 +9,8 @@ import { Lobby } from "./lobby.ts";
 import { Bots, botAddress, botCallsign } from "./bots.ts";
 import { CoinbaseFeed, FallbackPrices, KrakenFeed, fetchSettlementMarks, settlementMinute, type PriceSource } from "./prices.ts";
 import { Driver, realClock } from "./driver.ts";
-import { makeChain } from "./chain.ts";
+import { LOBBY_SETTLED, failReason, makeChain } from "./chain.ts";
+import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyJoin, verifyOrder } from "./orders.ts";
 import { ENTRY_UNITS, PRESETS, type EngineEvent, type Order, type Preset, type Prices } from "./types.ts";
 
@@ -38,7 +39,10 @@ const SEED = Number(args.seed ?? Date.now() % 2 ** 31);
 const PRICE_URL = (process.env.PRICE_SOURCE_URL ?? "").trim();
 const SIG_OFF = process.env.ORDER_SIG === "off";
 const STALE_MS = 3000;
-const DATA = resolve(import.meta.dirname, "../data");
+// ENGINE_DATA_DIR: a separate store for throwaway runs (e2e on a fresh anvil reuses lobby ids).
+const DATA = process.env.ENGINE_DATA_DIR ? resolve(process.env.ENGINE_DATA_DIR) : resolve(import.meta.dirname, "../data");
+const SETTLE_MODE = (process.env.SETTLE_MODE ?? "simulated").trim();
+const FEE_BPS = 500n;
 mkdirSync(DATA, { recursive: true });
 
 const START_LEAD_MS = 2000; // send the on-chain start this long before startsAt so the chain end lands near the book's
@@ -46,6 +50,9 @@ const log = (m: string) => console.log(`${new Date().toISOString()} ${m}`);
 const chain = makeChain(process.env, log);
 // With the chain on, the final marks must be the settlement candle the workflow reads; never live marks.
 if (chain.on && !PRICE_URL) throw new Error("PRICE_SOURCE_URL is required when CHAIN is not off");
+if (SETTLE_MODE !== "simulated" && SETTLE_MODE !== "deployed") throw new Error(`SETTLE_MODE must be simulated or deployed, got ${SETTLE_MODE}`);
+const CHAIN_SELECTOR = (process.env.CHAIN_SELECTOR ?? "").trim();
+if (chain.on && !/^\d+$/.test(CHAIN_SELECTOR)) throw new Error("CHAIN_SELECTOR is required when CHAIN is not off");
 const prices: PriceSource = new FallbackPrices(new CoinbaseFeed(log).start()!, new KrakenFeed(log).start()!);
 
 // ---------- matches
@@ -228,7 +235,69 @@ async function finish(m: Match) {
   }
   record(m, { in: "final", marks });
   l.emitFinal(marks);
+  if (chain.on) await settle(m, marks).catch((e) => { m.chainError = `settle: ${failReason(e)}`.slice(0, 500); log(`[lobby ${l.id}] ${m.chainError}`); });
   if (args.loop && current === m) setTimeout(() => void createLobbyRetrying(), 5000);
+}
+
+// ---------- settlement
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * simulated: build the report from the exact book bytes with workflow's buildReport, wait for block time past the
+ * on-chain end, owner calls settleFallback. deployed: the CRE workflow writes the report; we watch for Settled.
+ * Retries every 5 s; gives up when one failure reason repeats.
+ */
+async function settle(m: Match, marks: Prices) {
+  const l = m.lobby;
+  let onchain = null;
+  for (let attempt = 1; !onchain; attempt++) {
+    try { onchain = await chain.getLobby(l.id); } catch (e) {
+      if (attempt >= 5) throw e;
+      log(`[lobby ${l.id}] getLobby failed, retrying: ${failReason(e)}`);
+      await sleep(3000);
+    }
+  }
+  const book = books.get(l.id)!;
+  const r = buildReport(new TextEncoder().encode(book), marks, onchain.pot, FEE_BPS, BigInt(CHAIN_SELECTOR));
+  if (BigInt(r.lobbyId) !== BigInt(l.id)) throw new Error(`book lobbyId ${r.lobbyId} != ${l.id}`);
+  if (onchain.pot !== l.potUnits) log(`[lobby ${l.id}] warning: on-chain pot ${onchain.pot} != engine pot ${l.potUnits}`);
+  const done = (hash: string) => {
+    m.chainError = null;
+    l.markSettled(hash, SETTLE_MODE as "simulated" | "deployed", r.winners, r.amounts.map(String));
+    log(`[lobby ${l.id}] settled (${SETTLE_MODE}) ${hash}`);
+  };
+  if (SETTLE_MODE === "deployed") {
+    // Triggering the deployed workflow's HTTP trigger needs a signed gateway request that contracts/NOTES.md does
+    // not document, so it is not wired: the workflow must be triggered outside the engine. We only watch for it.
+    log(`[lobby ${l.id}] SETTLE_MODE=deployed: CRE trigger not wired; trigger royale-settle with {"lobbyId": ${l.id}} and the engine will pick up Settled`);
+    for (;;) {
+      const hash = await chain.findSettled(l.id, 5_000n).catch(() => null);
+      if (hash) return done(hash);
+      await sleep(10_000);
+    }
+  }
+  if (onchain.status === LOBBY_SETTLED) {
+    const hash = await chain.findSettled(l.id, 50_000n);
+    if (hash) return done(hash);
+    throw new Error("escrow says settled but no Settled log found");
+  }
+  for (;;) {
+    const now = await chain.blockTime();
+    if (now > onchain.endTime) break;
+    log(`[lobby ${l.id}] block time ${now} not past on-chain end ${onchain.endTime}; waiting`);
+    await sleep(Math.min(Number(onchain.endTime - now) + 2, 10) * 1000);
+  }
+  let last = "";
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try { return done(await chain.settleFallback(r.report)); } catch (e) {
+      const why = failReason(e);
+      m.chainError = `settleFallback attempt ${attempt} failed: ${why}`.slice(0, 500);
+      log(`[lobby ${l.id}] ${m.chainError}`);
+      if (why === last) { log(`[lobby ${l.id}] settleFallback failed twice for the same reason; giving up`); return; }
+      last = why;
+      await sleep(5000);
+    }
+  }
 }
 
 // ---------- replay a crashed match from its log
