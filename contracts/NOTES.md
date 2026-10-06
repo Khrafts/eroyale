@@ -1,6 +1,6 @@
 <!-- status -->
-Step: 3 of 8 done (MockUSDC, RoyaleEscrow, 15 required tests)
+Step: 4 of 8 done (script/Deploy.s.sol, dry-run in memory only, nothing broadcast)
 Last gate: bash gates/contracts.sh -> GATE PASS contracts
-Next: Deploy.s.sol (step 4), then workflow buildReport (step 5)
+Next: workflow/src/report.ts buildReport + scripts/score-fixture.ts (step 5)
 Blockers: none
 <!-- /status -->
