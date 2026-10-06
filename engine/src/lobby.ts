@@ -89,7 +89,7 @@ export class Lobby {
 
   join(player: string, callsign: string, bot: boolean): OrderResult {
     player = player.toLowerCase();
-    if (this.status !== "open") return { ok: false, error: `lobby is ${this.status}` };
+    if (this.status !== "open" && this.status !== "countdown") return { ok: false, error: `lobby is ${this.status}` };
     if (!ADDR.test(player)) return { ok: false, error: "player must be an address" };
     if (this.players.some((p) => p.player === player)) return { ok: false, error: "already joined" };
     if (this.players.length >= this.maxPlayers) return { ok: false, error: "lobby is full" };
@@ -292,28 +292,45 @@ export class Lobby {
     return keccak256(toBytes(this.lines.map((l) => l + "\n").join("")));
   }
 
-  /** Freeze the final book with the final marks and emit `final`. */
-  finalize(finalMarks: Prices): { bookJson: string; final: EngineEvent } {
-    if (this.status !== "settling" || this.bookJson) throw new Error("finalize needs a settling lobby without a book");
+  /**
+   * Freeze the final book at the end tick. It holds positions, not marks, so it does not wait for the
+   * settlement candle. `stored` restores a book persisted before a restart (its bytes win).
+   */
+  freezeBook(stored?: string): string {
+    if (this.status !== "settling") throw new Error("freezeBook needs a settling lobby");
+    if (this.bookJson) return this.bookJson;
+    if (stored) return (this.bookJson = stored);
     const alive = this.players.filter((p) => p.alive).sort((a, b) => (a.player < b.player ? -1 : a.player > b.player ? 1 : 0));
     const book: FinalBook = {
       lobbyId: this.id, endTime: this.endTime!, startBalance: START_BALANCE,
       finalists: alive.map((p) => this.finalist(p)), logHash: this.logHash(),
     };
-    const bookJson = JSON.stringify(book);
-    this.bookJson = bookJson;
+    this.bookJson = JSON.stringify(book);
+    return this.bookJson;
+  }
+
+  /** Emit `final` for the frozen book at the final marks. */
+  emitFinal(finalMarks: Prices): EngineEvent {
+    if (!this.bookJson) throw new Error("emitFinal needs a frozen book");
+    if (this.finalEvent) return this.finalEvent;
+    const book = JSON.parse(this.bookJson) as FinalBook;
     const s = settle(book, finalMarks, this.potUnits, this.feeBps);
     const pay = new Map(s.winners.map((w, i) => [w, s.amounts[i]]));
     const final: EngineEvent = {
-      type: "final", marks: finalMarks, bookHash: keccak256(toBytes(bookJson)),
+      type: "final", marks: finalMarks, bookHash: keccak256(toBytes(this.bookJson)),
       finalists: book.finalists.map((f) => ({
-        player: f.player, callsign: this.find(f.player)!.callsign,
+        player: f.player, callsign: this.find(f.player)?.callsign ?? "",
         equity: fromCents(equityCents(f, finalMarks)), provisionalPayoutUnits: (pay.get(f.player) ?? 0n).toString(),
       })),
       feeUnits: s.feeUnits.toString(),
     };
     this.emit(final);
-    return { bookJson, final };
+    return final;
+  }
+
+  finalize(finalMarks: Prices): { bookJson: string; final: EngineEvent } {
+    const bookJson = this.freezeBook();
+    return { bookJson, final: this.emitFinal(finalMarks) };
   }
 
   markSettled(txHash: string, mode: "deployed" | "simulated", winners: string[], amounts: string[]) {

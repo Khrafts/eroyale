@@ -1,10 +1,12 @@
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { ORDER_DOMAIN, ORDER_TYPES, orderMessage } from "../src/orders.ts";
+import { JOIN_TYPES, ORDER_DOMAIN, ORDER_TYPES, joinMessage, orderMessage } from "../src/orders.ts";
 const acct = privateKeyToAccount(generatePrivateKey());
 const player = acct.address.toLowerCase();
 const base = "http://localhost:8787";
 const post = async (p: string, b: unknown) => { const r = await fetch(base + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }); return [r.status, await r.json()]; };
-console.log("join", await post("/lobbies/1/join", { player, callsign: "HUMAN" }));
+console.log("join unsigned", await post("/lobbies/1/join", { player, callsign: "HUMAN" }));
+const joinSig = await acct.signTypedData({ domain: ORDER_DOMAIN, types: JOIN_TYPES, primaryType: "Join", message: joinMessage(1, player, "HUMAN") });
+console.log("join", await post("/lobbies/1/join", { player, callsign: "HUMAN", signature: joinSig }));
 let nonce = 0;
 async function order(order: any, sign = true) {
   const req: any = { lobbyId: 1, player, nonce: ++nonce, ts: Date.now(), order };

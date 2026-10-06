@@ -61,3 +61,28 @@ export async function verifyOrder(r: OrderRequest): Promise<boolean> {
     return false;
   }
 }
+
+// Joins are signed too, so nobody can spend the relayer's entry on someone else's address.
+export const JOIN_TYPES = {
+  Join: [
+    { name: "lobbyId", type: "uint256" },
+    { name: "player", type: "address" },
+    { name: "callsign", type: "string" },
+  ],
+} as const;
+
+export function joinMessage(lobbyId: number, player: string, callsign: string) {
+  return { lobbyId: BigInt(lobbyId), player: player.toLowerCase() as Address, callsign };
+}
+
+export async function verifyJoin(lobbyId: number, player: string, callsign: string, signature: unknown): Promise<boolean> {
+  if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) return false;
+  try {
+    return await verifyTypedData({
+      address: player as Address, domain: ORDER_DOMAIN, types: JOIN_TYPES, primaryType: "Join",
+      message: joinMessage(lobbyId, player, callsign), signature: signature as Hex,
+    });
+  } catch {
+    return false;
+  }
+}

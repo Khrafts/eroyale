@@ -142,7 +142,7 @@ export async function fetchSettlementMarks(urlTemplate: string, endTime: number)
   const out = {} as Prices;
   for (const m of MARKETS) {
     const url = urlTemplate.replace("{MARKET}", m).replace("{START}", iso).replace("{END}", iso);
-    const res = await fetch(url, { headers: { "User-Agent": "trading-royale-engine" } });
+    const res = await fetch(url, { headers: { "User-Agent": "trading-royale-engine" }, signal: AbortSignal.timeout(10_000) });
     const body = await res.text();
     if (!res.ok) throw new Error(`${m} candle ${res.status}: ${body.slice(0, 200)}`);
     // Read the close as the exact decimal text received, not via a float.

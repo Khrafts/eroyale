@@ -78,7 +78,8 @@ export function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void): Cha
         const have = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, escrow] });
         if (have < 10n ** 30n) {
           const hash = await relayer.writeContract({ address: token, abi: ERC20_ABI, functionName: "approve", args: [escrow, maxUint256] });
-          await pub.waitForTransactionReceipt({ hash });
+          const rc = await pub.waitForTransactionReceipt({ hash });
+          if (rc.status !== "success") throw new Error(`approve reverted: ${hash}`);
           log(`[chain] relayer approved escrow ${hash}`);
         }
         approved = true;
