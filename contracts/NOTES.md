@@ -1,8 +1,8 @@
 <!-- status -->
-Step: 8 of 8 done + spec-checker fixes (write status checks, endTime guards, raw-byte bookHash, floored budget)
-Last gate: contracts -> GATE PASS contracts; workflow -> GATE PASS workflow
-Next: lead deploys to Base Sepolia (commands below), then runs cre workflow simulate
-Blockers: no CRE CLI, RPC_URL or deployer key in this session; nothing deployed or simulated
+Step: Phase 8c (predict-contracts) 5.1 steps 1-2: createRound, creator fee, required tests
+Last gate: contracts -> GATE PASS; predict-contracts -> GATE PASS
+Next: step 3 breaks, then workflow buildReport predict branch
+Blockers: none; nothing deployed (lead redeploys)
 <!-- /status -->
 
 # Contracts track notes

@@ -24,11 +24,15 @@ interface IRoyaleEscrow {
         uint32 playerCount; // ─╯ Players joined.
         uint256 pot; // Sum of entries held for this lobby.
         bytes32 bookHash; // Final book hash, set on settlement.
+        address creator; // ─────╮ Round creator paid the creator fee; zero for royale and protocol rounds.
+        uint16 creatorFeeBps; // ╯ Creator fee in basis points of the pot, at most MAX_CREATOR_FEE_BPS.
     }
 
     /* ============ Events ============ */
 
     event LobbyCreated(uint256 indexed id, uint32 duration, uint96 entry, uint16 maxPlayers);
+
+    event RoundCreated(uint256 indexed id, address indexed creator, uint16 creatorFeeBps);
 
     event Joined(uint256 indexed id, address indexed player, address indexed payer);
 
@@ -43,6 +47,10 @@ interface IRoyaleEscrow {
     error ZeroAddress();
 
     error InvalidLobbyConfig();
+
+    error CreatorFeeTooHigh(uint16 creatorFeeBps, uint16 max);
+
+    error ZeroCreatorWithFee(uint16 creatorFeeBps);
 
     error LobbyNotOpen(uint256 id);
 
@@ -81,6 +89,22 @@ interface IRoyaleEscrow {
     /// @return id The new lobby id.
     function createLobby(uint32 duration, uint96 entry, uint16 maxPlayers) external returns (uint256 id);
 
+    /// @notice Opens a prediction round: a lobby whose settlement first pays `creator` a fee of
+    ///         floor(pot * creatorFeeBps / 10000).
+    /// @param  duration      Seconds from start to the round's end time.
+    /// @param  entry         Entry in token units.
+    /// @param  maxPlayers    Seat limit, 4 to 50.
+    /// @param  creator       Receives the creator fee; zero for a round with no creator.
+    /// @param  creatorFeeBps Creator fee in basis points, at most MAX_CREATOR_FEE_BPS; zero when creator is zero.
+    /// @return id The new lobby id.
+    function createRound(
+        uint32 duration,
+        uint96 entry,
+        uint16 maxPlayers,
+        address creator,
+        uint16 creatorFeeBps
+    ) external returns (uint256 id);
+
     /// @notice Joins `player` to lobby `id`; the relayer pays the entry.
     function joinFor(uint256 id, address player) external;
 
@@ -100,6 +124,9 @@ interface IRoyaleEscrow {
 
     /// @notice Fee taken from every pot, in basis points.
     function FEE_BPS() external view returns (uint256);
+
+    /// @notice Highest creator fee a round can carry, in basis points.
+    function MAX_CREATOR_FEE_BPS() external view returns (uint16);
 
     /// @notice The settlement token.
     function token() external view returns (address);
