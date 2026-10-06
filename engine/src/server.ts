@@ -29,6 +29,7 @@ const { values: args } = parseArgs({
     open: { type: "string", default: "15" }, countdown: { type: "string", default: "10" }, seed: { type: "string" },
     max: { type: "string", default: "50" }, loop: { type: "boolean", default: false }, resume: { type: "boolean", default: false },
     predict: { type: "boolean", default: false }, "predict-bots": { type: "string", default: "0" }, "predict-only": { type: "boolean", default: false },
+    "predict-rounds": { type: "string", default: "0" },
   },
 });
 const preset = PRESETS[args.preset as Preset["name"]];
@@ -49,6 +50,10 @@ const PREDICT_BOTS = Number(args["predict-bots"]);
 const PREDICT_ON = args.predict || args["predict-only"] || PREDICT_BOTS > 0;
 const ROYALE_ON = !args["predict-only"];
 if (!Number.isInteger(PREDICT_BOTS) || PREDICT_BOTS < 0 || PREDICT_BOTS > 50) throw new Error("--predict-bots must be 0 to 50");
+// Test only (e2e): stop opening protocol rounds after this many; 0 = the normal endless loop.
+const PREDICT_ROUNDS = Number(args["predict-rounds"]);
+if (!Number.isInteger(PREDICT_ROUNDS) || PREDICT_ROUNDS < 0) throw new Error("--predict-rounds must be a non-negative integer");
+const moreProtocolRounds = () => PREDICT_ROUNDS === 0 || protocolCount < PREDICT_ROUNDS;
 
 const BOT_RETRY_MS = 3000; // retry a bot whose joinFor failed this often while joins are open
 const JOIN_CLOSE_MS = 7000; // joins close this long before startsAt
@@ -588,7 +593,7 @@ async function startRoundOnChain(m: RoundMatch) {
 async function onRoundLocked(m: RoundMatch) {
   const r = m.round;
   if (chain.on && r.status === "live" && !m.startSent) { m.startSent = true; m.starting = startRoundOnChain(m); }
-  if (m.round.protocol && protocolRound === m && PREDICT_ON) void openProtocolRound(r.lockTime, m.nextLobby);
+  if (m.round.protocol && protocolRound === m && PREDICT_ON && moreProtocolRounds()) void openProtocolRound(r.lockTime, m.nextLobby);
   if (!chain.on) return;
   await m.starting;
   if (r.status !== "cancelled") return;
@@ -650,7 +655,7 @@ function roundsLoop() {
         m.startSent = true;
         if (r.players.length + m.pendingJoins.size >= 4) m.starting = startRoundOnChain(m);
       }
-      if (chain.on && PREDICT_ON && m === protocolRound && !m.nextLobby && Date.now() >= r.lockTime * 1000 - PRECREATE_MS) {
+      if (chain.on && PREDICT_ON && m === protocolRound && !m.nextLobby && moreProtocolRounds() && Date.now() >= r.lockTime * 1000 - PRECREATE_MS) {
         const next = protocolSpec(MARKETS[protocolCount % MARKETS.length]);
         m.nextLobby = chain.createLobby(next.resolveAfter, next.entryUnits, next.maxPlayers).catch((e) => {
           log(`[chain] early createLobby for the next protocol round failed: ${failReason(e)}`);

@@ -42,4 +42,4 @@ export TOKEN_ADDRESS ESCROW_ADDRESS
 echo "[e2e:local] anvil on $RPC_URL, MockUSDC $TOKEN_ADDRESS, RoyaleEscrow $ESCROW_ADDRESS"
 
 cd "$ROOT/engine"
-npx tsx scripts/e2e.mts
+npx tsx scripts/e2e.mts "$@"
