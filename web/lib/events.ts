@@ -18,6 +18,10 @@ export type LobbyEvent = {
   lobbyId?: number;
   preset?: string;
   endTime?: number | null;
+  /** Absent on royale lobbies. Predict lobbies also send lockTime and market (startsAt is the lock time). */
+  mode?: "royale" | "predict";
+  lockTime?: number;
+  market?: Market;
 };
 
 export type TickEvent = {
@@ -83,7 +87,87 @@ export type SettledEvent = {
   amounts: string[];
 };
 
+// ---------- Prediction mode (CLAUDE.md "Prediction mode" > "Events") ----------
+export type Split = "equal" | "linear" | "steep";
+export type PredictParams = {
+  market: Market;
+  entryUnits: string;
+  winnerBps: number;
+  split: Split;
+  creator: string | null;
+  creatorFeeBps: number;
+  feeBps: number;
+};
+
+export type RoundEvent = {
+  type: "round";
+  lobbyId: number;
+  params: PredictParams;
+  lockTime: number; // unix seconds
+  endTime: number; // unix seconds, the resolve time
+  protocol: boolean;
+};
+/** How many players have a prediction. No prices before the lock. */
+export type PredictedEvent = { type: "predicted"; t: number; count: number; lobbyId?: number };
+export type LockedPrediction = { player: string; callsign: string; bot: boolean; price: string };
+export type LockedEvent = { type: "locked"; t: number; predictions: LockedPrediction[] };
+export type PtickEvent = {
+  type: "ptick";
+  t: number;
+  mark: string;
+  band: { low: string; high: string };
+  leaders: { player: string; rank: number; distance: string }[];
+};
+export type PredictWinner = {
+  player: string;
+  callsign: string;
+  price: string;
+  distance: string;
+  rank: number;
+  provisionalPayoutUnits: string;
+};
+export type PredictFinalEvent = {
+  type: "final";
+  settlementPrice: string;
+  bookHash: string;
+  winners: PredictWinner[];
+  creatorFeeUnits: string;
+};
+export type CancelledEvent = { type: "cancelled"; lobbyId?: number; reason?: string };
+/**
+ * Client-side only, never on the wire: the round market's price before the lock, read from the optional `mark`
+ * of GET /rounds (the engine sends no price stream until `ptick`). `at` is unix seconds.
+ */
+export type MarkEvent = { type: "mark"; at: number; mark: string };
+
+/** One entry of GET /rounds (the response is `{rounds: RoundInfo[]}`, protocol round first). Counts, not lists. */
+export type RoundInfo = {
+  lobbyId: number;
+  protocol: boolean;
+  status?: LobbyStatus;
+  params: PredictParams;
+  maxPlayers?: number;
+  lockAfter?: number;
+  resolveAfter?: number;
+  openTime?: number;
+  lockTime: number;
+  endTime: number;
+  players: number;
+  predicted?: number;
+  potUnits: string;
+  mark?: string;
+};
+
+export const isPredictFinal = (e: { type: string }): e is PredictFinalEvent => e.type === "final" && "settlementPrice" in e;
+
 export type MatchEvent =
+  | RoundEvent
+  | PredictedEvent
+  | LockedEvent
+  | PtickEvent
+  | PredictFinalEvent
+  | CancelledEvent
+  | MarkEvent
   | LobbyEvent
   | TickEvent
   | LeaderboardEvent

@@ -1,10 +1,12 @@
 "use client";
 // Arena variant B, the storm: the lobby as a mountain range, equity as altitude, the zone as a flood.
+// Prediction lobbies draw the same world as a price survey (b/predict.ts) on the same canvas.
 import { useEffect, useRef } from "react";
 import type { ArenaProps } from "./types";
 import { condensed, extra } from "./b/fonts";
 import { C } from "./b/draw";
 import { Scene } from "./b/scene";
+import { PredictScene } from "./b/predict";
 
 const DW = 1920;
 const DH = 1080;
@@ -19,6 +21,7 @@ export default function VariantB({ match }: ArenaProps) {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     const scene = new Scene(condensed.style.fontFamily, extra.style.fontFamily);
+    const pscene = new PredictScene(condensed.style.fontFamily, extra.style.fontFamily);
     const fonts = [
       `800 40px ${condensed.style.fontFamily}`,
       `500 20px ${condensed.style.fontFamily}`,
@@ -26,8 +29,14 @@ export default function VariantB({ match }: ArenaProps) {
     ];
     Promise.all(fonts.map((f) => document.fonts.load(f)))
       .catch(() => undefined)
-      .then(() => scene.T.cache.clear());
-    const onFonts = () => scene.T.cache.clear();
+      .then(() => {
+        scene.T.cache.clear();
+        pscene.T.cache.clear();
+      });
+    const onFonts = () => {
+      scene.T.cache.clear();
+      pscene.T.cache.clear();
+    };
     document.fonts.addEventListener("loadingdone", onFonts);
 
     let w = 0;
@@ -60,7 +69,9 @@ export default function VariantB({ match }: ArenaProps) {
       ctx.beginPath();
       ctx.rect(0, 0, DW, DH);
       ctx.clip();
-      scene.frame(ctx, m.ref.current, m.clock(), dt, m.reducedMotion);
+      const st = m.ref.current;
+      if (st.mode === "predict") pscene.frame(ctx, st, m.clock(), dt, m.reducedMotion);
+      else scene.frame(ctx, st, m.clock(), dt, m.reducedMotion);
       ctx.restore();
       raf = requestAnimationFrame(loop);
     };
@@ -74,6 +85,10 @@ export default function VariantB({ match }: ArenaProps) {
 
   const st = match.state;
   const alive = st.board ? st.board.rows.filter((r) => r.alive).length : st.players.length;
+  const predict = st.mode === "predict";
+  const label = predict
+    ? `Trading Royale prediction round ${st.lobbyId ?? ""}, ${st.status ?? "loading"}, ${st.players.length} players`
+    : `Trading Royale arena, ${st.status ?? "loading"}, ${alive} players standing`;
   return (
     <main
       className={`${condensed.className} ${extra.className}`}
@@ -82,10 +97,10 @@ export default function VariantB({ match }: ArenaProps) {
       <canvas
         ref={canvasRef}
         role="img"
-        aria-label={`Trading Royale arena, ${st.status ?? "loading"}, ${alive} players standing`}
+        aria-label={label}
         style={{ width: "100%", height: "100%", display: "block" }}
       />
-      {(st.error || st.status === "cancelled") && (
+      {(st.error || st.status === "cancelled" || st.cancelled) && (
         <div
           role="alert"
           style={{
@@ -101,10 +116,13 @@ export default function VariantB({ match }: ArenaProps) {
         >
           <div>
             <p style={{ fontSize: 72, fontWeight: 800, margin: 0 }}>
-              {st.error ? "The arena is not connected" : "This match was called off"}
+              {st.error ? "The arena is not connected" : predict ? "This round was called off" : "This match was called off"}
             </p>
             <p style={{ fontSize: 30, margin: "16px auto 0", maxWidth: "40ch" }}>
-              {st.error ?? "Not enough players made it in. Every entry is refunded on chain. The next lobby opens here."}
+              {st.error ??
+                (predict
+                  ? `${st.cancelReason ? `${st.cancelReason.charAt(0).toUpperCase()}${st.cancelReason.slice(1).replace(/[.\s]+$/, "")}. ` : ""}Every entry is refunded on chain. The next protocol round shows up here.`
+                  : "Not enough players made it in. Every entry is refunded on chain. The next lobby opens here.")}
             </p>
           </div>
         </div>

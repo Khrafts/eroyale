@@ -1,4 +1,4 @@
-// Screenshots of every screen against the mock. Starts `next start` itself.
+// Screenshots of every screen against the mock (royale ?mock=1, prediction ?mock=predict). Starts `next start` itself.
 // Env: SHOTS_DIR (output dir, default ./shots), SHOTS_ONLY (comma list), PORT.
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -20,6 +20,13 @@ const SHOTS = [
   { name: "trade-danger", path: `/play?mock=1&speed=0&at=danger`, size: PHONE },
   { name: "eliminated", path: `/play?mock=1&speed=0&at=eliminated`, size: PHONE },
   { name: "result", path: `/play?mock=1&speed=0&at=result&me=winner`, size: PHONE },
+  // Prediction mode (?mock=predict): the protocol round, KESTREL (me) finishes 3rd of 5 winners.
+  { name: "arena-predict-live", path: `/arena?mock=predict&speed=0&at=close`, size: ARENA },
+  { name: "arena-predict-reveal", path: `/arena?mock=predict&speed=0&at=final`, size: ARENA },
+  { name: "rounds", path: `/play?mock=predict&speed=0&at=open&screen=rounds`, size: PHONE },
+  { name: "create-round", path: `/play?mock=predict&speed=0&at=open&screen=create`, size: PHONE },
+  { name: "predict", path: `/play?mock=predict&speed=0&at=open`, size: PHONE },
+  { name: "predict-result", path: `/play?mock=predict&speed=0&at=settled`, size: PHONE },
 ];
 
 const only = process.env.SHOTS_ONLY?.split(",").map((s) => s.trim()).filter(Boolean);

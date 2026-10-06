@@ -21,6 +21,7 @@ import {
   shortHash,
   smooth,
   spring,
+  stamp,
 } from "./draw";
 
 const W = 1920;
@@ -1182,73 +1183,7 @@ export class Scene {
   }
 
   private drawStamp(ctx: CanvasRenderingContext2D, tx: string, mode: string, dt: number, reduced: boolean) {
-    const T = this.T;
-    const k = reduced ? 1 : clamp(dt / 0.22);
-    const sc = reduced ? 1 : lerp(1.9, 1, easeIn(k));
-    const a = reduced ? clamp(dt / 0.4) : clamp(k * 1.5);
-    const x = 1720;
-    const y = 400;
-    const R = 132;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(-0.16);
-    ctx.scale(sc, sc);
-    ctx.globalAlpha = a;
-    // a brass survey benchmark disc
-    ctx.fillStyle = rgba("#2A3A3C", 0.95);
-    ctx.beginPath();
-    ctx.arc(0, 0, R, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = C.ink;
-    ctx.lineWidth = 5;
-    ctx.stroke();
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, R - 12, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(0, 0, R - 52, 0, Math.PI * 2);
-    ctx.stroke();
-    // lettering around the rim
-    const ring = "Verified by Chainlink";
-    ctx.font = T.font("c", 800, 26);
-    ctx.fillStyle = C.ink;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    const rr = R - 32;
-    const ringF = T.font("c", 800, 26);
-    const total = T.w(ctx, ringF, ring) * 1.08;
-    let acc = -total / 2;
-    ctx.font = ringF;
-    for (const ch of ring) {
-      const cw = T.w(ctx, ringF, ch) * 1.08;
-      const ang = (acc + cw / 2) / rr;
-      ctx.save();
-      ctx.rotate(ang);
-      ctx.fillText(ch, 0, -rr);
-      ctx.restore();
-      acc += cw;
-    }
-    // benchmark triangle and tx
-    ctx.beginPath();
-    ctx.moveTo(0, -38);
-    ctx.lineTo(18, -10);
-    ctx.lineTo(-18, -10);
-    ctx.closePath();
-    ctx.fill();
-    ctx.textBaseline = "alphabetic";
-    T.text(ctx, "Settled", 0, 24, T.font("c", 800, 30), C.ink, "center");
-    T.text(ctx, shortHash(tx), 0, 52, T.font("x", 600, 24), C.ink, "center");
-    T.text(ctx, mode === "simulated" ? "simulated report" : "onchain report", 0, 96, T.font("c", 700, 22), rgba(C.ink, 0.85), "center");
-    ctx.restore();
-    // ink spread on impact
-    if (!reduced && dt > 0.2 && dt < 1) {
-      ctx.strokeStyle = rgba(C.ink, (1 - (dt - 0.2) / 0.8) * 0.6);
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x, y, R + (dt - 0.2) * 90, 0, Math.PI * 2);
-      ctx.stroke();
-    }
+    stamp(ctx, this.T, tx, mode, dt, reduced, 1720, 400);
   }
 }
 

@@ -8,7 +8,9 @@ import { MARKETS, START_BALANCE, STAGE, num, unitsToUsd } from "@/lib/events";
 import type { EliminatedEvent, FillEvent, Market, Side } from "@/lib/events";
 import { burner, join, sendOrder, signOrder, type Order } from "@/lib/engine";
 import { useMatch, type Match } from "@/lib/useMatch";
+import { useRolling } from "@/lib/useRolling";
 import s from "./play.module.css";
+import PredictPhone from "./Predict";
 
 const DETENTS = [10, 25, 50, 100];
 const SIZES: { label: string; frac: number }[] = [
@@ -31,34 +33,6 @@ const ordinal = (n: number) => {
   return `${n}${m10 === 1 ? "st" : m10 === 2 ? "nd" : m10 === 3 ? "rd" : "th"}`;
 };
 const short = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
-
-/** Number that rolls toward its target every frame (cross-fade free: it just counts). */
-function useRolling(target: number, reduced: boolean) {
-  const [v, setV] = useState(target);
-  const cur = useRef(target);
-  useEffect(() => {
-    if (reduced) {
-      cur.current = target;
-      setV(target);
-      return;
-    }
-    let raf = 0;
-    const step = () => {
-      const d = target - cur.current;
-      if (Math.abs(d) < 0.005) {
-        cur.current = target;
-        setV(target);
-        return;
-      }
-      cur.current += d * 0.18;
-      setV(cur.current);
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [target, reduced]);
-  return v;
-}
 
 function Pennant({ side, size = 22 }: { side: Side; size?: number }) {
   // A wind pennant: long flies right in mint, short flies left in orchid.
@@ -100,7 +74,19 @@ function Gauge({ equity, cut, zone }: { equity: number; cut: number; zone: numbe
 
 type Toast = { text: string; tone: "ok" | "bad" } | null;
 
+/** Royale or prediction mode, from ?mode=predict or ?mock=predict (read after mount: the page is prerendered). */
 export default function Play() {
+  const [mode, setMode] = useState<"royale" | "predict" | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    setMode(q.get("mock") === "predict" || q.get("mode") === "predict" ? "predict" : "royale");
+  }, []);
+  if (mode === "predict") return <PredictPhone />;
+  if (mode === "royale") return <RoyalePhone />;
+  return <main className={s.root} />;
+}
+
+function RoyalePhone() {
   const match = useMatch();
   const { state, source } = match;
   const [acct, setAcct] = useState<PrivateKeyAccount | null>(null);
@@ -223,6 +209,9 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
       </button>
       {err && <p className={s.error}>{err}</p>}
       <p className={s.fine}>The $5.00 entry is paid for you. Your game key stays in this browser.</p>
+      <a className={s.fine} href={source === "mock" ? "?mock=predict&screen=rounds" : "?mode=predict&screen=rounds"}>
+        Or call a price in a prediction round
+      </a>
     </section>
   );
 }
