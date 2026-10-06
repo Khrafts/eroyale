@@ -1,9 +1,8 @@
 ## Status
-- Step: spec-checker fixes done (minute-aligned start, persisted book at end tick, signed joins, nonce/end-time guards).
-- Last gate: `bash gates/engine.sh` -> GATE PASS engine.
-- Live check: CHAIN=off stage match started 07:12:00Z, book served at the end tick (endTime % 60 == 0) before `final`, identical bytes after a restart; log + book pass gates/check-engine.ts; `--resume` mid-match OK.
-- Next: Phase 6 integration (`settled` emission / settleFallback) by the lead.
-- Blockers: none. Chain calls still untested against a deployment.
+- Step: Phase 6 chain-independent part done: settleFallback settlement + `settled`, relayer mint top-up, `npm run e2e` / `e2e:local`.
+- Last gate: engine, contracts, workflow -> GATE PASS. `npm run e2e:local` PASS (3 winners + treasury deltas equal `final`).
+- Next: lead fills .env (RPC_URL, keys, TOKEN/ESCROW after deploy) and runs `npm run e2e` on Base Sepolia.
+- Blockers: no testnet RPC/keys in this session; deployed-mode CRE trigger not wired.
 
 # Engine notes
 
@@ -54,10 +53,30 @@ EIP-712, domain `{name: "TradingRoyale", version: "1"}` (no chainId), primary ty
 20 bots cycle through styles `degen, trend, steady, fade` (two of each per 8). Degen: 80-100x, 85-100% of free margin, no stop. Trend/fade: 10-40x following or fading 2 s momentum, take-profit/stop on margin. Steady: 5-20x. All bank profits when above the next zone line within 6 s of a checkpoint, and press (more leverage) when behind with under 12 s left. On a quiet tape they raise leverage until a half-sigma move over the time left reaches the line (live markets move ~10x less than the sim walk). Sim walk: per-tick vol BTC 0.04%, ETH 0.05%, SOL 0.07%, with a wandering drift.
 Seeds 1-30, 20 bots, stage: 27 end with 4-9 finalists, 28 have at least one liquidation. Live on a calm Coinbase tape (BTC moving ~0.02% in 2 min) the same bots ended with 3 finalists after two cuts; real price moves are the limit there, not the rules.
 
+## Settlement (Phase 6)
+
+After `final`, with the chain on, `settle()` in `src/server.ts` runs:
+
+- `SETTLE_MODE=simulated` (default): reads `getLobby` for the on-chain pot and end time, builds the report with `workflow/src/report.ts` `buildReport` from the exact book bytes on disk, the final marks, the on-chain pot, fee 500 bps and `CHAIN_SELECTOR`; waits until the latest block's timestamp is past the on-chain `endTime`; the owner (`PRIVATE_KEY_DEPLOYER`) calls `settleFallback`; on a success receipt, `markSettled` emits `settled {txHash, mode, winners, amounts}`. Retries every 5 s (up to 10), stops as soon as one failure reason (decoded custom error name) repeats; the error is on `chainError`. If the escrow already says Settled, it picks up the `Settled` log instead of sending.
+- `SETTLE_MODE=deployed`: the CRE HTTP trigger is **not wired** (contracts/NOTES.md does not document how to send a signed gateway request). The engine logs that, then polls for the escrow's `Settled(id)` log and emits `settled` with that tx hash once someone triggers `royale-settle` with `{"lobbyId": id}`.
+- Not resumed: a lobby restarted after `final` (`--resume` skips finished lobbies) is not settled by the engine; settle it by hand per contracts/NOTES.md.
+
+`CHAIN=anvil` (chain id 31337) is accepted for local runs. `ENGINE_DATA_DIR` moves the log/book store (e2e uses a temp dir: a fresh anvil reuses lobby ids, and a stored book is never rewritten).
+
+Relayer funds: `Deploy.s.sol` mints 1,000,000 mUSDC to the relayer and approves the escrow. On its first `joinFor`, the engine also mints 1,000,000 mUSDC from MockUSDC's open `mint(address,uint256)` if the relayer holds under 1,000 mUSDC (covers a redeployed escrow on an existing token).
+
+Bot addresses are `keccak256("royale-bot:<seed>:<i>")[12:]`: valid addresses with no known key. `joinFor` needs only the address, so bots join on-chain, but **bot winnings are unrecoverable** (nobody holds the key). Fine on testnet with MockUSDC.
+
+## e2e
+
+    npm run e2e:local   # repo root: anvil + Deploy.s.sol with anvil dev keys + the e2e below; nothing public
+    npm run e2e         # repo root: same e2e against RPC_URL / TOKEN_ADDRESS / ESCROW_ADDRESS from the env or .env
+
+`engine/scripts/e2e.mts` starts the engine (20 bots, stage, port `E2E_PORT` default 8799, temp data dir, `SETTLE_MODE=simulated`), waits for `final` and `settled` on the WebSocket, then reads each winner's and the treasury's MockUSDC balance at the settlement block and the block before, and exits non-zero unless every change equals the `final` event's `provisionalPayoutUnits` / `feeUnits` and the winner lists agree. Final marks always come from the real Coinbase candle endpoint. Takes about 4-5 minutes (minute-aligned start, 120 s match, candle final 60 s after the end). On a public chain it must not share the deployer key with a running engine (nonce races).
+
 ## Not done / for the lead
 
-- `settled` event: nothing emits it yet. Needs either a watcher for the escrow `Settled(id, bookHash)` event (its exact ABI comes from the contracts track) or, in `SETTLE_MODE=simulated`, the owner calling `settleFallback(report)` with `buildReport` from `workflow/src`. `Lobby.markSettled()` is ready for it.
-- Chain start: `start()` is sent 2 s before `startsAt` (escrow sets its end to block time + duration, so the chain end lands within a few seconds of the book's), retried every 3 s up to 10 times; failures go to the log and to `chainError` on `GET /lobbies/:id`. A failed `createLobby` at boot is logged and retried every 10 s.
-- Relayer: `joinFor` uses `PRIVATE_KEY_RELAYER` and approves the escrow for max on first use (receipt status checked); it does **not** mint MockUSDC (the mint signature is not in CLAUDE.md), so the relayer must be funded first. `createLobby`, `start`, `cancel` are `onlyOwner`, so they use `PRIVATE_KEY_DEPLOYER`. The on-chain lobby id (from `createLobby`'s return value) becomes the engine's lobby id. Chain calls are untested (no RPC or deployment yet).
+- Chain start: `start()` is sent 2 s before `startsAt`, retried every 3 s up to 10 times; failures go to the log and to `chainError` on `GET /lobbies/:id`. A failed `createLobby` at boot is logged and retried every 10 s.
+- `createLobby`, `start`, `cancel`, `settleFallback` are `onlyOwner` (`PRIVATE_KEY_DEPLOYER`); `joinFor` uses `PRIVATE_KEY_RELAYER`. The on-chain lobby id becomes the engine's lobby id.
 - No `cancel` route: a lobby that never reaches 4 players just stays open.
 - Human orders fill at the latest feed price; `t` is the wall-clock offset clamped inside the current tick.
