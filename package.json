@@ -1,0 +1,8 @@
+{
+  "name": "trading-royale",
+  "private": true,
+  "scripts": {
+    "e2e": "cd engine && npx tsx scripts/e2e.mts",
+    "e2e:local": "bash scripts/e2e-local.sh"
+  }
+}

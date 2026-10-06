@@ -5,3 +5,4 @@ contracts/cache/
 contracts/broadcast/
 web/.next/
 *.log
+contracts/deployments/anvil.json
