@@ -1,7 +1,7 @@
 ## Status
-- Step: 2 of 6, arena variants A, B, C being built in parallel (step 1 events, mock, useMatch, shots script done).
-- Last gate: not run yet; `npm run build` and `npm run shots` pass with placeholders.
-- Next: commit the three variants, branch arena-variants, screenshot each, wait for the pick.
-- Blockers: none. Playwright 1.63's bundled Chromium is not downloaded; shots fall back to installed Chrome.
+- Step: 2 of 6 done, three arena variants committed (f0ab669, branch arena-variants pushed); waiting for the judge's pick.
+- Last gate: not run (phone screens are placeholders); full `npm run build` passes with all three variants.
+- Next: keep the picked variant, carry over named ideas, delete the others, then build /play (orders per CLAUDE.md "Order signatures").
+- Blockers: none. Shots use installed Chrome because Playwright 1.63's Chromium is not downloaded.
 
 ## Running
