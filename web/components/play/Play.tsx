@@ -12,6 +12,8 @@ import { useRolling } from "@/lib/useRolling";
 import s from "./play.module.css";
 import PredictPhone from "./Predict";
 
+const CALLSIGN = "royale.callsign";
+
 const DETENTS = [10, 25, 50, 100];
 const SIZES: { label: string; frac: number }[] = [
   { label: "10%", frac: 0.1 },
@@ -164,11 +166,24 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
   const [callsign, setCallsign] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The callsign is shared with prediction rounds and the island (royale.callsign).
+  useEffect(() => {
+    try {
+      setCallsign((c) => c || (localStorage.getItem(CALLSIGN) ?? ""));
+    } catch {
+      /* storage blocked */
+    }
+  }, []);
   const valid = callsign.trim().length >= 1 && callsign.trim().length <= 24;
   const submit = async () => {
     if (!acct || !valid) return;
     setBusy(true);
     setErr(null);
+    try {
+      localStorage.setItem(CALLSIGN, callsign.trim());
+    } catch {
+      /* storage blocked */
+    }
     try {
       if (source === "mock") {
         onJoined(callsign.trim());

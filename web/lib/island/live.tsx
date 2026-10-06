@@ -237,7 +237,10 @@ export function IslandLive() {
         const proto = open.find((r) => r.protocol);
         patch.predict = proto ? roundFrom(proto) : null;
         patch.userRounds = open.filter((r) => !r.protocol).map(userRoundFrom);
-        const ids = [...(proto ? [proto.lobbyId] : []), ...(b.active ?? []).filter((r) => r.protocol).map((r) => r.lobbyId)];
+        // locked protocol rounds still waiting for their result (`recent` already holds the ones with a final)
+        const done = new Set((b.recent ?? []).map((r) => r.lobbyId));
+        const waiting = (b.active ?? []).filter((r) => r.protocol && !done.has(r.lobbyId)).map((r) => r.lobbyId).slice(0, 3);
+        const ids = [...(proto ? [proto.lobbyId] : []), ...waiting];
         setWatch((w) => (w.join() === ids.join() ? w : ids));
       }
       if (st.status === "fulfilled") {

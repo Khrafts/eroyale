@@ -1,8 +1,8 @@
 ## Status
-- Step: island port (Phase 9) step 1 done: /island on mocks (?mock=island&at=overview|live|checkpoint|settled|studio|victory), matched to docs/island-prototype.html at 1440x900 and 390x844.
-- Last check: GATE PASS ui, GATE PASS predict-ui; typecheck clean. island-ui gate not written yet.
-- Next: step 2, live data against a local engine (port 8802).
-- Blockers: none. /stats is not on this branch yet; the park, top bar and lighthouse show their empty states.
+- Step: island steps 1-5 done: / is the island (/island alias), live data from the engine, avatars with the victory on a real `settled`, island shots in `npm run shots`.
+- Last check: GATE PASS ui, GATE PASS predict-ui; typecheck clean; /arena 131->132 kB, /play 158->159 kB first load (shared chunk +0.7 kB).
+- Next: merge feat/island (GET /stats), run gates/island-ui.sh, recheck park/top bar/lighthouse against the real /stats.
+- Blockers: none.
 
 ## Running
 
@@ -48,3 +48,56 @@ Rules the screens keep:
 - Payouts say provisional until `settled`; bots carry BOT.
 
 Files: `lib/events.ts` (predict wire types), `lib/useMatch.ts` (predict state, snapshot, follow), `lib/predict.ts` (ranges, preview, rounds, cents), `lib/engine.ts` (CreateRound, Prediction), `mocks/predict.ts`, `components/arena/b/predict.ts`, `components/play/Predict.tsx` + `predict.module.css`.
+
+## Island
+
+The front door (`/`, alias `/island`): docs/island-prototype.html ported to three 0.186.1 (pinned exactly) with its
+own examples/jsm OrbitControls and BufferGeometryUtils. No React Three Fiber. `ColorManagement.enabled = false` and
+linear sRGB output keep the prototype's r147 colours; light intensities are the prototype's times PI (lights are
+physical since r155).
+
+Run it:
+- Mocks: `/?mock=island&at=overview|live|checkpoint|settled|studio|victory` (clock frozen at the moment; built from
+  mocks/match.ts folded through useMatch's reducer and mocks/predict.ts round lists). `?view=list` opens the list.
+  `&motion=reduce` forces reduced motion.
+- Live: `NEXT_PUBLIC_ENGINE_WS=ws://localhost:8802/ws npx next dev -p 3101`, engine
+  `CHAIN=off npm run dev -- --port 8802 --bots 12 --preset stage --predict-bots 10 --loop`. Polls /lobbies, /rounds,
+  /marks, /health, /stats every 3 s (backs off to 15 s while the engine is down, paused while the tab is hidden).
+  WebSockets through useMatch: the current royale lobby, the open protocol round, and up to three locked protocol
+  rounds still waiting for their result.
+- Shots: `npm run shots` adds island-overview, island-panel, island-studio, island-victory, island-list (1440x900)
+  and island-phone (390x844). Headless Chrome gets WebGL from SwiftShader (`--use-angle=swiftshader`); each island
+  shot waits for `window.__islandReady` (set once every building has popped in). SwiftShader runs the scene at about
+  2 fps, so CSS transitions lag in shots.
+
+Modules:
+- `components/island/world/` (plain TS, its own chunk, loaded only with WebGL2): scene.ts (renderer, camera,
+  controls, smooth zoom, flights, view offset, frame loop, studio preview renderer), materials.ts (toon, outline,
+  instancing, canvas textures), common.ts (layout, shoreline, obstacle book), terrain, water, sky, plaza (fountain
+  jets, coins), buildings/{arena,observatory,park,wheel,plots,dojo,lighthouse,billboards}, props (instanced), life
+  (clouds, blimp, balloons, boats, fireflies, confetti), avatar/{rig,dances}, picking, labels.
+- `components/island/ui/` (React): Island.tsx (mount, world API, bus), TopBar, Feed, Panel (every building),
+  AvatarStudio, ListView, island.css (the prototype's CSS, every rule under `.isle`). IslandRoot.tsx loads it with
+  `next/dynamic` and `ssr: false`.
+- `lib/island/`: store.ts (one external store; React via useSyncExternalStore, the world via getSnapshot each
+  frame; a small bus for feed lines, cut flares, confetti, victory), live.tsx (polling + useMatch watches),
+  mock.ts, avatar.ts (AV, DANCES, cfgFor by address, storage `royale.avatar.<address>` and `royale.callsign`),
+  format.ts (label and panel lines), places.ts (games, billboards; no three).
+
+Known differences from the prototype:
+- Shadows use PCFShadowMap: r186 removed PCFSoftShadowMap, so shadow edges are slightly harder.
+- The prototype's mock simulation is gone. Labels, panels and list show engine data; anything without data says so
+  (park, podium, top bar and lighthouse while /stats 404s; empty promo boards read "NO ROUNDS YET"; the blimp invites
+  you to create a round).
+- Player rounds have no titles on the wire: boards and lists say "Call the ETH close. Steep split." and
+  "ETH call · round #42", with the creator's short address (no creator callsign on /rounds).
+- Promo boards and the blimp are labelled as player rounds with the biggest pots, never "PROMOTED" or a price.
+- Buttons with no backend are gone: Dojo "Notify me", Sky Wheel "Suggest a use", plot "Propose a building", sponsor
+  "Visit sponsor", blimp "Book the blimp", the open slot's bid form. The Observatory's nudge box became the live price
+  and the prediction count, with "Make your call" handing off to /play?mode=predict&lobby=.
+- The lighthouse drops "Your region · Allowed" (no data); it shows engine, chain (from /health), escrow (from
+  contracts/deployments at build time), prices fresh/stale and the last payout.
+- The ticker's change is against the oldest mark seen in the last ten minutes (the engine has no daily open), and the
+  candle bars are the latest BTC moves in basis points.
+- The wallet chip shows the burner address only (no balance call).
+- On phones the feed sits above the hint (the prototype stacked them on top of each other).

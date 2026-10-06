@@ -7,7 +7,7 @@ import "./island.css";
 import { emit, getSnapshot, onBus, setSnap, useIsland } from "@/lib/island/store";
 import { IslandLive, feed } from "@/lib/island/live";
 import { ISLAND_MOMENTS, mockIsland, type IslandMoment } from "@/lib/island/mock";
-import { danceName, loadAvatar } from "@/lib/island/avatar";
+import { CALLSIGN_KEY, danceName, loadAvatar } from "@/lib/island/avatar";
 import { burner } from "@/lib/engine";
 import { usdc } from "@/lib/island/format";
 import type { World } from "../world/scene";
@@ -94,6 +94,12 @@ export default function Island() {
       setSnap({ ...snap, me: addr });
     } else setSnap({ me: addr });
     setSnap({ avatar: loadAvatar(addr) });
+    // a callsign set on /play in another tab shows here too
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === CALLSIGN_KEY || (addr && e.key === `royale.avatar.${addr}`)) setSnap({ avatar: loadAvatar(addr) });
+    };
+    addEventListener("storage", onStorage);
+    return () => removeEventListener("storage", onStorage);
   }, [mock, moment]);
 
   // the world: only with WebGL, loaded in its own chunk

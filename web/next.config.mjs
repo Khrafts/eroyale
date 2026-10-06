@@ -11,6 +11,25 @@ if (existsSync(rootEnv)) {
   }
 }
 
+// The island's lighthouse shows the escrow: contracts/deployments/<CHAIN>.json at build time, if present. Only the
+// chain name and the escrow address reach the build. CHAIN comes from the environment, else the repo-root .env.
+if (!process.env.NEXT_PUBLIC_ESCROW_ADDRESS) {
+  let chain = process.env.CHAIN;
+  if (!chain && existsSync(rootEnv)) chain = parseEnv(readFileSync(rootEnv, "utf8")).CHAIN;
+  const file = chain && chain !== "off" && /^[a-z0-9-]+$/.test(chain) ? new URL(`../contracts/deployments/${chain}.json`, import.meta.url) : null;
+  if (file && existsSync(file)) {
+    try {
+      const d = JSON.parse(readFileSync(file, "utf8"));
+      if (/^0x[0-9a-fA-F]{40}$/.test(d.escrow ?? "")) {
+        process.env.NEXT_PUBLIC_ESCROW_ADDRESS = d.escrow;
+        process.env.NEXT_PUBLIC_ESCROW_CHAIN = String(d.chain ?? chain);
+      }
+    } catch {
+      /* unreadable deployment file: the lighthouse says "Not deployed" */
+    }
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
