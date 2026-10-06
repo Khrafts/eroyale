@@ -7,7 +7,7 @@ import type { PredictRound } from "./predict.ts";
 type Brain = { player: string; rng: Rng; predictAt: number; reviseAt: number | null; trend: number; spread: number };
 
 const WINDOW = 40; // ticks of history used for volatility and momentum
-const VOL_FLOOR = 0.00005; // per-tick; a calm live tape still spreads the field
+const VOL_FLOOR = 0.00012; // per-tick; a calm live tape still spreads the field
 
 export class PredictBots {
   private brains: Brain[] = [];
