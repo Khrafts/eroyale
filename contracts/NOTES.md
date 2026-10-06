@@ -1,7 +1,7 @@
 <!-- status -->
-Step: Phase 8c predict-contracts 5.1 steps 1-5 done (createRound, creator fee, tests, breaks, workflow predict branch, Deploy.s.sol)
+Step: Phase 8c spec-check fixes: no-creator rounds need entry % 20 == 0; buildReport onchain arg required (+entry, playerCount)
 Last gate: contracts, workflow, predict-contracts, predict-workflow -> GATE PASS (all four)
-Next: lead redeploys the escrow (section "Redeploy for prediction rounds"), then updates ESCROW_ADDRESS and workflow configs
+Next: engine/src/server.ts must pass onchain to buildReport before merge (see "For the engine"); lead redeploys the escrow
 Blockers: none; nothing deployed
 <!-- /status -->
 
@@ -25,8 +25,8 @@ Blockers: none; nothing deployed
 - `_settle` checks, in order: chain selector; lobby Live; `block.timestamp > endTime`; equal lengths; every winner joined; winners strictly ascending; `sum(amounts) <= floor(pot * (10000 - 500) / 10000)` (same floor as `shared/scoring.ts`). Then status Settled, pot zeroed, bookHash stored, winners paid, `pot - sum` to treasury, `Settled(id, bookHash)`.
 - `settleFallback` is `onlyOwner`; the contract has no mode flag, so "simulated mode only" is an operating rule, not enforced.
 - `getLobby(id)` returns the struct the workflow reads: `(status, maxPlayers, duration, startTime, endTime, entry, playerCount, pot, bookHash, creator, creatorFeeBps)`; status Live = 2. `creator` and `creatorFeeBps` were appended in Phase 8; the old 9-field ABI no longer matches the new deploy.
-- `createRound(duration, entry, maxPlayers, creator, creatorFeeBps)`: `onlyOwner`, same range checks as `createLobby`, reverts `CreatorFeeTooHigh(fee, 500)` above `MAX_CREATOR_FEE_BPS` and `ZeroCreatorWithFee(fee)` for a zero creator with a fee. Emits `LobbyCreated` then `RoundCreated(id, creator, creatorFeeBps)`. `createLobby` gives creator 0 and fee 0.
-- Settling a lobby with a creator: `creatorFee = floor(pot * creatorFeeBps / 10000)`, budget `pot - floor(pot * 500 / 10000) - creatorFee` (predictSettle's maths); after status Settled it pays the creator, then winners, then `pot - creatorFee - sum` to the treasury. Without a creator the budget stays `floor(pot * 9500 / 10000)` (royale `settle()` maths), so royale lobbies are byte-for-byte unchanged. The two formulas differ only when `pot % 20 != 0`; protocol rounds (entry 5_000000, no creator) never hit that, and every user round has a creator, so each lobby gets the budget its scorer computes.
+- `createRound(duration, entry, maxPlayers, creator, creatorFeeBps)`: `onlyOwner`, same range checks as `createLobby`, reverts `CreatorFeeTooHigh(fee, 500)` above `MAX_CREATOR_FEE_BPS`, `ZeroCreatorWithFee(fee)` for a zero creator with a fee, and `InvalidLobbyConfig` for a zero creator with `entry % 20 != 0`. Emits `LobbyCreated` then `RoundCreated(id, creator, creatorFeeBps)`. `createLobby` gives creator 0 and fee 0.
+- Settling a lobby with a creator: `creatorFee = floor(pot * creatorFeeBps / 10000)`, budget `pot - floor(pot * 500 / 10000) - creatorFee` (predictSettle's maths); after status Settled it pays the creator, then winners, then `pot - creatorFee - sum` to the treasury. Without a creator the budget stays `floor(pot * 9500 / 10000)` (royale `settle()` maths), so royale lobbies are byte-for-byte unchanged. The two formulas differ only when `pot % 20 != 0`; `createRound` refuses a creator-less round whose entry is not a multiple of 20 (so its pot always is), and a round with a creator uses the predict formula, so each lobby gets exactly the budget its scorer computes. `createLobby` has no such rule; a predict round must be created with `createRound`.
 - `cancel` on a round refunds every entry; the creator gets nothing.
 
 ## Deploy (lead runs this; not run here)
@@ -80,10 +80,17 @@ Rounds: `cast send "$ESCROW_ADDRESS" "createRound(uint32,uint96,uint16,address,u
 
 ## Workflow: prediction books
 
-- `buildReport(rawBook, prices, potUnits, feeBps, chainSelector, onchain?)`; `onchain` is `{creator, creatorFeeBps}` from `getLobby`. No `mode`: royale `settle()`, unchanged (refused only if `onchain` is given and carries a creator or fee). `mode: "predict"`: refuses unless `feeBps == params.feeBps` and `potUnits == players.length * params.entryUnits`, and, when `onchain` is given, unless `params.creator` (null = zero address, lowercased compare) and `params.creatorFeeBps` (0 when creator is null) equal the on-chain values (`checkRoundParams`). Settlement price is `prices[params.market]`, then `predictSettle`.
-- The handler (`src/main.ts`) always passes `onchain`; `scripts/score-fixture.ts` has no chain and passes none. Checked by hand: wrong pot, wrong fee, wrong creator, wrong creator fee and a royale book on a creator lobby each refuse; the golden predict book with matching on-chain values gives the golden amounts.
+- `buildReport(rawBook, prices, potUnits, feeBps, chainSelector, onchain: OnchainRound | null)`, `OnchainRound = {creator: string; creatorFeeBps: number; entry: bigint; playerCount: number}` from `getLobby`. The argument is required (omitting it throws at runtime too); only the offline `scripts/score-fixture.ts` passes `null`.
+- No `mode`: royale `settle()`, unchanged; refused if `onchain` carries a creator or fee. `mode: "predict"`: refuses unless `feeBps == params.feeBps` and `potUnits == players.length * params.entryUnits`, and, unless `onchain` is null, unless `params.creator` (null = zero address, lowercased compare), `params.creatorFeeBps` (0 when creator is null), `params.entryUnits == entry` and `players.length == playerCount` (`checkRoundParams`). Settlement price is `prices[params.market]`, then `predictSettle`.
+- Checked by hand: wrong pot, fee, creator, creator fee, entry, player count, a royale book on a creator lobby and an omitted `onchain` each refuse; the golden predict book with matching on-chain values gives the golden amounts.
 - The handler still fetches all three markets' candles for a predict book (one code path); only the round's market is used.
 - Predict books go through the same `endTime` skew check: the engine must `start` a round so the on-chain `endTime` is within 60 s of the book's resolve time.
+
+## For the engine
+
+- `getLobby(uint256)` returns `(uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps)`. viem: `"function getLobby(uint256 id) view returns ((uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps))"`.
+- Every `buildReport` call must pass the on-chain lobby: `{creator: l.creator, creatorFeeBps: Number(l.creatorFeeBps), entry: BigInt(l.entry), playerCount: Number(l.playerCount)}`. `engine/src/server.ts` on main calls it with 5 arguments; that call throws after this branch merges, so the engine change must land with or before it.
+- Create creator-less rounds with an entry that is a multiple of 20 (the protocol's 5_000000 is).
 
 ## Operating rules
 
