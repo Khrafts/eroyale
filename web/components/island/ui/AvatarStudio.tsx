@@ -21,8 +21,9 @@ export function AvatarStudio({ api, me }: { api: IslandApi; me: string | null })
   }, [w, d]);
   const set = <K extends keyof AvatarCfg>(k: K, v: AvatarCfg[K]) => setD((x) => ({ ...x, [k]: v }));
   const save = () => {
-    saveAvatar(me, d);
-    setSnap({ avatar: { ...d } });
+    const c = { ...d, name: d.name.trim().slice(0, 24) || "you" };
+    saveAvatar(me, c);
+    setSnap({ avatar: c });
   };
   const sw = (k: SwatchKey, label: string) => (
     <div className="opt">
@@ -60,7 +61,7 @@ export function AvatarStudio({ api, me }: { api: IslandApi; me: string | null })
       </div>
       <label className="field">
         Callsign
-        <input maxLength={24} value={d.name === "you" ? "" : d.name} placeholder="you" autoComplete="off" onChange={(e) => set("name", e.target.value.slice(0, 24) || "you")} />
+        <input maxLength={24} value={d.name} autoComplete="off" onChange={(e) => set("name", e.target.value.slice(0, 24))} onBlur={() => set("name", d.name.trim() || "you")} />
       </label>
       {sw("shirt", "Shirt")}
       {sw("pants", "Pants")}

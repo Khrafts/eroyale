@@ -33,6 +33,7 @@ if (!process.env.NEXT_PUBLIC_ESCROW_ADDRESS) {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  devIndicators: false,
   distDir: process.env.NEXT_DIST_DIR || ".next",
   experimental: { externalDir: true },
 };

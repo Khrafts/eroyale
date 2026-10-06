@@ -36,7 +36,7 @@ export type PredictInfo = {
 export type UserRound = PredictInfo & { split: Split; creator: string | null; creatorFeeBps: number };
 
 export type FeedKind = "win" | "live" | "cut" | "lock" | "promo" | "final";
-export type FeedItem = { id: string; kind: FeedKind; bold?: string; text: string };
+export type FeedItem = { id: string; kind: FeedKind; bold?: string; text: string; bot?: boolean };
 
 export type IslandSnap = {
   source: "mock" | "live";

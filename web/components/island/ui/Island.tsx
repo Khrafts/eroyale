@@ -155,7 +155,10 @@ export default function Island() {
           const a = getSnapshot().avatar;
           const amount = e.amountUnits ? usdc(e.amountUnits) : null;
           const off = e.offline ? ". Offline run, nothing paid on chain" : "";
-          feed("win", amount ? ` (you) won ${amount} in ${e.game} and hit the ${danceName(a.dance)}${off}` : ` (you) took the top step and hit the ${danceName(a.dance)}`, a.name);
+          // with no callsign stored the name is the default "you": say "You" once, not "you (you)"
+          const named = a.name !== "you";
+          const who = named ? " (you)" : "";
+          feed("win", amount ? `${who} won ${amount} in ${e.game} and hit the ${danceName(a.dance)}${off}` : `${who} took the top step and hit the ${danceName(a.dance)}`, named ? a.name : "You");
           if (w) w.victory();
         }
       }),

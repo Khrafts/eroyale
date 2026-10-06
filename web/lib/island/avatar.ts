@@ -50,7 +50,7 @@ export function cfgFor(address: string, name: string, rank = -1): AvatarCfg {
     shirt: pick(AV.shirt, 0),
     pants: pick(AV.pants, 3),
     skin: pick(AV.skin, 6),
-    hat: rank === 0 ? "crown" : pick(AV.hat, 9)[0],
+    hat: rank === 0 ? "crown" : pick(AV.hat.filter((x) => x[0] !== "crown"), 9)[0],
     hatColor: pick(AV.hatColor, 12),
     face: pick(AV.face, 15)[0],
     extra: pick(AV.extra, 18)[0],

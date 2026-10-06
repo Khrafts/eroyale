@@ -1,8 +1,8 @@
 ## Status
-- Step: island done (steps 1-6): / is the island (/island alias), live engine data incl. GET /stats (feat/island merged), victory on a real `settled`, six island shots.
+- Step: island review fixes done (bot tags, offline labels, WS backoff 1/2/4/8 s, poll cap 5 s, royale from polls without a WS URL, crown only on #1, studio callsign).
 - Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; /arena +0.6%, /play +0.7% first load vs main.
-- Next: none planned; on a CHAIN=off engine /stats counts offline settlements as "paid out today" (engine side).
-- Blockers: none.
+- Next: none planned.
+- Blockers: none. maxPlayers still needs one GET /lobbies/:id per lobby (useMatch's snapshot drops it; /lobbies does not carry it).
 
 ## Running
 

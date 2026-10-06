@@ -15,7 +15,7 @@ import { commas } from "../predict";
 
 const ENTRY_UNITS = "5000000";
 const POLL_MS = 3000;
-const MAX_POLL_MS = 15000;
+const MAX_POLL_MS = 5000;
 
 async function getJson<T>(path: string): Promise<{ status: number; body: T | null }> {
   const r = await fetch(engineHttp() + path, { cache: "no-store" });
@@ -24,7 +24,7 @@ async function getJson<T>(path: string): Promise<{ status: number; body: T | nul
 }
 
 let feedSeq = 0;
-export const feed = (kind: FeedItem["kind"], text: string, bold?: string) => emit({ kind: "feed", item: { id: `f${++feedSeq}`, kind, bold, text } });
+export const feed = (kind: FeedItem["kind"], text: string, bold?: string, bot?: boolean) => emit({ kind: "feed", item: { id: `f${++feedSeq}`, kind, bold, text, bot } });
 
 /** Lobbies and rounds whose payout already reached the feed (from a `settled` event), so /stats does not repeat it. */
 const announced = new Set<string>();
@@ -85,8 +85,9 @@ export function sampleMarks(marks: Marks, atMs: number) {
 }
 
 // ---------- feed lines and payouts from one subscribed lobby ----------
-function nameOf(s: MatchState, player: string) {
-  return s.players.find((p) => p.player === player)?.callsign ?? `${player.slice(0, 6)}…`;
+function nameOf(s: MatchState, player: string): [string, boolean | undefined] {
+  const p = s.players.find((x) => x.player === player);
+  return [p?.callsign ?? `${player.slice(0, 6)}…`, p?.bot];
 }
 
 function payout(s: MatchState, game: string, key: string) {
@@ -104,7 +105,7 @@ function payout(s: MatchState, game: string, key: string) {
   if (mine >= 0) emit({ kind: "victory", amountUnits: st.amounts[mine], game, offline });
   else {
     const others = st.winners.length - 1;
-    feed("win", ` won ${usdc(st.amounts[top])} in ${game}${others > 0 ? ` (and ${others} more)` : ""}${offline ? ". Offline run, nothing paid on chain" : ""}`, nameOf(s, st.winners[top]));
+    feed("win", ` won ${usdc(st.amounts[top])} in ${game}${others > 0 ? ` (and ${others} more)` : ""}${offline ? ". Offline run, nothing paid on chain" : ""}`, ...nameOf(s, st.winners[top]));
     emit({ kind: "celebrate" });
   }
 }
@@ -177,6 +178,32 @@ function RoyaleWatch() {
   return null;
 }
 
+type RoyaleSnapshot = {
+  lobbyId: number;
+  status: RoyaleInfo["status"];
+  startsAt: number | null;
+  endTime: number | null;
+  potUnits: string;
+  maxPlayers?: number;
+  players: { alive: boolean }[];
+  tick: { nextCheckpoint: { index: number; at: number } | null } | null;
+};
+function royaleFromSnapshot(s: RoyaleSnapshot): RoyaleInfo {
+  return {
+    lobbyId: s.lobbyId,
+    status: s.status,
+    players: s.players.length,
+    maxPlayers: s.maxPlayers ?? null,
+    potUnits: s.potUnits,
+    startsAt: s.startsAt,
+    endTime: s.endTime,
+    alive: s.players.filter((p) => p.alive).length,
+    checkpoints: [],
+    next: s.tick?.nextCheckpoint ?? null,
+    entryUnits: ENTRY_UNITS,
+  };
+}
+
 function PredictWatch({ lobby }: { lobby: number }) {
   const m = useMatch({ predict: true, lobby });
   useFeedFrom(m, "predict");
@@ -227,6 +254,17 @@ export function IslandLive() {
         if (b.marks && MARKETS.every((x) => b.marks![x])) sampleMarks(b.marks, b.now);
       }
       if (hl.status === "fulfilled") patch.health = hl.value.body;
+      const chainOff = (hl.status === "fulfilled" ? hl.value.body : getSnapshot().health)?.chain === false;
+      // No WebSocket configured: the royale lobby comes from the polled current lobby's snapshot instead.
+      if (!process.env.NEXT_PUBLIC_ENGINE_WS && lob.status === "fulfilled" && lob.value.body?.current != null) {
+        try {
+          const id = lob.value.body.current;
+          const { body: snap } = await getJson<RoyaleSnapshot>(`/lobbies/${id}`);
+          if (snap) patch.royale = royaleFromSnapshot(snap);
+        } catch {
+          /* next poll */
+        }
+      }
       if (lob.status === "fulfilled" && lob.value.body && lob.value.body.current === null && getSnapshot().royale?.status !== "live") {
         // the engine runs no royale lobby (predict only)
         patch.royale = null;
@@ -253,7 +291,7 @@ export function IslandLive() {
           fresh
             .reverse()
             .filter((w) => !announced.has(`${w.mode}:${w.lobbyId}`))
-            .forEach((w) => feed("win", ` won ${usdc(w.amountUnits)} in ${w.mode === "royale" ? "Trading Royale" : "Prediction"} #${w.lobbyId}`, w.callsign));
+            .forEach((w) => feed("win", ` won ${usdc(w.amountUnits)} in ${w.mode === "royale" ? "Trading Royale" : "Prediction"} #${w.lobbyId}${chainOff ? ". Offline run, nothing paid on chain" : ""}`, w.callsign, w.bot));
           if (wins[0]) lastWinAt = Math.max(lastWinAt, wins[0].at);
           firstStats = false;
         } else patch.statsState = status === 404 ? "missing" : "down";

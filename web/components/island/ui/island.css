@@ -196,3 +196,5 @@
 .isle .empty{background:#fff;border:2px dashed var(--line);border-radius:14px;padding:12px 14px;font-size:13px;color:var(--muted);margin:0 0 12px}
 /* phones: the feed sits above the hint instead of under it */
 @media (max-width: 640px){.isle .feed{bottom:calc(env(safe-area-inset-bottom,0px) + 122px)}}
+/* a small tag after a name: bot players, offline amounts */
+.isle .bot{display:inline-block;margin-left:6px;padding:1px 5px;border:1.5px solid var(--line);border-radius:6px;font:500 9.5px/1.3 var(--mono);color:var(--muted);vertical-align:1px}

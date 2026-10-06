@@ -9,6 +9,8 @@ export function TopBar({ api, list }: { api: IslandApi; list: boolean }) {
   const statsState = useIsland((s) => s.statsState);
   const avatar = useIsland((s) => s.avatar);
   const me = useIsland((s) => s.me);
+  // a CHAIN=off engine settles offline: nothing it reports was paid on chain
+  const offline = useIsland((s) => s.health?.chain === false);
   const noStats = statsState === "missing" ? "Stats not served yet" : statsState === "down" ? "Stats unavailable" : null;
   return (
     <header className="top">
@@ -34,7 +36,7 @@ export function TopBar({ api, list }: { api: IslandApi; list: boolean }) {
             <b>{stats ? stats.playing.toLocaleString("en-US") : "–"}</b> playing
           </div>
           <div className="chip hide-sm">
-            Paid out today <b>{stats ? usdc(stats.paidTodayUnits) : "–"}</b>
+            {offline ? "Settled offline today" : "Paid out today"} <b>{stats ? usdc(stats.paidTodayUnits) : "–"}</b>
           </div>
         </>
       )}

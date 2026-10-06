@@ -27,6 +27,7 @@ export function Feed() {
           <div>
             <small>{TAGS[it.kind]}</small>
             {it.bold && <b>{it.bold}</b>}
+            {it.bold && it.bot && <span className="bot">bot</span>}
             {it.text}
           </div>
         </div>

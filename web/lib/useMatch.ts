@@ -582,7 +582,8 @@ export function useMatch(opts: MatchOptions = {}): Match {
           s.error = `Cannot reach the engine at ${base}. Retrying.`;
           publish(s);
         }
-        if (!closed) retry = setTimeout(connect, 1000);
+        // backoff: 1 s, 2 s, 4 s, then every 8 s; a successful open resets it
+        if (!closed) retry = setTimeout(connect, Math.min(8000, 1000 * 2 ** (failures - 1)));
       };
       ws.onmessage = (m) => {
         if (g !== gen) return;
@@ -658,10 +659,14 @@ export function useMatch(opts: MatchOptions = {}): Match {
     let feed: WebSocket | null = null;
     let feedAt = 0; // performance.now() of the last feed frame
     let feedRetry: ReturnType<typeof setTimeout> | undefined;
+    let feedFailures = 0;
     const openFeed = () => {
       if (closed || !predict) return;
       const f = new WebSocket(`${base}${base.includes("?") ? "&" : "?"}feed=marks`);
       feed = f;
+      f.onopen = () => {
+        feedFailures = 0;
+      };
       f.onmessage = (m) => {
         try {
           const ev = JSON.parse(String(m.data)) as { type: string; marks: Record<string, string> | null; at: number };
@@ -676,7 +681,8 @@ export function useMatch(opts: MatchOptions = {}): Match {
         }
       };
       f.onclose = () => {
-        if (feed === f && !closed) feedRetry = setTimeout(openFeed, 2000);
+        // backoff: 2 s, 4 s, then every 8 s; a successful open resets it
+        if (feed === f && !closed) feedRetry = setTimeout(openFeed, Math.min(8000, 2000 * 2 ** feedFailures++));
       };
     };
     openFeed();

@@ -38,7 +38,7 @@ export function useNow() {
 type Def = { eyebrow: string; c: string; title: string; body: ReactNode };
 
 const playRound = (id: number) => `/play?mode=predict&lobby=${id}`;
-const CHAIN_NAMES: Record<string, string> = { "base-sepolia": "Base Sepolia", "eth-sepolia": "Ethereum Sepolia", sepolia: "Ethereum Sepolia" };
+const CHAIN_NAMES: Record<string, string> = { "base-sepolia": "Base Sepolia", "ethereum-sepolia": "Ethereum Sepolia", "eth-sepolia": "Ethereum Sepolia", sepolia: "Ethereum Sepolia" };
 
 export function Panel({ id, api, ref, me }: { id: string; api: IslandApi; ref: Ref<HTMLElement>; me: string | null }) {
   useNow();
@@ -102,6 +102,7 @@ export function Leaderboard({ s }: { s: IslandSnap }) {
   const b = s.stats?.leaderboard ?? [];
   if (s.statsState === "missing") return <p className="empty">The engine does not serve /stats yet, so there is no leaderboard to show.</p>;
   if (s.statsState === "down") return <p className="empty">The leaderboard is unavailable: the engine did not answer.</p>;
+  const offline = s.health?.chain === false;
   if (!b.length) return <p className="empty">{s.statsState === "loading" ? "Loading the leaderboard." : "No payouts yet. The first winners show up here."}</p>;
   return (
     <table className="lb">
@@ -111,9 +112,15 @@ export function Leaderboard({ s }: { s: IslandSnap }) {
             <td>
               <span className="rk">{i + 1}</span>
             </td>
-            <td>{e.callsign}</td>
+            <td>
+              {e.callsign}
+              {e.bot && <span className="bot">bot</span>}
+            </td>
             <td className="n">{e.wins} wins</td>
-            <td className="n">{commas(unitsToUsd(e.earnedUnits))}</td>
+            <td className="n" title={offline ? "Settled offline, not paid on chain" : undefined}>
+              {commas(unitsToUsd(e.earnedUnits))}
+              {offline && <span className="bot">offline</span>}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -272,7 +279,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
           <>
             <p className="lede">The top three dance on the podium, and every payout sets off confetti. Trophy heights follow total winnings.</p>
             <Leaderboard s={s} />
-            <p className="fine">Winnings in USDC, from every settled lobby and round.{s.source === "mock" ? " Mock data." : ""}</p>
+            <p className="fine">Winnings in USDC, from every settled lobby and round.{s.source === "mock" ? " Mock data." : ""}{s.health?.chain === false ? " This engine runs without a chain: these were settled offline and nothing was paid on chain." : ""}</p>
           </>
         ),
       };
