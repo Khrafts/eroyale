@@ -6,7 +6,7 @@ import { fromCents, predictSettle, toCents } from "../../shared/scoring";
 import type { PredictBook } from "../../shared/scoring";
 import type { Market, PredictParams, RoundInfo, Split } from "./events";
 import { engineHttp } from "./engineUrl";
-import { mockRounds } from "../mocks/predict";
+import { mockRoundLists } from "../mocks/predict";
 import type { Match } from "./useMatch";
 
 export const PROTOCOL_FEE_BPS = 500;
@@ -142,39 +142,64 @@ export const countdown = (sec: number) => {
   return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 };
 
-/** Open rounds: GET /rounds every 3 s, or the mock's list at the mock clock. */
-export function useRounds(match: Match): { rounds: RoundInfo[]; error: string | null; loaded: boolean } {
-  const [rounds, setRounds] = useState<RoundInfo[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const { source, mockSeed, clock } = match;
+const JOINED = "royale.rounds";
+/** Rounds this browser joined, so "your rounds" can find them again in `active` and `recent`. */
+export function rememberJoined(lobbyId: number) {
+  try {
+    const xs = JSON.parse(localStorage.getItem(JOINED) ?? "[]") as number[];
+    if (!xs.includes(lobbyId)) localStorage.setItem(JOINED, JSON.stringify([...xs, lobbyId].slice(-50)));
+  } catch {
+    /* storage blocked */
+  }
+}
+function joinedIds(): Set<number> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(JOINED) ?? "[]") as number[]);
+  } catch {
+    return new Set();
+  }
+}
+
+export type Rounds = {
+  /** Open rounds, protocol first. */
+  rounds: RoundInfo[];
+  /** Locked or finished rounds this player is in, newest lock first. */
+  mine: RoundInfo[];
+  error: string | null;
+  loaded: boolean;
+};
+
+/** GET /rounds every 3 s, or the mock's lists at the mock clock. */
+export function useRounds(match: Match): Rounds {
+  const [state, setState] = useState<Rounds>({ rounds: [], mine: [], error: null, loaded: false });
+  const { source, mockSeed, clock, me } = match;
   useEffect(() => {
     let stop = false;
+    const pick = (b: { rounds?: RoundInfo[]; active?: RoundInfo[]; recent?: RoundInfo[] }, isMine: (r: RoundInfo) => boolean) => {
+      const seen = new Set<number>();
+      const mine = [...(b.active ?? []), ...(b.recent ?? [])].filter((r) => !seen.has(r.lobbyId) && seen.add(r.lobbyId) && isMine(r));
+      return { rounds: b.rounds ?? [], mine: mine.sort((x, y) => y.lockTime - x.lockTime) };
+    };
     const pull = async () => {
       if (source === "mock") {
         if (mockSeed === null) return;
-        setRounds(mockRounds(clock(), mockSeed));
-        setError(null);
-        setLoaded(true);
+        const l = mockRoundLists(clock(), mockSeed);
+        const ids = joinedIds();
+        setState({ ...pick(l, (r) => ids.has(r.lobbyId) || (!!me && l.playersOf[r.lobbyId]?.includes(me))), error: null, loaded: true });
         return;
       }
       if (new URLSearchParams(window.location.search).get("mock")) return; // the mock is still starting
       if (!process.env.NEXT_PUBLIC_ENGINE_WS && !process.env.NEXT_PUBLIC_ENGINE_HTTP) {
-        setError("No engine is configured. Set NEXT_PUBLIC_ENGINE_WS (repo .env) and rebuild, or open this page with ?mock=predict.");
-        setLoaded(true);
+        setState({ rounds: [], mine: [], loaded: true, error: "No engine is configured. Set NEXT_PUBLIC_ENGINE_WS (repo .env) and rebuild, or open this page with ?mock=predict." });
         return;
       }
       try {
         const r = await fetch(`${engineHttp()}/rounds`, { cache: "no-store" });
-        const body = (await r.json()) as { rounds?: RoundInfo[] };
-        if (!stop) {
-          setRounds(body.rounds ?? []);
-          setError(null);
-        }
+        const body = (await r.json()) as { rounds?: RoundInfo[]; active?: RoundInfo[]; recent?: RoundInfo[] };
+        const ids = joinedIds();
+        if (!stop) setState({ ...pick(body, (x) => ids.has(x.lobbyId)), error: null, loaded: true });
       } catch {
-        if (!stop) setError("Cannot reach the engine. Retrying.");
-      } finally {
-        if (!stop) setLoaded(true);
+        if (!stop) setState((x) => ({ ...x, error: "Cannot reach the engine. Retrying.", loaded: true }));
       }
     };
     void pull();
@@ -183,6 +208,6 @@ export function useRounds(match: Match): { rounds: RoundInfo[]; error: string | 
       stop = true;
       clearInterval(id);
     };
-  }, [source, mockSeed, clock]);
-  return { rounds, error, loaded };
+  }, [source, mockSeed, clock, me]);
+  return state;
 }

@@ -75,6 +75,10 @@ export type MatchState = {
   /** Clock value (unix seconds in predict mode) when `pfinal` arrived. */
   pfinalT: number | null;
   cancelled: boolean;
+  /** Why the round was called off (the `cancelled` event's or the snapshot's reason), when the engine says. */
+  cancelReason: string | null;
+  /** Who has a prediction in, from the snapshot's players[].predicted (no prices before the lock). */
+  predictedBy: Record<string, boolean>;
 };
 
 export const emptyState = (lobbyId: number | null = null): MatchState => ({
@@ -113,6 +117,8 @@ export const emptyState = (lobbyId: number | null = null): MatchState => ({
   pfinal: null,
   pfinalT: null,
   cancelled: false,
+  cancelReason: null,
+  predictedBy: {},
 });
 
 const PATH_MAX = 4000;
@@ -128,8 +134,12 @@ function pushPath(s: MatchState, u: number, p: number) {
 const durationOf = (s: MatchState) =>
   s.startsAt !== null && s.endTime !== null && s.endTime > s.startsAt ? s.endTime - s.startsAt : presetOf(s.preset).duration;
 
-/** Pure reducer: mutates and returns `s` (callers clone before handing to React). `at` is the match clock on arrival. */
-export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): MatchState {
+/**
+ * Pure reducer: mutates and returns `s` (callers clone before handing to React). `at` is the match clock on arrival.
+ * `catchUp`: the event is part of the burst a WebSocket sends on connect, so it happened earlier than `at`: it must not
+ * set the time origin, and a final or settled from it is long past (no reveal replays on a reload).
+ */
+export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t, catchUp = false): MatchState {
   s.seq++;
   switch (ev.type) {
     case "round":
@@ -140,7 +150,7 @@ export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): Mat
     case "predicted":
       s.mode = "predict";
       s.predictedCount = Math.max(s.predictedCount, ev.count);
-      if (s.tOrigin === null) s.tOrigin = at - ev.t;
+      if (s.tOrigin === null && !catchUp) s.tOrigin = at - ev.t;
       break;
     case "locked":
       s.mode = "predict";
@@ -150,7 +160,7 @@ export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): Mat
       break;
     case "ptick":
       s.mode = "predict";
-      if (s.tOrigin === null) s.tOrigin = s.round ? s.round.lockTime - (s.locked?.t ?? ev.t) : at - ev.t;
+      if (s.tOrigin === null) s.tOrigin = s.round && s.locked ? s.round.lockTime - s.locked.t : at - ev.t;
       s.prevPtick = s.ptick;
       s.ptick = ev;
       pushPath(s, s.tOrigin + ev.t, Number(ev.mark));
@@ -160,6 +170,7 @@ export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): Mat
       break;
     case "cancelled":
       s.cancelled = true;
+      if (ev.reason) s.cancelReason = ev.reason;
       s.status = "cancelled";
       break;
     case "lobby":
@@ -202,7 +213,7 @@ export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): Mat
     case "final":
       if (isPredictFinal(ev)) {
         s.mode = "predict";
-        if (!s.pfinal) s.pfinalT = at;
+        if (!s.pfinal) s.pfinalT = catchUp ? at - 60 : at;
         s.pfinal = ev;
         break;
       }
@@ -210,7 +221,7 @@ export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t): Mat
       s.final = ev;
       break;
     case "settled":
-      if (!s.settled) s.settledT = at;
+      if (!s.settled) s.settledT = catchUp ? at - 60 : at;
       s.settled = ev;
       break;
   }
@@ -315,13 +326,15 @@ type PredictSnapshot = {
   predictedCount?: number;
   mark?: string | null;
   now?: number;
+  openTime?: number;
+  cancelReason?: string | null;
   locked?: LockedEvent | null;
   ptick?: PtickEvent | null;
   final?: PredictFinalEvent | null;
   settled?: SettledEvent | null;
 };
 
-export function applyPredictSnapshot(s: MatchState, snap: PredictSnapshot, receivedAtMs: number, lobbyNewer = false): MatchState {
+export function applyPredictSnapshot(s: MatchState, snap: PredictSnapshot, receivedAtMs: number, lobbyNewer = false, withMark = true): MatchState {
   if (s.lobbyId !== null && snap.lobbyId !== s.lobbyId) return s;
   s.seq++;
   s.mode = "predict";
@@ -336,12 +349,15 @@ export function applyPredictSnapshot(s: MatchState, snap: PredictSnapshot, recei
     s.endTime = snap.endTime;
   }
   if (snap.status === "cancelled") s.cancelled = true;
+  if (snap.cancelReason) s.cancelReason = snap.cancelReason;
+  if (typeof snap.openTime === "number") s.tOrigin = snap.openTime;
+  s.predictedBy = Object.fromEntries(snap.players.map((p) => [p.player, !!p.predicted]));
   if (!s.round && snap.params)
     s.round = { type: "round", lobbyId: snap.lobbyId, params: snap.params, lockTime: snap.lockTime, endTime: snap.endTime, protocol: !!snap.protocol };
   s.predictedCount = Math.max(s.predictedCount, snap.predictedCount ?? 0);
   if (snap.locked && !s.locked) applyEvent(s, { ...snap.locked, type: "locked" }, nowU);
   if (snap.ptick && (!s.ptick || snap.ptick.t >= s.ptick.t)) applyEvent(s, { ...snap.ptick, type: "ptick" }, nowU);
-  if (snap.mark && !s.locked) applyEvent(s, { type: "mark", at: nowU, mark: snap.mark }, nowU);
+  if (withMark && snap.mark && !s.locked) applyEvent(s, { type: "mark", at: nowU, mark: snap.mark }, nowU);
   // A reload after the resolve: the reveal is long finished.
   if (snap.final && !s.pfinal) {
     s.pfinal = { ...snap.final, type: "final" };
@@ -548,7 +564,9 @@ export function useMatch(opts: MatchOptions = {}): Match {
       const id = fixedLobby ?? (s.lobbyId !== null ? s.lobbyId : null);
       const url = id === null ? base : `${base}${base.includes("?") ? "&" : "?"}lobby=${id}`;
       ws = new WebSocket(url);
+      let openedAt = Infinity;
       ws.onopen = () => {
+        openedAt = performance.now();
         failures = 0;
         setConnected(true);
         if (s.error) {
@@ -571,7 +589,8 @@ export function useMatch(opts: MatchOptions = {}): Match {
         try {
           const ev = JSON.parse(String(m.data)) as MatchEvent;
           if (ev.type === "lobby" && s.lobbyId !== null && typeof ev.lobbyId === "number" && ev.lobbyId !== s.lobbyId) return;
-          applyEvent(s, ev, clock());
+          // The engine sends its catch-up burst right on connect; anything in the first 400 ms is treated as past.
+          applyEvent(s, ev, clock(), performance.now() - openedAt < 400);
           if (ev.type === "lobby") {
             lobbyFrames++;
             const id = typeof ev.lobbyId === "number" ? ev.lobbyId : s.lobbyId;
@@ -635,7 +654,35 @@ export function useMatch(opts: MatchOptions = {}): Match {
       }
     }, 5000);
 
-    // Before the lock a prediction lobby streams no price: read the snapshot's `mark` every two seconds.
+    // Before the lock a prediction lobby streams no price: the engine's marks feed (WS /ws?feed=marks, 4 Hz) carries it.
+    let feed: WebSocket | null = null;
+    let feedAt = 0; // performance.now() of the last feed frame
+    let feedRetry: ReturnType<typeof setTimeout> | undefined;
+    const openFeed = () => {
+      if (closed || !predict) return;
+      const f = new WebSocket(`${base}${base.includes("?") ? "&" : "?"}feed=marks`);
+      feed = f;
+      f.onmessage = (m) => {
+        try {
+          const ev = JSON.parse(String(m.data)) as { type: string; marks: Record<string, string> | null; at: number };
+          if (ev.type !== "marks" || !ev.marks || !s.round || s.locked) return;
+          const mark = ev.marks[s.round.params.market];
+          if (!mark) return;
+          feedAt = performance.now();
+          applyEvent(s, { type: "mark", at: ev.at / 1000, mark }, clock());
+          publish(s);
+        } catch {
+          /* ignore */
+        }
+      };
+      f.onclose = () => {
+        if (feed === f && !closed) feedRetry = setTimeout(openFeed, 2000);
+      };
+    };
+    openFeed();
+
+    // The snapshot every few seconds before the lock: who has called (players[].predicted), and the price only as a
+    // fallback when the marks feed has been quiet for 3 s.
     const marks = setInterval(async () => {
       if (closed || s.mode !== "predict" || s.locked || s.lobbyId === null || s.cancelled) return;
       const g = gen;
@@ -645,7 +692,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
         if (!r.ok || g !== gen) return;
         const snap = (await r.json()) as PredictSnapshot;
         if (g !== gen || snap.mode !== "predict") return;
-        applyPredictSnapshot(s, snap, (t0 + Date.now()) / 2, true);
+        applyPredictSnapshot(s, snap, (t0 + Date.now()) / 2, true, performance.now() - feedAt > 3000);
         publish(s);
       } catch {
         /* next time */
@@ -672,6 +719,8 @@ export function useMatch(opts: MatchOptions = {}): Match {
       clearTimeout(retry);
       clearInterval(follow);
       clearInterval(marks);
+      clearTimeout(feedRetry);
+      feed?.close();
       ws?.close();
     };
   }, [opts.lobby, opts.predict]);

@@ -20,12 +20,14 @@ import {
   inRange,
   previewPayouts,
   priceStr,
+  rememberJoined,
   useRounds,
   winnersOf,
   type Draft,
   type RangeKey,
 } from "@/lib/predict";
 import { PROTOCOL_LOBBY, mockMine } from "@/mocks/predict";
+import { useRolling } from "@/lib/useRolling";
 import s from "./play.module.css";
 import p from "./predict.module.css";
 
@@ -43,6 +45,8 @@ const fmt = (c: bigint) => commas(priceStr(c));
 /** A distance in dollars, always positive. */
 const money = (c: bigint) => "$" + commas(priceStr(c < 0n ? -c : c));
 const CALLSIGN = "royale.callsign";
+/** The engine closes joins this long before the lock (JOIN_CLOSE_MS = 7000). */
+const JOIN_CLOSE_S = 7;
 const SENT = "royale.prediction";
 
 function readStore(k: string): string | null {
@@ -72,14 +76,20 @@ function useTick() {
 export default function PredictPhone() {
   const [view, setView] = useState<View | null>(null);
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    const screen = q.get("screen");
-    const lobby = Number(q.get("lobby")) || null;
-    if (screen === "create") setView({ kind: "create" });
-    else if (screen === "rounds") setView({ kind: "rounds" });
-    else if (lobby) setView({ kind: "round", lobby });
-    else if (q.get("mock") === "predict") setView({ kind: "round", lobby: PROTOCOL_LOBBY });
-    else setView({ kind: "rounds" });
+    const read = () => {
+      const q = new URLSearchParams(window.location.search);
+      const screen = q.get("screen");
+      const lobby = Number(q.get("lobby")) || null;
+      if (screen === "create") setView({ kind: "create" });
+      else if (screen === "rounds") setView({ kind: "rounds" });
+      else if (lobby) setView({ kind: "round", lobby });
+      else if (q.get("mock") === "predict") setView({ kind: "round", lobby: PROTOCOL_LOBBY });
+      else setView({ kind: "rounds" });
+    };
+    read();
+    // Back and forward move between the rounds list, the create screen and round views.
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
   }, []);
   const go = (v: View) => {
     setView(v);
@@ -89,7 +99,7 @@ export default function PredictPhone() {
     if (v.kind === "round") q.set("lobby", String(v.lobby));
     else q.set("screen", v.kind);
     if (!q.get("mock")) q.set("mode", "predict");
-    window.history.replaceState(null, "", `${window.location.pathname}?${q}`);
+    window.history.pushState(null, "", `${window.location.pathname}?${q}`);
     window.scrollTo(0, 0);
   };
   return (
@@ -112,7 +122,7 @@ function Screens({ view, go }: { view: View; go: (v: View) => void }) {
 // ---------- rounds list ----------
 function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
   useTick();
-  const { rounds, error, loaded } = useRounds(match);
+  const { rounds, mine, error, loaded } = useRounds(match);
   const now = match.clock();
   const proto = rounds.find((r) => r.protocol);
   const users = rounds.filter((r) => !r.protocol);
@@ -142,6 +152,41 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
           </span>
           <span className={p.protoCta}>Join for ${unitsToUsd(proto.params.entryUnits)}</span>
         </button>
+      )}
+      {mine.length > 0 && (
+        <>
+          <h2 className={p.h2}>Your rounds</h2>
+          <ul className={p.list}>
+            {mine.map((r) => (
+              <li key={r.lobbyId}>
+                <button className={p.row} onClick={() => go({ kind: "round", lobby: r.lobbyId })}>
+                  <span className={p.rowMarket}>{r.params.market}</span>
+                  <span className={p.rowBody}>
+                    <span className={p.rowLine}>
+                      <span>Round {r.lobbyId}</span>
+                      <span>
+                        {r.status === "cancelled" ? (
+                          "called off"
+                        ) : r.status === "settled" ? (
+                          "settled, see the result"
+                        ) : now < r.endTime ? (
+                          <>
+                            resolves in <span className={s.fig}>{countdown(r.endTime - now)}</span>
+                          </>
+                        ) : (
+                          "resolved, see the result"
+                        )}
+                      </span>
+                    </span>
+                    <span className={p.rowSub}>
+                      <span className={s.fig}>{r.players}</span> in, pot <span className={s.fig}>${unitsToUsd(r.potUnits)}</span>
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <h2 className={p.h2}>Rounds players made</h2>
       {users.length === 0 ? (
@@ -352,7 +397,13 @@ function Round({ match, me, acct, go }: { match: Match; me: string | null; acct:
   if (st.error) return <Notice title="Not connected" body={st.error} go={go} />;
   if (!st.round) return <p className={s.waiting}>Finding the round</p>;
   if (st.cancelled || st.status === "cancelled")
-    return <Notice title="This round was called off" body="Fewer than four players joined before the lock. Every entry is refunded on chain." go={go} />;
+    return (
+      <Notice
+        title="This round was called off"
+        body={`${st.cancelReason ? `${sentenceCase(st.cancelReason)}. ` : ""}Every entry is refunded on chain.`}
+        go={go}
+      />
+    );
   const joined = !!me && st.players.some((x) => x.player === me);
   if (st.pfinal) return <Result match={match} me={me} go={go} />;
   if (st.locked) return <Locked match={match} me={me} go={go} />;
@@ -387,6 +438,14 @@ function RoundBar({ match, go, right }: { match: Match; go: (v: View) => void; r
   );
 }
 
+const sentenceCase = (x: string) => x.charAt(0).toUpperCase() + x.slice(1).replace(/[.\s]+$/, "");
+
+/** The live price, rolling toward each new mark instead of jumping (display only; nothing signed reads it). */
+function LivePrice({ match, mark }: { match: Match; mark: bigint | null }) {
+  const v = useRolling(mark === null ? 0 : Number(mark) / 100, match.reducedMotion);
+  return <p className={`${s.fig} ${p.live}`}>{mark === null ? "waiting" : commas(v.toFixed(2))}</p>;
+}
+
 const liveMark = (match: Match): bigint | null => {
   const st = match.state;
   const last = st.ptick?.mark ?? (st.path.length ? st.path[st.path.length - 1].p.toFixed(2) : null);
@@ -403,9 +462,10 @@ function JoinRound({ match, acct, me, go }: { match: Match; acct: PrivateKeyAcco
   useEffect(() => setCallsign(readStore(CALLSIGN) ?? ""), []);
   const valid = callsign.trim().length >= 1 && callsign.trim().length <= 24;
   const left = r.lockTime - match.clock();
+  const closedJoins = left <= JOIN_CLOSE_S;
   const mark = liveMark(match);
   const submit = async () => {
-    if (!acct || !valid || busy) return;
+    if (!acct || !valid || busy || closedJoins) return;
     setBusy(true);
     setErr(null);
     const cs = callsign.trim();
@@ -419,6 +479,7 @@ function JoinRound({ match, acct, me, go }: { match: Match; acct: PrivateKeyAcco
         const res = await join(acct, r.lobbyId, cs);
         if (!res.ok) throw new Error(String(res.data.error ?? `The engine refused the join (${res.status}).`));
       }
+      rememberJoined(r.lobbyId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "The join did not go through. Try again.");
     } finally {
@@ -429,7 +490,7 @@ function JoinRound({ match, acct, me, go }: { match: Match; acct: PrivateKeyAcco
     <section className={p.page}>
       <RoundBar match={match} go={go} right={<>Locks in <span className={s.fig}>{countdown(left)}</span></>} />
       <p className={s.kicker}>{r.params.market} now</p>
-      <p className={`${s.fig} ${p.live}`}>{mark !== null ? fmt(mark) : "waiting"}</p>
+      <LivePrice match={match} mark={mark} />
       <p className={s.lede}>
         <span className={s.fig}>{st.players.length}</span> in, pot <span className={s.fig}>${unitsToUsd(st.potUnits)}</span>. The closest{" "}
         {r.params.winnerBps / 100}% of players split it {r.params.split === "equal" ? "evenly" : r.params.split === "steep" ? "steeply by rank" : "by rank"}, after
@@ -439,8 +500,8 @@ function JoinRound({ match, acct, me, go }: { match: Match; acct: PrivateKeyAcco
         <span>Your callsign</span>
         <input value={callsign} maxLength={24} autoComplete="off" onChange={(e) => setCallsign(e.target.value)} placeholder="A name for the big screen" />
       </label>
-      <button className={s.primary} disabled={!valid || busy || !acct || left <= 0} onClick={submit}>
-        {busy ? "Joining" : `Join for $${unitsToUsd(r.params.entryUnits)}`}
+      <button className={s.primary} disabled={!valid || busy || !acct || closedJoins} onClick={submit}>
+        {closedJoins ? "Joins are closed for this round" : busy ? "Joining" : `Join for $${unitsToUsd(r.params.entryUnits)}`}
       </button>
       {err && <p className={s.error}>{err}</p>}
       <p className={s.fine}>The entry is paid for you. Your game key stays in this browser.</p>
@@ -457,7 +518,8 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
   const mark = liveMark(match);
   const storeKey = `${SENT}.${r.lobbyId}.${me}`;
   const [draft, setDraft] = useState<bigint | null>(null);
-  const [sent, setSent] = useState<string | null>(null);
+  const [localSent, setSent] = useState<string | null>(null);
+  const sentAt = useRef(-1e9);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
 
@@ -488,6 +550,12 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
 
   const left = r.lockTime - match.clock();
   const price = draft !== null ? priceStr(draft) : null;
+  // The engine's players[].predicted is the truth for whether a call is in; this phone's copy only supplies the price.
+  // A call sent in the last 6 s counts even before the next snapshot shows it.
+  const engineSays = st.predictedBy[me];
+  const fresh = performance.now() - sentAt.current < 6000;
+  const sent = engineSays === false && !fresh ? null : localSent;
+  const elsewhere = engineSays === true && sent === null;
   const changed = price !== null && price !== sent;
   const diff = draft !== null && mark !== null ? draft - mark : null;
   const n = NUDGE[market];
@@ -504,6 +572,7 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
         if (!res.ok) throw new Error(String(res.data.error ?? `The engine refused the call (${res.status}).`));
       }
       writeStore(storeKey, price);
+      sentAt.current = performance.now();
       setSent(price);
       setMsg({ tone: "ok", text: sent ? `Call moved to ${commas(price)}` : `Call sent: ${commas(price)}` });
     } catch (e) {
@@ -525,10 +594,12 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
       <RoundBar match={match} go={go} right={<>Locks in <span className={`${s.fig} ${left <= 10 ? p.urgent : ""}`}>{countdown(left)}</span></>} />
       <div className={p.callTop}>
         <p className={s.kicker}>{market} now</p>
-        <p className={`${s.fig} ${p.live}`}>{mark !== null ? fmt(mark) : "waiting"}</p>
+        <LivePrice match={match} mark={mark} />
       </div>
       <div className={p.mine}>
-        <p className={s.kicker}>{sent ? (changed ? "Your new call, not sent" : "Your call") : "Your call, not sent yet"}</p>
+        <p className={s.kicker}>
+          {sent ? (changed ? "Your new call, not sent" : "Your call") : elsewhere ? "Your call is in, sent from another device" : "Your call, not sent yet"}
+        </p>
         <p className={`${s.fig} ${p.callFig}`}>{price !== null ? commas(price) : "—"}</p>
         <p className={p.diff}>{sentence}</p>
       </div>
@@ -555,7 +626,7 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
           </p>
         ) : (
           <button className={s.primary} disabled={busy || !acct || left <= 0 || price === null} onClick={submit}>
-            {busy ? "Sending" : sent ? `Move my call to ${commas(price!)}` : `Call ${price !== null ? commas(price) : ""}`}
+            {busy ? "Sending" : sent || elsewhere ? `Move my call to ${commas(price ?? "")}` : `Call ${price !== null ? commas(price) : ""}`}
           </button>
         )}
       </div>
@@ -712,7 +783,7 @@ function Locked({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
     <section className={p.page}>
       <RoundBar match={match} go={go} right={resolving ? "Reading the price" : <>Resolves in <span className={s.fig}>{countdown(left)}</span></>} />
       <p className={s.kicker}>{r.params.market} now</p>
-      <p className={`${s.fig} ${p.live}`}>{mark !== null ? fmt(mark) : "waiting"}</p>
+      <LivePrice match={match} mark={mark} />
       <p className={`${s.sentence} ${mine && !inside ? s.sentenceDanger : ""}`} role="status">
         {sentence}
       </p>

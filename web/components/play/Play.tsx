@@ -8,6 +8,7 @@ import { MARKETS, START_BALANCE, STAGE, num, unitsToUsd } from "@/lib/events";
 import type { EliminatedEvent, FillEvent, Market, Side } from "@/lib/events";
 import { burner, join, sendOrder, signOrder, type Order } from "@/lib/engine";
 import { useMatch, type Match } from "@/lib/useMatch";
+import { useRolling } from "@/lib/useRolling";
 import s from "./play.module.css";
 import PredictPhone from "./Predict";
 
@@ -32,34 +33,6 @@ const ordinal = (n: number) => {
   return `${n}${m10 === 1 ? "st" : m10 === 2 ? "nd" : m10 === 3 ? "rd" : "th"}`;
 };
 const short = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
-
-/** Number that rolls toward its target every frame (cross-fade free: it just counts). */
-function useRolling(target: number, reduced: boolean) {
-  const [v, setV] = useState(target);
-  const cur = useRef(target);
-  useEffect(() => {
-    if (reduced) {
-      cur.current = target;
-      setV(target);
-      return;
-    }
-    let raf = 0;
-    const step = () => {
-      const d = target - cur.current;
-      if (Math.abs(d) < 0.005) {
-        cur.current = target;
-        setV(target);
-        return;
-      }
-      cur.current += d * 0.18;
-      setV(cur.current);
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [target, reduced]);
-  return v;
-}
 
 function Pennant({ side, size = 22 }: { side: Side; size?: number }) {
   // A wind pennant: long flies right in mint, short flies left in orchid.

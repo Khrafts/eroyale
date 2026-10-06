@@ -1,5 +1,5 @@
 ## Status
-- Step: predict mode done (arena view, five phone screens, six predict shots); royale untouched.
+- Step: predict mode done, plus spec-check fixes (join close at 7 s, your rounds, marks feed, arena fallback, cancel reason, no reveal replay, predicted flags).
 - Last gate: `bash gates/ui.sh` -> GATE PASS ui; `bash gates/predict-ui.sh` -> GATE PASS predict-ui; all six predict shots reviewed.
 - Next: run the phone and arena against the predict engine once it lands (`/arena?mode=predict`, `/play?mode=predict`).
 - Blockers: none. Shots use installed Chrome because Playwright 1.63's Chromium is not downloaded.
@@ -38,7 +38,10 @@ Against the mock: `?mock=predict` on either page (implies predict mode).
 - Phone screens: `&screen=rounds`, `&screen=create`, else the round (`&lobby=41` default; 42 is mara.eth's ETH round with a 3% creator fee, 43 a SOL round still filling, 44 the next protocol round). In a round the phone shows join, predict, locked or result by state.
 - `mocks/predict.ts` builds every round through `predictSettle`; the mock clock is unix seconds.
 
-Against a live engine: `/arena?mode=predict` follows the protocol round from `GET /rounds` (the locked one whose reveal comes next, else the open one) and moves on 20 s after its `final`, on `settled` or on `cancelled`; `?lobby=N` pins one. `/play?mode=predict` lists `GET /rounds`, joins with the signed `Join`, sends signed `Prediction`s (`POST /predictions`) and creates rounds with a signed `CreateRound` (`POST /rounds`), all in `lib/engine.ts`. Before the lock no event carries a price, so the hook reads `mark` from `GET /lobbies/:id` every 2 s (client-side `mark` events). In predict mode `clock()` is unix server time.
+Against a live engine: `/arena?mode=predict` follows the protocol round from `GET /rounds` (the locked one whose reveal comes next, else the open one) and moves on 20 s after its `final`, on `settled` or on `cancelled`; `?lobby=N` pins one. `/play?mode=predict` lists `GET /rounds`, joins with the signed `Join`, sends signed `Prediction`s (`POST /predictions`) and creates rounds with a signed `CreateRound` (`POST /rounds`), all in `lib/engine.ts`. Before the lock no event carries a price, so the hook subscribes to `WS /ws?feed=marks` (4 Hz, client-side `mark` events); `GET /lobbies/:id` is still read every 2 s for `players[].predicted` (the truth for whether your call is in) and supplies the price only when the feed has been quiet for 3 s. The phone eases the displayed price. Events in the first 400 ms after a WebSocket connects are the engine's catch-up: they do not set the time origin (the snapshot's `openTime` does) and a caught-up `final` does not replay the reveal. In predict mode `clock()` is unix server time.
+- Bare `/arena` (no `?lobby=`, no `?mode=`) switches to prediction mode when `GET /lobbies` reports `current: null` twice, 3 s apart (an engine run with `--predict-only`).
+- Joins close 7 s before the lock (engine JOIN_CLOSE_MS); the button says so. Joined rounds are remembered in localStorage and listed as "Your rounds" from `GET /rounds` `active` and `recent`; round views use pushState so Back works.
+- A `cancelled` event's `reason` (or the snapshot's `cancelReason`) is shown on the phone and the arena.
 
 Rules the screens keep:
 - The predict control works in integer cents (`lib/predict.ts`): the tape (drag, arrow keys) and the nudge buttons can only produce prices of at least 0.01 with exactly two decimals; `signPrediction` refuses anything else.

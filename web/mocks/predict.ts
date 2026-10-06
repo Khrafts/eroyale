@@ -311,28 +311,40 @@ function genRound(c: Cfg, addr: Record<string, string>): MockRound {
   return { cfg: c, params, lockTime, endTime, events: out };
 }
 
-/** What GET /rounds would return at `unix`: open rounds, the protocol round first, then user rounds by lock time. */
-export function mockRounds(unix: number, seed = 7): RoundInfo[] {
+export type RoundLists = { protocol: number | null; rounds: RoundInfo[]; active: RoundInfo[]; recent: RoundInfo[] };
+
+/**
+ * What GET /rounds would return at `unix`: `rounds` open (protocol first, then user rounds by lock time), `active`
+ * locked and not yet final, `recent` finished (newest first). `players` holds who is in, for "your rounds".
+ */
+export function mockRoundLists(unix: number, seed = 7): RoundLists & { playersOf: Record<number, string[]> } {
   const { rounds } = mockPredict(seed);
-  const list: RoundInfo[] = [];
+  const out: RoundLists & { playersOf: Record<number, string[]> } = { protocol: null, rounds: [], active: [], recent: [], playersOf: {} };
   for (const m of rounds) {
-    if (unix < m.cfg.openAt || unix >= m.lockTime) continue;
+    if (unix < m.cfg.openAt) continue;
     let players = 0;
     let potUnits = "0";
     let predicted = 0;
     let mark: string | undefined;
+    let status: LobbyStatus = "open";
+    let final = false;
+    const who: string[] = [];
     for (const e of m.events) {
       if (e.at > unix) break;
       if (e.ev.type === "lobby") {
         players = e.ev.players.length;
         potUnits = e.ev.potUnits;
+        status = e.ev.status;
+        who.splice(0, who.length, ...e.ev.players.map((p) => p.player));
       } else if (e.ev.type === "predicted") predicted = e.ev.count;
       else if (e.ev.type === "mark") mark = e.ev.mark;
+      else if (e.ev.type === "ptick") mark = e.ev.mark;
+      else if (e.ev.type === "final") final = true;
     }
-    list.push({
+    const row: RoundInfo = {
       lobbyId: m.cfg.lobbyId,
       protocol: m.cfg.protocol,
-      status: "open",
+      status,
       params: m.params,
       maxPlayers: m.cfg.maxPlayers,
       lockAfter: m.cfg.lockAfter,
@@ -344,9 +356,24 @@ export function mockRounds(unix: number, seed = 7): RoundInfo[] {
       predicted,
       potUnits,
       mark,
-    });
+    };
+    out.playersOf[m.cfg.lobbyId] = who;
+    if (status === "open") {
+      out.rounds.push(row);
+      if (m.cfg.protocol) out.protocol = m.cfg.lobbyId;
+    } else if (final || status === "settled" || status === "cancelled") out.recent.push(row);
+    else out.active.push(row);
   }
-  return list.sort((a, b) => (a.protocol !== b.protocol ? (a.protocol ? -1 : 1) : a.lockTime - b.lockTime));
+  const order = (a: RoundInfo, b: RoundInfo) => (a.protocol !== b.protocol ? (a.protocol ? -1 : 1) : a.lockTime - b.lockTime);
+  out.rounds.sort(order);
+  out.active.sort(order);
+  out.recent.sort((a, b) => b.endTime - a.endTime);
+  return out;
+}
+
+/** The open rounds alone (GET /rounds `rounds`). */
+export function mockRounds(unix: number, seed = 7): RoundInfo[] {
+  return mockRoundLists(unix, seed).rounds;
 }
 
 /** KESTREL's own prediction in a mock round (what the phone sent), and when. */

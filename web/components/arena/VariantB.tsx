@@ -100,7 +100,7 @@ export default function VariantB({ match }: ArenaProps) {
         aria-label={label}
         style={{ width: "100%", height: "100%", display: "block" }}
       />
-      {(st.error || st.status === "cancelled") && (
+      {(st.error || st.status === "cancelled" || st.cancelled) && (
         <div
           role="alert"
           style={{
@@ -121,7 +121,7 @@ export default function VariantB({ match }: ArenaProps) {
             <p style={{ fontSize: 30, margin: "16px auto 0", maxWidth: "40ch" }}>
               {st.error ??
                 (predict
-                  ? "Fewer than four players joined before the lock. Every entry is refunded on chain. The next protocol round shows up here."
+                  ? `${st.cancelReason ? `${st.cancelReason.charAt(0).toUpperCase()}${st.cancelReason.slice(1).replace(/[.\s]+$/, "")}. ` : ""}Every entry is refunded on chain. The next protocol round shows up here.`
                   : "Not enough players made it in. Every entry is refunded on chain. The next lobby opens here.")}
             </p>
           </div>
