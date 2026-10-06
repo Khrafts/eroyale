@@ -252,7 +252,7 @@ export class Type {
       else {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(cx - 3, y - size * 0.95, cw + 6, size * 1.2);
+        ctx.rect(cx - 3, y - size * 0.8, cw + 6, size * 1.0);
         ctx.clip();
         if (reduced) {
           const a0 = ctx.globalAlpha;
