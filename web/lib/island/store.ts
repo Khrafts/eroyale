@@ -67,7 +67,7 @@ export type BusEvent =
   | { kind: "feed"; item: FeedItem }
   | { kind: "cut" }
   | { kind: "celebrate" }
-  | { kind: "victory"; amountUnits: string | null; game: string }
+  | { kind: "victory"; amountUnits: string | null; game: string; offline?: boolean }
   | { kind: "toast"; text: string };
 
 const escrow = { chain: process.env.NEXT_PUBLIC_ESCROW_CHAIN ?? null, address: process.env.NEXT_PUBLIC_ESCROW_ADDRESS ?? null };

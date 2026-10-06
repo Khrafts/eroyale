@@ -100,11 +100,11 @@ function payout(s: MatchState, game: string, key: string) {
   });
   const mine = me ? st.winners.indexOf(me) : -1;
   // CHAIN=off engines settle offline (txHash "offline"): nothing is paid, so say so
-  if (!isTxHash(st.txHash)) game += " (offline run, nothing paid on chain)";
-  if (mine >= 0) emit({ kind: "victory", amountUnits: st.amounts[mine], game });
+  const offline = !isTxHash(st.txHash);
+  if (mine >= 0) emit({ kind: "victory", amountUnits: st.amounts[mine], game, offline });
   else {
     const others = st.winners.length - 1;
-    feed("win", ` won ${usdc(st.amounts[top])} in ${game}${others > 0 ? ` (and ${others} more)` : ""}`, nameOf(s, st.winners[top]));
+    feed("win", ` won ${usdc(st.amounts[top])} in ${game}${others > 0 ? ` (and ${others} more)` : ""}${offline ? ". Offline run, nothing paid on chain" : ""}`, nameOf(s, st.winners[top]));
     emit({ kind: "celebrate" });
   }
 }

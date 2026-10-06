@@ -154,7 +154,8 @@ export default function Island() {
         else if (e.kind === "victory") {
           const a = getSnapshot().avatar;
           const amount = e.amountUnits ? usdc(e.amountUnits) : null;
-          feed("win", amount ? ` (you) won ${amount} in ${e.game} and hit the ${danceName(a.dance)}` : ` (you) took the top step and hit the ${danceName(a.dance)}`, a.name);
+          const off = e.offline ? ". Offline run, nothing paid on chain" : "";
+          feed("win", amount ? ` (you) won ${amount} in ${e.game} and hit the ${danceName(a.dance)}${off}` : ` (you) took the top step and hit the ${danceName(a.dance)}`, a.name);
           if (w) w.victory();
         }
       }),

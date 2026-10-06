@@ -1,7 +1,7 @@
 ## Status
-- Step: island steps 1-5 done: / is the island (/island alias), live data from the engine, avatars with the victory on a real `settled`, island shots in `npm run shots`.
-- Last check: GATE PASS ui, GATE PASS predict-ui; typecheck clean; /arena 131->132 kB, /play 158->159 kB first load (shared chunk +0.7 kB).
-- Next: merge feat/island (GET /stats), run gates/island-ui.sh, recheck park/top bar/lighthouse against the real /stats.
+- Step: island done (steps 1-6): / is the island (/island alias), live engine data incl. GET /stats (feat/island merged), victory on a real `settled`, six island shots.
+- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; /arena +0.6%, /play +0.7% first load vs main.
+- Next: none planned; on a CHAIN=off engine /stats counts offline settlements as "paid out today" (engine side).
 - Blockers: none.
 
 ## Running
