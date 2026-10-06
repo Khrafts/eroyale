@@ -59,6 +59,8 @@ abstract class WsFeed implements PriceSource {
     ws.on("close", () => { if (!this.stopped) setTimeout(() => this.start(), 2000); });
     return this;
   }
+  /** A heartbeat: the feed is alive and the last price still stands. */
+  protected touch(m: Market) { const p = this.feed.prices[m]; if (p) p.at = Date.now(); }
   protected set(m: Market, raw: string) {
     try { this.feed.prices[m] = { mark: toMark(raw), at: Date.now() }; } catch { /* ignore bad number */ }
   }
@@ -80,12 +82,13 @@ abstract class WsFeed implements PriceSource {
 export class CoinbaseFeed extends WsFeed {
   constructor(log?: (m: string) => void) { super("coinbase", "wss://ws-feed.exchange.coinbase.com", log); }
   protected subscribe(ws: WebSocket) {
-    ws.send(JSON.stringify({ type: "subscribe", product_ids: MARKETS.map((m) => `${m}-USD`), channels: ["ticker"] }));
+    ws.send(JSON.stringify({ type: "subscribe", product_ids: MARKETS.map((m) => `${m}-USD`), channels: ["ticker", "heartbeat"] }));
   }
   protected parse(msg: any) {
-    if (msg.type !== "ticker" || typeof msg.price !== "string") return;
     const m = String(msg.product_id).split("-")[0] as Market;
-    if (MARKETS.includes(m)) this.set(m, msg.price);
+    if (!MARKETS.includes(m)) return;
+    if (msg.type === "heartbeat") this.touch(m);
+    else if (msg.type === "ticker" && typeof msg.price === "string") this.set(m, msg.price);
   }
 }
 
@@ -96,6 +99,7 @@ export class KrakenFeed extends WsFeed {
     ws.send(JSON.stringify({ method: "subscribe", params: { channel: "ticker", symbol: MARKETS.map((m) => `${m}/USD`) } }));
   }
   protected parse(msg: any) {
+    if (msg.channel === "heartbeat") { for (const m of MARKETS) this.touch(m); return; }
     if (msg.channel !== "ticker" || !Array.isArray(msg.data)) return;
     for (const d of msg.data) {
       const m = String(d.symbol).split("/")[0] as Market;

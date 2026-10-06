@@ -42,6 +42,17 @@ export class Bots {
     return Number(h[h.length - 1][m]) / Number(h[h.length - 1 - ticks][m]) - 1;
   }
 
+  /** Per-tick volatility of a market over the recent window (floored so a flat tape still gives a number). */
+  private vol(m: Market, ticks = 40): number {
+    const h = this.history.slice(-ticks - 1);
+    if (h.length < 5) return 0.0004;
+    const rs: number[] = [];
+    for (let i = 1; i < h.length; i++) rs.push(Math.log(Number(h[i][m]) / Number(h[i - 1][m])));
+    const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
+    const v = Math.sqrt(rs.reduce((a, b) => a + (b - mean) ** 2, 0) / rs.length);
+    return Math.max(v, 0.00001);
+  }
+
   /** Decide and send orders for every alive bot at tick time t. */
   act(lobby: Lobby, marks: Prices, t: number) {
     this.history.push(marks);
@@ -95,6 +106,13 @@ export class Bots {
     let lev = r.int(b.lev[0], b.lev[1]);
     if (urgency > 1) lev = Math.min(100, lev * 2);
     const pct = BigInt(r.int(b.marginPct[0], b.marginPct[1]));
+    // On a quiet tape, lift leverage until a one-sigma move over the time left could reach the line.
+    if (!afterLast) {
+      const needFrac = eq < line ? Number(line - eq) / Number(eq) : 0.005;
+      const sigma = this.vol(m) * Math.sqrt(Math.max(secsLeft * 4, 20));
+      const needed = Math.ceil(needFrac / ((Number(pct) / 100) * sigma));
+      if (needed > lev) lev = Math.min(100, needed);
+    }
     const margin = (free * pct) / 100n;
     if (margin <= 0n) return orders;
     orders.push({ action: "open", market: m, side, margin: fromCents(margin), leverage: lev });

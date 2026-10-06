@@ -15,7 +15,8 @@ export const realClock: Clock = { now: () => Date.now() };
 export class Driver {
   /** Called once when the lobby moves from countdown to live (the relayer hooks start() here). */
   onStart: (() => void) | null = null;
-  /** Ticks seen with a price; used to hold the last mark when a feed drops. */
+  /** Called after each tick is processed, before the bots act (the server logs it for replay). */
+  onTick: ((k: number, marks: Prices) => void) | null = null;
   constructor(readonly lobby: Lobby, readonly clock: Clock, readonly prices: PriceSource, readonly bots: Bots | null) {}
 
   tickAtMs(k: number) { return this.lobby.startsAt! * 1000 + (k * 1000) / TICKS_PER_SEC; }
@@ -42,6 +43,7 @@ export class Driver {
       const marks = this.marks();
       if (!marks) break;
       l.step(k, marks);
+      this.onTick?.(k, marks);
       this.bots?.act(l, marks, k / TICKS_PER_SEC);
     }
     return l.k >= l.endK;
