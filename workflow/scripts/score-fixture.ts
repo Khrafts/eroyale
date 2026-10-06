@@ -11,7 +11,7 @@ if (!bookPath || !pricesPath || !pot || !fee || !selector) {
   process.exit(2);
 }
 
-const rawBook = readFileSync(bookPath, "utf8");
+const rawBook = new Uint8Array(readFileSync(bookPath));
 const prices = JSON.parse(readFileSync(pricesPath, "utf8")) as Prices;
 const out = buildReport(rawBook, prices, BigInt(pot), BigInt(fee), BigInt(selector));
 

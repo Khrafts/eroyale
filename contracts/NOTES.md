@@ -1,5 +1,5 @@
 <!-- status -->
-Step: 8 of 8 done (contracts, tests, deploy script, workflow, CRE handler, break proofs, notes)
+Step: 8 of 8 done + spec-checker fixes (write status checks, endTime guards, raw-byte bookHash, floored budget)
 Last gate: contracts -> GATE PASS contracts; workflow -> GATE PASS workflow
 Next: lead deploys to Base Sepolia (commands below), then runs cre workflow simulate
 Blockers: no CRE CLI, RPC_URL or deployer key in this session; nothing deployed or simulated
@@ -21,7 +21,7 @@ Blockers: no CRE CLI, RPC_URL or deployer key in this session; nothing deployed 
 
 - `joinFor` is relayer-only (the constructor's `relayer`); `join` is open. Both need the payer to have approved the escrow.
 - `cancel` works while Open or Live and refunds each entry to whoever paid it (relayer for `joinFor`).
-- `_settle` checks, in order: chain selector; lobby Live; `block.timestamp > endTime`; equal lengths; every winner joined; winners strictly ascending; `sum(amounts) <= pot - pot*500/10000`. Then status Settled, pot zeroed, bookHash stored, winners paid, `pot - sum` to treasury, `Settled(id, bookHash)`.
+- `_settle` checks, in order: chain selector; lobby Live; `block.timestamp > endTime`; equal lengths; every winner joined; winners strictly ascending; `sum(amounts) <= floor(pot * (10000 - 500) / 10000)` (same floor as `shared/scoring.ts`). Then status Settled, pot zeroed, bookHash stored, winners paid, `pot - sum` to treasury, `Settled(id, bookHash)`.
 - `settleFallback` is `onlyOwner`; the contract has no mode flag, so "simulated mode only" is an operating rule, not enforced.
 - `getLobby(id)` returns the struct the workflow reads: `(status, maxPlayers, duration, startTime, endTime, entry, playerCount, pot, bookHash)`; status Live = 2.
 
@@ -51,9 +51,15 @@ cast send "$ESCROW_ADDRESS" "createLobby(uint32,uint96,uint16)" 120 5000000 50 \
 
 The relayer (engine) then calls `joinFor(id, player)`; the owner calls `start(id)` once 4+ players have joined.
 
+## Operating rules
+
+- Never call `setForwarderAddress(address(0))`: the vendored ReceiverTemplate then lets anyone call `onReport` with any payout.
+- Never call `renounceOwnership()`: it kills `createLobby`, `start`, `cancel` and `settleFallback`, and stranded entries can no longer be refunded.
+- A deployment whose forwarder is the MockKeystoneForwarder accepts reports nobody signed (the mock does not verify DON signatures). Treat such a deployment as throwaway; never put real value in it.
+
 ## Settling
 
-`SETTLE_MODE=simulated` (current): compute the report from the served book and the settlement prices, then call `settleFallback` with the same bytes the workflow would sign.
+`SETTLE_MODE=simulated` (the plan): deploy with `FORWARDER_ADDRESS` from `.env`, run `cre workflow simulate` (dry run, no `--broadcast`) to get the report bytes it would sign, and have the owner call `settleFallback` with those exact bytes. The handler logs the report as `report 0x...` before it writes. Without the CLI, the same bytes come from `scripts/score-fixture.ts`:
 
 ```bash
 cd workflow
@@ -70,12 +76,14 @@ CRE simulation of the real handler (needs the CRE CLI, `cre login`, Bun, and `CR
 cd workflow
 # fill config.staging.json: escrowAddress, engineUrl (= ENGINE_PUBLIC_URL)
 bun install
-RPC_URL=... cre workflow simulate . --target staging-settings            # dry run of the write
-RPC_URL=... cre workflow simulate . --target staging-settings --broadcast # real tx through the MockKeystoneForwarder
+RPC_URL=... cre workflow simulate . --target staging-settings   # dry run; do not add --broadcast
 # HTTP trigger input when prompted: {"lobbyId": 1}
+# then: cast send "$ESCROW_ADDRESS" "settleFallback(bytes)" <report from the simulation result> ...
 ```
 
-With `--broadcast` and the escrow's forwarder set to the MockKeystoneForwarder, the write lands through `onReport`, so simulation alone can settle on testnet.
+Do not settle by broadcasting through the MockKeystoneForwarder. The handler treats a dry-run write as a failure (it requires `TX_STATUS_SUCCESS` and `RECEIVER_CONTRACT_EXECUTION_STATUS_SUCCESS` and a tx hash), so a dry run may end with an error. The report bytes are logged first as a `[USER LOG] report 0x...` line; pass that hex to `settleFallback`. How the real CLI reports a dry-run write status has not been checked.
+
+Handler guards: it reads `getLobby` at `LATEST_BLOCK_NUMBER` (Base Sepolia finality is too slow for a 120 s lobby; the escrow re-checks onchain), requires DON time > onchain `endTime`, rejects a book whose `endTime` differs from the onchain one by more than 60 s, and hashes the book response bytes as received (decoding a copy only to parse JSON).
 
 ## Switching to the KeystoneForwarder (SETTLE_MODE=deployed)
 
@@ -95,7 +103,7 @@ With `--broadcast` and the escrow's forwarder set to the MockKeystoneForwarder, 
 - Using `workflow/` as both project root and workflow folder (`cre workflow simulate .`) is not shown in the docs; if the CLI rejects it, move `workflow.yaml` and `config.*.json` into a `royale-settle/` subfolder with `workflow-path: "../src/main.ts"`.
 - Gas: `gasLimit` 3,000,000 in the configs. The 20-player golden settlement used about 1.44M gas in the test including setup; a full 50-player payout has not been measured.
 - Coinbase from the DON: the request sends a `User-Agent` header; reachability from CRE nodes is untested. The parser was checked against a live Coinbase candle response.
-- Candle timestamp uses the book's `endTime`, not the onchain one, so the report agrees with the engine's final marks. If the two differ by more than a minute the escrow can refuse with `SettleBeforeEnd`; retry later.
+- Candle timestamp uses the book's `endTime`, not the onchain one, so the report agrees with the engine's final marks. The handler refuses if they differ by more than 60 s (catches an engine writing milliseconds).
 
 ## Step 7: the tests bite
 

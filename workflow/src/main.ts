@@ -5,7 +5,7 @@ import {
   EVMClient,
   HTTPCapability,
   HTTPClient,
-  LAST_FINALIZED_BLOCK_NUMBER,
+  LATEST_BLOCK_NUMBER,
   Runner,
   bytesToHex,
   consensusIdenticalAggregation,
@@ -18,7 +18,8 @@ import {
   type HTTPSendRequester,
   type Runtime,
 } from "@chainlink/cre-sdk";
-import { decodeFunctionResult, encodeFunctionData, parseAbi, zeroAddress } from "viem";
+import { EVM_PB } from "@chainlink/cre-sdk/pb";
+import { decodeFunctionResult, encodeFunctionData, hexToBytes, parseAbi, zeroAddress } from "viem";
 
 import type { Market, Prices } from "../../shared/scoring.ts";
 import { MARKETS, candleStart, candleUrl, closeFromCandles } from "./prices.ts";
@@ -40,11 +41,13 @@ const ESCROW_ABI = parseAbi([
 
 const STATUS_LIVE = 2;
 const CANDLE_FINAL_DELAY = 120;
+const MAX_END_SKEW = 60n;
 
+// Returns the body as hex so consensus compares the exact bytes, with no text decoding.
 const fetchFinalBook = (sendRequester: HTTPSendRequester, url: string): string => {
   const resp = sendRequester.sendRequest({ url, method: "GET", timeout: "10s" }).result();
   if (resp.statusCode !== 200) throw new Error(`final book: HTTP ${resp.statusCode}`);
-  return new TextDecoder().decode(resp.body);
+  return bytesToHex(resp.body);
 };
 
 const fetchPrices = (sendRequester: HTTPSendRequester, template: string, start: number): Prices => {
@@ -75,7 +78,8 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   const chainSelector = network.chainSelector.selector;
   const evmClient = new EVMClient(chainSelector);
 
-  // 1. Read the lobby.
+  // 1. Read the lobby at the latest block: Base Sepolia finality is too slow for a 120 s lobby, and
+  //    the escrow re-checks status and end time onchain.
   const call = evmClient
     .callContract(runtime, {
       call: encodeCallMsg({
@@ -83,7 +87,7 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
         to: config.escrowAddress as `0x${string}`,
         data: encodeFunctionData({ abi: ESCROW_ABI, functionName: "getLobby", args: [lobbyId] }),
       }),
-      blockNumber: LAST_FINALIZED_BLOCK_NUMBER,
+      blockNumber: LATEST_BLOCK_NUMBER,
     })
     .result();
   const lobby = decodeFunctionResult({ abi: ESCROW_ABI, functionName: "getLobby", data: bytesToHex(call.data) });
@@ -93,20 +97,26 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   const http = new HTTPClient();
 
   // 2. Final book, byte-identical on every node.
-  const rawBook = http
+  const bookHex = http
     .sendRequest(runtime, fetchFinalBook, consensusIdenticalAggregation<string>())(
       `${config.engineUrl}/lobbies/${lobbyId}/final`,
     )
     .result();
-  const book = JSON.parse(rawBook) as { lobbyId: number; endTime: number };
+  const rawBook = hexToBytes(bookHex as `0x${string}`);
+  const book = JSON.parse(new TextDecoder().decode(rawBook)) as { lobbyId: number; endTime: number };
   if (BigInt(book.lobbyId) !== lobbyId) throw new Error(`book is for lobby ${book.lobbyId}`);
-  // Prices follow the book's endTime so the report matches the arena's final marks; the escrow still
-  // refuses to settle before its own onchain endTime.
-  if (BigInt(book.endTime) !== lobby.endTime) runtime.log(`note: book endTime ${book.endTime}, onchain endTime ${lobby.endTime}`);
+  // Prices follow the book's endTime so the report matches the arena's final marks. A skew over 60 s
+  // (e.g. an engine writing milliseconds) means the book and the chain disagree about the match.
+  const skew = BigInt(book.endTime) - lobby.endTime;
+  if (skew > MAX_END_SKEW || skew < -MAX_END_SKEW) {
+    throw new Error(`book endTime ${book.endTime} vs onchain endTime ${lobby.endTime}`);
+  }
 
-  // 3. Settlement prices: close of the candle starting at S, fetched no earlier than S + 120 s.
+  // 3. Settlement prices: close of the candle starting at S, fetched no earlier than S + 120 s,
+  //    and only once the onchain end time has passed (the escrow requires it too).
   const start = candleStart(book.endTime);
   const now = Math.floor(runtime.now().getTime() / 1000);
+  if (BigInt(now) <= lobby.endTime) throw new Error(`lobby ${lobbyId} ends at ${lobby.endTime}, now ${now}`);
   if (now < start + CANDLE_FINAL_DELAY) throw new Error(`candle ${start} not final until ${start + CANDLE_FINAL_DELAY}`);
   const prices = http
     .sendRequest(runtime, fetchPrices, consensusIdenticalAggregation<Prices>())(config.priceSourceUrl, start)
@@ -116,6 +126,8 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   // 4. Score and encode with the shared scoring code.
   const out = buildReport(rawBook, prices, lobby.pot, BigInt(config.feeBps), chainSelector);
   runtime.log(`bookHash ${out.bookHash}, winners ${out.winners.join(",")}, amounts ${out.amounts.join(",")}`);
+  // Logged before the write so SETTLE_MODE=simulated can pass these exact bytes to settleFallback.
+  runtime.log(`report ${out.report}`);
 
   // 5. Sign and write.
   const report = runtime
@@ -133,8 +145,15 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
       gasConfig: { gasLimit: config.gasLimit },
     })
     .result();
-  const txHash = bytesToHex(write.txHash || new Uint8Array(32));
-  runtime.log(`writeReport txStatus ${write.txStatus}, txHash ${txHash}`);
+  if (write.txStatus !== EVM_PB.TxStatus.SUCCESS) {
+    throw new Error(`writeReport tx status ${write.txStatus}: ${write.errorMessage ?? ""}`);
+  }
+  if (write.receiverContractExecutionStatus !== EVM_PB.ReceiverContractExecutionStatus.SUCCESS) {
+    throw new Error(`escrow execution status ${write.receiverContractExecutionStatus}: ${write.errorMessage ?? ""}`);
+  }
+  if (!write.txHash) throw new Error("writeReport returned no txHash");
+  const txHash = bytesToHex(write.txHash);
+  runtime.log(`settled lobby ${lobbyId}, txHash ${txHash}`);
 
   return JSON.stringify({
     lobbyId: lobbyId.toString(),
