@@ -1,6 +1,6 @@
 // Relayer: escrow calls through RPC_URL. CHAIN=off turns every call into a no-op so the engine runs before deploy.
 // Owner-only calls (createLobby, start, cancel, settleFallback) use PRIVATE_KEY_DEPLOYER; joinFor uses PRIVATE_KEY_RELAYER.
-import { BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, http, maxUint256, parseAbi, parseAbiItem, type Address, type Hex } from "viem";
+import { BaseError, ContractFunctionRevertedError, HttpRequestError, InvalidInputRpcError, InvalidParamsRpcError, NonceTooHighError, NonceTooLowError, TimeoutError, createPublicClient, createWalletClient, http, maxUint256, parseAbi, parseAbiItem, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, foundry, sepolia } from "viem/chains";
 
@@ -21,14 +21,29 @@ export interface Chain {
   findSettled(id: number, lookback: bigint): Promise<string | null>;
 }
 
-/** Short, stable reason for a failed call: the decoded custom error name when there is one. */
+/** Replaces every http(s)/ws(s) URL with <rpc>: RPC URLs carry API keys and must never reach a log. */
+export function redact(s: string): string {
+  return s.replace(/\b(?:https?|wss?):\/\/[^\s"'`<>()\[\]{},]+/gi, "<rpc>");
+}
+
+/** Short, stable reason for a failed call: the decoded custom error name when there is one. URLs redacted. */
 export function failReason(e: unknown): string {
   if (e instanceof BaseError) {
     const r = e.walk((x) => x instanceof ContractFunctionRevertedError) as ContractFunctionRevertedError | null;
     if (r?.data?.errorName) return `${r.data.errorName}(${(r.data.args ?? []).map(String).join(", ")})`;
-    return e.shortMessage;
+    return redact(e.shortMessage);
   }
-  return (e as Error).message;
+  return redact(e instanceof Error ? e.message : String(e));
+}
+
+/** Nonce or transport trouble (a lagging or load-balanced RPC), worth resending; never a contract revert. */
+export function retryable(e: unknown): boolean {
+  if (!(e instanceof BaseError)) return false;
+  if (e.walk((x) => x instanceof ContractFunctionRevertedError)) return false;
+  const hit = e.walk((x) =>
+    x instanceof NonceTooLowError || x instanceof NonceTooHighError || x instanceof HttpRequestError || x instanceof TimeoutError ||
+    x instanceof InvalidParamsRpcError || x instanceof InvalidInputRpcError);
+  return !!hit || /nonce|missing or invalid parameters|timed? ?out|fetch failed|socket|ECONN/i.test(e.message);
 }
 
 // Signatures from CLAUDE.md "Contract"; approve/allowance are standard ERC-20.
@@ -58,6 +73,7 @@ const ERC20_ABI = parseAbi([
 // The relayer pays every entry; top it up from MockUSDC's open mint when it runs below this.
 const RELAYER_FLOOR = 1_000n * 10n ** 6n;
 const RELAYER_MINT = 1_000_000n * 10n ** 6n;
+const JOIN_TRIES = 4; // first send plus 3 retries
 
 export const offChain: Chain = {
   on: false,
@@ -90,6 +106,25 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
   if (rpcChainId !== chain.id) throw new Error(`RPC_URL serves chain id ${rpcChainId}, but CHAIN=${name} is chain id ${chain.id}`);
   const owner = createWalletClient({ chain, transport, account: privateKeyToAccount(need(env, "PRIVATE_KEY_DEPLOYER") as Hex) });
   const relayer = createWalletClient({ chain, transport, account: privateKeyToAccount(need(env, "PRIVATE_KEY_RELAYER") as Hex) });
+  // Local nonce per account. A load-balanced RPC's pending count can lag behind a tx we already saw mined, so the
+  // count is read once ('pending') and then incremented here. A nonce error resyncs to max(local + 1, RPC count).
+  const nonces = new Map<Address, number>();
+  async function write(wallet: typeof owner, request: Parameters<typeof owner.writeContract>[0]): Promise<Hex> {
+    const who = wallet.account.address;
+    let nonce = nonces.get(who);
+    if (nonce === undefined) nonce = await pub.getTransactionCount({ address: who, blockTag: "pending" });
+    try {
+      const hash = await wallet.writeContract({ ...request, nonce } as never);
+      nonces.set(who, nonce + 1);
+      return hash;
+    } catch (e) {
+      if (/nonce/i.test(e instanceof BaseError ? e.message : String(e))) {
+        const rpc = await pub.getTransactionCount({ address: who, blockTag: "pending" }).catch(() => 0);
+        nonces.set(who, Math.max(nonce + 1, rpc));
+      } else nonces.set(who, nonce); // not consumed (if it was, the next send hits a nonce error and resyncs)
+      throw e;
+    }
+  }
   const escrow = need(env, "ESCROW_ADDRESS") as Address;
   const token = need(env, "TOKEN_ADDRESS") as Address;
   let approved = false;
@@ -103,7 +138,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
 
   async function send(wallet: typeof owner, fn: "createLobby" | "joinFor" | "start" | "cancel" | "settleFallback", args: readonly unknown[]) {
     const { request, result } = await pub.simulateContract({ address: escrow, abi: ESCROW_ABI, functionName: fn, args: args as never, account: wallet.account });
-    const hash = await wallet.writeContract(request as never);
+    const hash = await write(wallet, request as never);
     const rc = await pub.waitForTransactionReceipt({ hash });
     if (rc.status !== "success") throw new Error(`${fn} reverted: ${hash}`);
     log(`[chain] ${fn}(${fn === "settleFallback" ? "report" : args.join(", ")}) ${hash}`);
@@ -120,21 +155,33 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       if (!approved) {
         const bal = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [relayer.account.address] });
         if (bal < RELAYER_FLOOR) {
-          const hash = await relayer.writeContract({ address: token, abi: ERC20_ABI, functionName: "mint", args: [relayer.account.address, RELAYER_MINT] });
+          const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "mint", args: [relayer.account.address, RELAYER_MINT] } as never);
           const rc = await pub.waitForTransactionReceipt({ hash });
           if (rc.status !== "success") throw new Error(`mint reverted: ${hash}`);
           log(`[chain] relayer minted ${RELAYER_MINT} MockUSDC units ${hash}`);
         }
         const have = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, escrow] });
         if (have < 10n ** 30n) {
-          const hash = await relayer.writeContract({ address: token, abi: ERC20_ABI, functionName: "approve", args: [escrow, maxUint256] });
+          const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "approve", args: [escrow, maxUint256] } as never);
           const rc = await pub.waitForTransactionReceipt({ hash });
           if (rc.status !== "success") throw new Error(`approve reverted: ${hash}`);
           log(`[chain] relayer approved escrow ${hash}`);
         }
         approved = true;
       }
-      return (await send(relayer, "joinFor", [BigInt(id), player as Address])).hash;
+      // Up to 3 resends on nonce or transport errors. If an earlier attempt did land, the resend reverts with
+      // AlreadyJoined, which counts as joined.
+      let lastErr: unknown;
+      for (let attempt = 1; attempt <= JOIN_TRIES; attempt++) {
+        try { return (await send(relayer, "joinFor", [BigInt(id), player as Address])).hash; } catch (e) {
+          lastErr = e;
+          if (attempt > 1 && failReason(e).startsWith("AlreadyJoined(")) { log(`[chain] joinFor(${id}, ${player}) landed on an earlier attempt`); return null; }
+          if (!retryable(e) || attempt === JOIN_TRIES) throw e;
+          log(`[chain] joinFor(${id}, ${player}) attempt ${attempt} failed, resending: ${failReason(e)}`);
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
+      }
+      throw lastErr;
     }),
     start: (id) => serial(async () => (await send(owner, "start", [BigInt(id)])).hash),
     cancel: (id) => serial(async () => (await send(owner, "cancel", [BigInt(id)])).hash),

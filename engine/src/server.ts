@@ -9,7 +9,7 @@ import { Lobby } from "./lobby.ts";
 import { Bots, botAddress, botCallsign } from "./bots.ts";
 import { CoinbaseFeed, FallbackPrices, KrakenFeed, fetchSettlementMarks, settlementMinute, type PriceSource } from "./prices.ts";
 import { Driver, realClock } from "./driver.ts";
-import { LOBBY_SETTLED, failReason, makeChain } from "./chain.ts";
+import { LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
 import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyJoin, verifyOrder } from "./orders.ts";
 import { ENTRY_UNITS, PRESETS, type EngineEvent, type Order, type Preset, type Prices } from "./types.ts";
@@ -46,8 +46,12 @@ const JOIN_CLOSE_MS = 7000; // joins close this long before startsAt
 const START_LEAD_MS = 6000; // first on-chain start() this long before startsAt, so the chain end lands near the book's
 const START_DEADLINE_MS = 1500; // no new start attempt after startsAt minus this; cancel instead
 const DEPLOYED_SETTLE_WAIT_MS = 15 * 60_000; // SETTLE_MODE=deployed: stop watching for Settled after this
-const log = (m: string) => console.log(`${new Date().toISOString()} ${m}`);
-const chain = await makeChain(process.env, log);
+// Every engine line goes through redact(): RPC URLs carry API keys.
+const log = (m: string) => console.log(`${new Date().toISOString()} ${redact(m)}`);
+const fatal = (e: unknown): never => { console.error(`engine: fatal: ${failReason(e)}`); process.exit(1); };
+process.on("uncaughtException", fatal);
+process.on("unhandledRejection", fatal);
+const chain = await makeChain(process.env, log).catch(fatal);
 // Store for logs and books. With the chain on, one directory per escrow, so a new escrow (whose lobby ids restart at 1)
 // never serves or resumes another escrow's lobby. ENGINE_DATA_DIR overrides (e2e uses a temp dir).
 const DATA = process.env.ENGINE_DATA_DIR
@@ -263,7 +267,7 @@ async function finish(m: Match) {
     // With the chain on, keep retrying: the report uses the candle, so `final` must too.
     for (let attempt = 1; ; attempt++) {
       try { marks = await fetchSettlementMarks(PRICE_URL, l.endTime!); break; } catch (e) {
-        log(`[lobby ${l.id}] settlement candle attempt ${attempt} failed: ${(e as Error).message}`);
+        log(`[lobby ${l.id}] settlement candle attempt ${attempt} failed: ${failReason(e)}`);
         if (!chain.on && attempt >= 6) { log(`[lobby ${l.id}] CHAIN=off: falling back to the last live mark`); break; }
         await new Promise((r) => setTimeout(r, 5000));
       }
@@ -460,7 +464,7 @@ const server = createServer(async (req, res) => {
     }
     send(res, 404, { error: "not found" });
   } catch (e) {
-    send(res, 400, { error: (e as Error).message });
+    send(res, 400, { error: failReason(e) });
   }
 });
 
