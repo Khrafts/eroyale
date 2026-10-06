@@ -45,7 +45,7 @@ export class Stats {
   private readonly seen = new Set<string>();
 
   /** Load settlements.jsonl, then backfill any settlement logged in a lobby or round log before this file existed. */
-  constructor(private readonly dir: string) {
+  constructor(private readonly dir: string, private readonly warn: (m: string) => void = (m) => console.error(m)) {
     this.file = resolve(dir, "settlements.jsonl");
     if (existsSync(this.file)) for (const s of parseLines(this.file)) this.keep(s);
     const logs = readdirSync(dir).flatMap((f) => {
@@ -79,7 +79,11 @@ export class Stats {
       return { player, callsign: p?.callsign ?? "", bot: p?.bot ?? false, amountUnits: BigInt(e.amounts[i]).toString() };
     });
     const s: Settlement = { lobbyId, mode, at, txHash: e.txHash, bookHash, winners };
-    if (this.keep(s)) appendFileSync(this.file, JSON.stringify(s) + "\n");
+    if (!this.keep(s)) return;
+    // Never throws into the game path (finish/settle): the in-memory record keeps /stats right for this run, and the
+    // boot backfill from the lobby/round log's `settled` line restores it after a restart.
+    try { appendFileSync(this.file, JSON.stringify(s) + "\n"); }
+    catch (err) { this.warn(`stats: could not append ${mode} ${lobbyId} to settlements.jsonl (${(err as Error).message}); kept in memory, backfilled from the log at next boot`); }
   }
 
   /** The /stats body, `playing` supplied by the server (it depends on live lobbies, not settlements). */

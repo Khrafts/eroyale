@@ -116,7 +116,7 @@ function persistBook(id: number, json: string): string {
 }
 let current: Match | null = null;
 // Settlement results for GET /stats: settlements.jsonl in DATA, appended once per `settled`, loaded here.
-const stats = new Stats(DATA);
+const stats = new Stats(DATA, log);
 const whoOf = (players: { player: string; callsign: string; bot: boolean }[]) => new Map(players.map((p) => [p.player, { callsign: p.callsign, bot: p.bot }]));
 /** A `settled` event was emitted: note its time in the log (an input line, so events stay as they were) and record it for /stats. */
 function settledHere(m: { logFile: string }, mode: "royale" | "predict", id: number, bookHash: string | null, e: EngineEvent, players: { player: string; callsign: string; bot: boolean }[]) {
