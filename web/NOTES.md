@@ -1,7 +1,7 @@
 ## Status
-- Step: predict mode done, plus spec-check fixes (join close at 7 s, your rounds, marks feed, arena fallback, cancel reason, no reveal replay, predicted flags).
-- Last gate: `bash gates/ui.sh` -> GATE PASS ui; `bash gates/predict-ui.sh` -> GATE PASS predict-ui; all six predict shots reviewed.
-- Next: run the phone and arena against the predict engine once it lands (`/arena?mode=predict`, `/play?mode=predict`).
+- Step: predict mode done; the phone shows the engine's lock time after creating a round, and the create screen says the lock aligns to the minute.
+- Last check: the UI checks pass; all six predict shots reviewed.
+- Next: run the phone and arena against a live predict engine (`/arena?mode=predict`, `/play?mode=predict`).
 - Blockers: none. Shots use installed Chrome because Playwright 1.63's Chromium is not downloaded.
 - Known: in the royale final view the flood holds at the last zone line, so finalists below it are drawn under water (still labelled and paid).
 
@@ -45,7 +45,7 @@ Against a live engine: `/arena?mode=predict` follows the protocol round from `GE
 
 Rules the screens keep:
 - The predict control works in integer cents (`lib/predict.ts`): the tape (drag, arrow keys) and the nudge buttons can only produce prices of at least 0.01 with exactly two decimals; `signPrediction` refuses anything else.
-- The create screen's controls are range inputs bounded by `RANGES` (CLAUDE.md user-created ranges, in steps: $1 entry, 1 player, 30 s lock, 60 s resolve, 5% winners, 0.5% fee); `inRange` clamps again before signing. The pinned payout preview runs `predictSettle` on a full lobby.
+- The create screen's controls are range inputs bounded by `RANGES` (the spec's user-created ranges, in steps: $1 entry, 1 player, 30 s lock, 60 s resolve, 5% winners, 0.5% fee); `inRange` clamps again before signing. The pinned payout preview runs `predictSettle` on a full lobby. The fine print says calls close on a whole minute (the lock can move up to 59 s). After `POST /rounds` the phone opens the round and shows the `lockTime` the engine returned as a local clock time on the join screen.
 - Payouts say provisional until `settled`; bots carry BOT.
 
 Files: `lib/events.ts` (predict wire types), `lib/useMatch.ts` (predict state, snapshot, follow), `lib/predict.ts` (ranges, preview, rounds, cents), `lib/engine.ts` (CreateRound, Prediction), `mocks/predict.ts`, `components/arena/b/predict.ts`, `components/play/Predict.tsx` + `predict.module.css`.
