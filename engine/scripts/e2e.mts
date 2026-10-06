@@ -4,7 +4,7 @@
 // wallets generated here that sign their joins and predictions), both settled; every winner's, the creator's, the
 // treasury's and the escrow's balance change must equal the round's `final` event.
 // Env (process env, then ../.env for unset keys): CHAIN, RPC_URL, PRIVATE_KEY_DEPLOYER, PRIVATE_KEY_RELAYER,
-// TOKEN_ADDRESS, ESCROW_ADDRESS, CHAIN_SELECTOR, PRICE_SOURCE_URL. Optional E2E_PORT, E2E_TIMEOUT_S.
+// TOKEN_ADDRESS, ESCROW_ADDRESS, CHAIN_SELECTOR, PRICE_SOURCE_URL. Optional E2E_PORT, E2E_TIMEOUT_S, E2E_SETTLE_MODE.
 // Secrets are passed to the engine through the environment and never printed: every error and every engine line
 // goes through redact(), which replaces any URL (RPC URLs carry API keys) with <rpc>.
 import { spawn } from "node:child_process";
@@ -41,6 +41,9 @@ if (process.env.CHAIN === "off") { console.error("e2e: CHAIN must not be off"); 
 if (process.env.CHAIN === "anvil") process.env.ENGINE_READ_LAG_MS ??= "6000";
 else delete process.env.ENGINE_READ_LAG_MS;
 const PORT = Number(process.env.E2E_PORT ?? 8799);
+// E2E_SETTLE_MODE=cre settles through the CRE CLI simulator (needs PRIVATE_KEY_CRE and the CLI; see engine/NOTES.md).
+const SETTLE_MODE = process.env.E2E_SETTLE_MODE ?? "simulated";
+if (SETTLE_MODE !== "simulated" && SETTLE_MODE !== "cre") { console.error(`e2e: E2E_SETTLE_MODE must be simulated or cre, got ${SETTLE_MODE}`); process.exit(2); }
 const TIMEOUT_S = Number(process.env.E2E_TIMEOUT_S ?? (MODE === "predict" ? 1500 : 600));
 const say = (m: string) => console.log(`[e2e] ${m}`);
 
@@ -66,7 +69,7 @@ const engineArgs = MODE === "royale"
   : ["--predict-only", "--predict-bots", "20", "--predict-rounds", "1"];
 const engine = spawn("npx", ["tsx", "src/server.ts", ...engineArgs, "--port", String(PORT)], {
   cwd: ENGINE,
-  env: { ...process.env, SETTLE_MODE: "simulated", ENGINE_DATA_DIR: data, PORT: String(PORT) },
+  env: { ...process.env, SETTLE_MODE: SETTLE_MODE, ENGINE_DATA_DIR: data, PORT: String(PORT) },
   stdio: ["ignore", "pipe", "pipe"],
   detached: true, // own process group, so stop() takes down npx, tsx and the server together
 });
@@ -123,14 +126,14 @@ function logDeltas(r: TransactionReceipt): Map<string, bigint> {
 }
 
 type Expect = { addr: string; label: string; info: string; want: bigint };
-type Settled = { txHash: Hex; mode: string; winners: string[]; amounts: string[] };
+type Settled = { txHash: Hex; mode: string; via?: string; winners: string[]; amounts: string[] };
 /**
  * Checks each address's MockUSDC change across the settlement block (balanceOf at the block and the one before,
  * retried; Transfer logs of the settlement tx when the node cannot answer, or when `blockShared` says another
  * settlement landed in the same block) against what `final` promised. Prints the table; returns pass/fail.
  */
 async function checkBalances(title: string, settled: Settled, expected: Expect[], expectedWinners: string[], blockShared = false): Promise<boolean> {
-  say(`${title}: settlement tx ${settled.txHash} (${settled.mode})`);
+  say(`${title}: settlement tx ${settled.txHash} (${settled.mode}${settled.via ? ` via ${settled.via}` : ""})`);
   const rc = await pub.waitForTransactionReceipt({ hash: settled.txHash });
   if (rc.status !== "success") { console.error(`e2e: ${title}: settlement receipt is not success`); return false; }
   const before = rc.blockNumber - 1n;
