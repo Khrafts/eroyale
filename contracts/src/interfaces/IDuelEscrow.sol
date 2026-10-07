@@ -62,6 +62,8 @@ interface IDuelEscrow {
 
     error TransferFailed();
 
+    error ZeroForwarder();
+
     /* ============ Interactive Functions ============ */
 
     /// @notice Opens a new duel. Ids start at 1.

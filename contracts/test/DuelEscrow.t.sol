@@ -3,6 +3,8 @@ pragma solidity 0.8.26;
 
 import { Test } from "forge-std/Test.sol";
 
+import { ReceiverTemplate } from "../src/vendor/ReceiverTemplate.sol";
+
 import { IDuelEscrow } from "../src/interfaces/IDuelEscrow.sol";
 
 import { DuelEscrow } from "../src/DuelEscrow.sol";
@@ -227,6 +229,54 @@ contract DuelEscrowTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IDuelEscrow.DuelNotLive.selector, id));
         vm.prank(owner);
         escrow.settleFallback(_report(id, bytes32(0), alice));
+    }
+
+    function test_CancelOpenWithOnePlayer() public {
+        uint256 id = _createDuel();
+
+        vm.prank(relayer);
+        escrow.joinFor(id, alice);
+
+        uint256 relayerBefore = usdc.balanceOf(relayer);
+
+        vm.expectEmit();
+        emit IDuelEscrow.Cancelled(id);
+
+        vm.prank(owner);
+        escrow.cancel(id);
+
+        assertEq(usdc.balanceOf(relayer), relayerBefore + STAKE);
+        assertEq(usdc.balanceOf(alice), 0);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+        assertEq(uint8(escrow.getDuel(id).status), uint8(IDuelEscrow.Status.Cancelled));
+        assertEq(escrow.getDuel(id).pot, 0);
+    }
+
+    /* ============ setForwarderAddress ============ */
+
+    function test_RevertWhen_ZeroForwarder() public {
+        uint256 id = _liveDuel();
+        address newForwarder = makeAddr("newForwarder");
+
+        vm.expectRevert(IDuelEscrow.ZeroForwarder.selector);
+        vm.prank(owner);
+        escrow.setForwarderAddress(address(0));
+
+        assertEq(escrow.getForwarderAddress(), forwarder);
+
+        // With the forwarder still set, a stranger cannot deliver a report.
+        vm.expectRevert(abi.encodeWithSelector(ReceiverTemplate.InvalidSender.selector, alice, forwarder));
+        vm.prank(alice);
+        escrow.onReport("", _report(id, bytes32(0), alice));
+
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
+        vm.prank(alice);
+        escrow.setForwarderAddress(newForwarder);
+
+        vm.prank(owner);
+        escrow.setForwarderAddress(newForwarder);
+
+        assertEq(escrow.getForwarderAddress(), newForwarder);
     }
 
     /* ============ settle ============ */

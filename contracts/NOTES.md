@@ -1,7 +1,7 @@
 <!-- status -->
-Step: Phase 11 duel-contracts done: DuelEscrow + 14 tests, DeployDuel (not broadcast), workflow duel reports on shared/duel.ts
+Step: Phase 11 duel-contracts: spec-check fixes (zero forwarder refused, DeployDuel opt-in approve/write, one-player cancel test)
 Last checks: contracts, workflow, predict-contracts, predict-workflow, duel-contracts (gates.next-duel) all PASS
-Next: lead deploys DuelEscrow (11d) and fills duelEscrowAddress in workflow/config.*.json
+Next: lead adds the DeployDuel env names to .env.example, deploys DuelEscrow (11d), fills duelEscrowAddress
 Blockers: none
 <!-- /status -->
 
@@ -99,7 +99,15 @@ Rounds: `cast send "$ESCROW_ADDRESS" "createRound(uint32,uint96,uint16,address,u
 - `createDuel(stake)` onlyOwner, ids from 1. `joinFor` relayer only, pulls the stake from the relayer, exactly two players (`DuelFull` on a third, `AlreadyJoined` on a repeat). `start` onlyOwner needs both (`NotEnoughPlayers`). `cancel` (Open or Live) refunds the whole pot to the relayer, which paid every stake. No end time: a duel settles as soon as it is Live.
 - `_settle` (shared by `onReport` and `settleFallback`): chain selector; Live; winner zero or one of the two players; status Settled, bookHash and winner stored, pot zeroed; win: winner gets `pot - floor(pot * 500 / 10000)`, treasury the fee; draw (winner 0): each player (not the relayer) gets their stake; `Settled(id, bookHash, winner)`.
 - Report: `abi.encode(uint64 chainSelector, uint256 duelId, bytes32 bookHash, address winner)`.
-- Deploy (lead, 11d; not broadcast by this track): `cd contracts && forge script script/DeployDuel.s.sol --rpc-url $RPC_URL --broadcast` with `CHAIN`, `PRIVATE_KEY_DEPLOYER`, `PRIVATE_KEY_RELAYER` (and optional `ENGINE_OWNER_ADDRESS`, default the deployer, which is the key the engine signs owner calls with). It reads token, treasury, forwarder, relayer and chain selector from `deployments/<CHAIN>.json`, refuses if the relayer key or chain id differ, deploys, approves the new escrow from the relayer, and rewrites the JSON with `duelEscrow` added. Dry-run on a local anvil after Deploy.s.sol: deployed, owner the deployer, JSON written. Then set `DUEL_ESCROW_ADDRESS` in `.env` and `duelEscrowAddress` in `workflow/config.*.json` (zero until then; the duel handler refuses a zero address).
+- Deploy (lead, 11d; not broadcast by this track): `cd contracts && forge script script/DeployDuel.s.sol --rpc-url $RPC_URL --broadcast`. It reads token, treasury, forwarder, relayer and chain selector from `deployments/<CHAIN>.json` and refuses if the chain id differs. Env names (not in `.env.example`, which is outside this track; the lead adds them there):
+  - `CHAIN` (required).
+  - `PRIVATE_KEY_DUEL_DEPLOYER` (optional broadcaster, default `PRIVATE_KEY_DEPLOYER`).
+  - `PRIVATE_KEY_DEPLOYER`: its address is the final owner unless `ENGINE_OWNER_ADDRESS` is set (the engine signs owner calls with it); so a fresh duel deployer key hands ownership to the engine's deployer.
+  - `ENGINE_OWNER_ADDRESS` (optional final owner).
+  - `APPROVE_FROM_RELAYER=1` (optional): also approve DuelEscrow from the relayer, needs `PRIVATE_KEY_RELAYER` and refuses if it is not the deployment's relayer. Off by default: the hosted engine owns the relayer nonce and approves DuelEscrow lazily itself.
+  - `WRITE_DEPLOYMENT=1` (optional): add `duelEscrow` to `deployments/<CHAIN>.json`. Off by default so a dry run never records an undeployed address; set it only with `--broadcast`.
+  Checked on a local anvil after Deploy.s.sol: default run with a fresh duel key and no relayer key deploys, owner ends on the deployer address, JSON untouched; with both flags the JSON gains `duelEscrow` and the relayer allowance is max. Then set `DUEL_ESCROW_ADDRESS` in `.env` and `duelEscrowAddress` in `workflow/config.*.json` (zero until then; the duel handler refuses a zero address).
+- `setForwarderAddress(address(0))` reverts `ZeroForwarder()` on DuelEscrow (the template allows it, which would let anyone call `onReport` and pick a Live duel's winner). The vendored template's function became `public virtual` for this; RoyaleEscrow behaves as before.
 
 ## Workflow: duel books
 

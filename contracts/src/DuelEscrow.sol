@@ -132,6 +132,14 @@ contract DuelEscrow is IDuelEscrow, ReceiverTemplate {
         _settle(report);
     }
 
+    /// @notice Updates the forwarder allowed to call onReport. Unlike the template, address(0) is refused: it would
+    ///         let anyone deliver a report and pick the winner of a Live duel.
+    function setForwarderAddress(address forwarder) public override onlyOwner {
+        if (forwarder == address(0)) revert ZeroForwarder();
+
+        super.setForwarderAddress(forwarder);
+    }
+
     /// @inheritdoc IDuelEscrow
     function getDuel(uint256 id) external view returns (Duel memory) {
         return _duels[id];

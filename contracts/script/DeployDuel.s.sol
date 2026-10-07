@@ -6,11 +6,17 @@ import { Script, console } from "forge-std/Script.sol";
 import { DuelEscrow } from "../src/DuelEscrow.sol";
 
 /// @notice Deploys DuelEscrow beside the deployed RoyaleEscrow: same token, treasury, forwarder, relayer and chain
-///         selector, read from deployments/<CHAIN>.json. Approves the new escrow from the relayer (joinFor pulls the
-///         stake from it), hands ownership to ENGINE_OWNER_ADDRESS if set (default: the deployer, which is the key
-///         the engine signs owner calls with), and adds "duelEscrow" to deployments/<CHAIN>.json.
-/// @dev    Env: CHAIN, PRIVATE_KEY_DEPLOYER, PRIVATE_KEY_RELAYER, optional ENGINE_OWNER_ADDRESS.
-///         The relayer key must match the deployment's relayer; the script refuses otherwise.
+///         selector, read from deployments/<CHAIN>.json. Ownership ends on ENGINE_OWNER_ADDRESS if set, else on the
+///         address of PRIVATE_KEY_DEPLOYER (the key the engine signs owner calls with).
+/// @dev    Env:
+///         CHAIN                      required.
+///         PRIVATE_KEY_DUEL_DEPLOYER  optional broadcaster; defaults to PRIVATE_KEY_DEPLOYER.
+///         PRIVATE_KEY_DEPLOYER       required unless both PRIVATE_KEY_DUEL_DEPLOYER and ENGINE_OWNER_ADDRESS are set.
+///         ENGINE_OWNER_ADDRESS       optional final owner.
+///         APPROVE_FROM_RELAYER=1     optional: also approve the escrow from the relayer (needs PRIVATE_KEY_RELAYER).
+///                                    Off by default: the hosted engine owns the relayer nonce and approves lazily.
+///         WRITE_DEPLOYMENT=1         optional: add "duelEscrow" to deployments/<CHAIN>.json. Off by default so a
+///                                    dry run never records an undeployed address; set it only with --broadcast.
 contract DeployDuel is Script {
     /// @dev Base Sepolia, Ethereum Sepolia, local anvil. Anything else is refused.
     error UnsupportedChain(uint256 chainId);
@@ -18,6 +24,8 @@ contract DeployDuel is Script {
     error ChainIdMismatch(uint256 expected, uint256 actual);
 
     error RelayerMismatch(address expected, address actual);
+
+    error NoOwner();
 
     function run() external {
         if (block.chainid != 84532 && block.chainid != 11155111 && block.chainid != 31337) {
@@ -31,40 +39,52 @@ contract DeployDuel is Script {
         uint256 chainId = vm.parseJsonUint(existing, ".chainId");
         if (chainId != block.chainid) revert ChainIdMismatch(chainId, block.chainid);
 
-        uint64 chainSelector = uint64(vm.parseUint(vm.parseJsonString(existing, ".chainSelector")));
-        address forwarder = vm.parseJsonAddress(existing, ".forwarder");
-        address token = vm.parseJsonAddress(existing, ".token");
-        address treasury = vm.parseJsonAddress(existing, ".treasury");
         address relayer = vm.parseJsonAddress(existing, ".relayer");
+        address token = vm.parseJsonAddress(existing, ".token");
 
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY_DEPLOYER");
-        uint256 relayerKey = vm.envUint("PRIVATE_KEY_RELAYER");
-        address deployer = vm.addr(deployerKey);
-        address owner = vm.envOr("ENGINE_OWNER_ADDRESS", deployer);
+        uint256 deployerKey = vm.envOr("PRIVATE_KEY_DEPLOYER", uint256(0));
+        uint256 broadcasterKey = vm.envOr("PRIVATE_KEY_DUEL_DEPLOYER", deployerKey);
+        address owner = vm.envOr("ENGINE_OWNER_ADDRESS", deployerKey == 0 ? address(0) : vm.addr(deployerKey));
 
-        if (vm.addr(relayerKey) != relayer) revert RelayerMismatch(relayer, vm.addr(relayerKey));
+        if (broadcasterKey == 0 || owner == address(0)) revert NoOwner();
 
-        vm.startBroadcast(deployerKey);
+        vm.startBroadcast(broadcasterKey);
 
-        DuelEscrow duelEscrow = new DuelEscrow(forwarder, token, chainSelector, treasury, relayer);
+        DuelEscrow duelEscrow = new DuelEscrow(
+            vm.parseJsonAddress(existing, ".forwarder"),
+            token,
+            uint64(vm.parseUint(vm.parseJsonString(existing, ".chainSelector"))),
+            vm.parseJsonAddress(existing, ".treasury"),
+            relayer
+        );
 
-        if (owner != deployer) {
+        if (owner != vm.addr(broadcasterKey)) {
             duelEscrow.transferOwnership(owner);
         }
 
         vm.stopBroadcast();
 
-        vm.startBroadcast(relayerKey);
+        if (vm.envOr("APPROVE_FROM_RELAYER", false)) {
+            uint256 relayerKey = vm.envUint("PRIVATE_KEY_RELAYER");
 
-        (bool ok, ) = token.call(abi.encodeWithSignature("approve(address,uint256)", address(duelEscrow), type(uint256).max));
-        require(ok, "relayer approve failed");
+            if (vm.addr(relayerKey) != relayer) revert RelayerMismatch(relayer, vm.addr(relayerKey));
 
-        vm.stopBroadcast();
+            vm.startBroadcast(relayerKey);
+
+            (bool ok, ) = token.call(abi.encodeWithSignature("approve(address,uint256)", address(duelEscrow), type(uint256).max));
+            require(ok, "relayer approve failed");
+
+            vm.stopBroadcast();
+        }
 
         console.log("DUEL_ESCROW_ADDRESS=%s", address(duelEscrow));
         console.log("owner=%s", duelEscrow.owner());
 
-        _write(path, existing, address(duelEscrow));
+        if (vm.envOr("WRITE_DEPLOYMENT", false)) {
+            _write(path, existing, address(duelEscrow));
+        } else {
+            console.log("WRITE_DEPLOYMENT not set: deployments/%s.json left unchanged", chain);
+        }
     }
 
     /// @dev Rewrites the deployment file with every existing field plus duelEscrow.
