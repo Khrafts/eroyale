@@ -1,7 +1,8 @@
 ## Status
-- Step: look-play 7.2 steps 1-3 done: /play (royale and predict) restyled on the kit and theme.css, avatar heads in 2D (components/play/Avatar.tsx).
+- Step: look-play 7.2 done: /play (royale and predict) on the kit and theme.css, avatar heads in 2D (components/play/Avatar.tsx), toast in the island's place under the top bar.
 - Last check: GATE PASS ui, predict-ui, island-ui (/play 164755 B, +4.2% vs main); typecheck clean; look-ui: every /play part passes, arena and Sofia parts are look-arena's.
-- Next: step 4 live run against a local engine (CHAIN=off ORDER_SIG=off), then fix what it shows. Blockers: none.
+- Live run (CHAIN=off ORDER_SIG=off engine on :8871): island Arena panel to /play, join, long and short, final and offline settle, brand chip back to the island; Observatory to a round, call, lock, create a round. All worked.
+- Next: merge into feat/island after look-arena. Blockers: none.
 
 ## Running
 

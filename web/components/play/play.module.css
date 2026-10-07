@@ -152,7 +152,9 @@
 .summary { margin: 0; color: var(--ink2); font-size: 14px; }
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .root .side { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 24px; padding: 20px 10px; }
-.toast { position: absolute; left: 16px; right: 16px; bottom: 200px; z-index: 5; margin: 0; padding: 12px 16px; background: var(--ink); color: var(--paper); font-weight: 600; border-radius: var(--radius-card); box-shadow: var(--shadow-chip); }
+/* the island's toast: ink, under the top bar */
+.toast { position: absolute; left: 16px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 76px); z-index: 5; margin: 0; padding: 11px 16px; background: var(--ink); color: var(--paper); font-weight: 600; font-size: 15px; border-radius: var(--radius-card); box-shadow: var(--shadow-chip); animation: toastIn 0.35s cubic-bezier(0.3, 1.4, 0.5, 1); }
+@keyframes toastIn { from { transform: translateY(-10px) scale(0.96); opacity: 0; } }
 .toastBad { background: var(--loss); color: var(--ink); border: var(--stroke) solid var(--ink); }
 
 /* Range inputs (leverage, create-round sliders): the island's track, a game-coloured thumb with the hard shadow. */
@@ -210,4 +212,5 @@
 @media (prefers-reduced-motion: reduce) {
   .sentenceDanger::after { animation: none; opacity: 0.14; }
   .market, .size { transition: none; }
+  .toast { animation: none; }
 }
