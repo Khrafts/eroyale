@@ -18,12 +18,11 @@
 // Free to act: act is idle, walk, back, crouch or cblock (or any unknown act string). A free,
 // grounded fighter first turns to face the opponent, then takes the first that applies:
 //   A+B -> throw; down+B -> sweep; B -> heavy; A -> jab; up -> jump; down+back -> cblock
-//   (crouching block, no movement); down -> crouch; back -> back (a standing block; moves 50
-//   away unless the opponent is threatening, see below); forward -> walk (moves 70 toward);
-//   nothing -> idle.
-// Proximity guard: holding back does not move the fighter while the opponent is in an attack
-// (jab, heavy, sweep, air or throw, any phase), so a held block stays in range and blocks
-// instead of backing out of reach.
+//   (crouching block, no movement); down -> crouch; back -> back (moves 50 away and is a
+//   standing block); forward -> walk (moves 70 toward); nothing -> idle.
+// Side symmetry: both fighters update against a snapshot of the opponent taken before either
+// update, and hits are found from one state and applied without touching the other hit's
+// inputs, so swapping the sides and mirroring left and right gives the mirrored match exactly.
 // So attacks beat jumping and blocking; A and B on the same tick is a throw.
 // Jab cancel: during jab recovery, if the jab hit or was blocked (`hit`), B cancels into sweep
 // (down held) or heavy (otherwise), whether or not A is also held.
@@ -62,10 +61,10 @@
 // floor(dmg * max(4, 12 - 2n) / 10). A block leaves combo unchanged. hp never goes below 0.
 //
 // Push-apart. Positions clamp to [500, 11500]. The fighter with the smaller x is the left one
-// (equal x: fighter 0 is left). If they are less than 600 apart, with gap g = 600 - distance, the
-// left one moves floor(g/2) left and the right one g - floor(g/2) right; if that puts one past a
-// wall it stops at the wall and the other moves the rest. Applies in the air too, so fighters
-// never pass each other.
+// (equal x: fighter 0 is left; unreachable in play, since fighters never pass each other). If
+// they are less than 600 apart, with gap g = 600 - distance, each moves ceil(g/2) away from the
+// other (so they end 600 or 601 apart, exactly symmetric); if that puts one past a wall it stops
+// at the wall and the other moves the rest. Applies in the air too.
 //
 // Rounds. initDuel(): round 1, pause 90. Each round: fighter 0 at x 4000 facing right, fighter 1
 // at 8000 facing left, hp 100, idle; round wins carry over. A round ends the tick a fighter's hp
@@ -74,7 +73,8 @@
 // (more round wins takes it, equal is a drawn match, winner null). Otherwise the next round
 // starts: round += 1, roundTick 0, pause 90, fighters reset. A match lasts at most 5670 ticks.
 //
-// replay(): steps from initDuel() with each tick's bits (0 past the end of a string) until over;
+// replay(): reads at most 5670 characters of each string and steps from initDuel() with each
+// tick's bits (0 past the end of a string) until over;
 // `ticks` is the final `tick`, `hash` the final stateHash.
 // stateHash(): FNV-1a 32 over the UTF-16 code units of each field written as a decimal string
 // (booleans 1/0, null "n", act as its text) followed by "|", in the order tick, round,
@@ -131,11 +131,6 @@ function startMove(f: Fighter, act: string): void {
   f.act = act; f.frame = 0; f.hit = false;
 }
 
-// The opponent is in an attack (any phase: startup, active or recovery).
-function threatened(o: Fighter): boolean {
-  return isMove(o.act);
-}
-
 // Free, grounded fighter acting on its input.
 function act(f: Fighter, o: Fighter, bits: Bits): void {
   if (o.x !== f.x) f.facing = o.x > f.x ? 1 : -1;
@@ -148,7 +143,7 @@ function act(f: Fighter, o: Fighter, bits: Bits): void {
   if (bits & UP) { f.act = "jump"; f.frame = 0; f.hit = false; f.airUsed = false; f.vy = JUMP_VY; f.vx = h * JUMP_VX; return; }
   f.frame = 0;
   if (down) { f.act = back ? "cblock" : "crouch"; return; }
-  if (back) { f.act = "back"; if (!threatened(o)) f.x -= f.facing * BACK; return; }
+  if (back) { f.act = "back"; f.x -= f.facing * BACK; return; }
   if (fwd) { f.act = "walk"; f.x += f.facing * FWD; return; }
   f.act = "idle";
 }
@@ -198,8 +193,8 @@ function separate(s: DuelState): void {
   const L = b.x < a.x ? b : a, R = L === a ? b : a;
   const d = R.x - L.x;
   if (d >= MIN_GAP) return;
-  const g = MIN_GAP - d, half = Math.floor(g / 2);
-  L.x -= half; R.x += g - half;
+  const half = Math.floor((MIN_GAP - d + 1) / 2);
+  L.x -= half; R.x += half;
   if (L.x < STAGE_MIN) { R.x += STAGE_MIN - L.x; L.x = STAGE_MIN; }
   if (R.x > STAGE_MAX) { L.x -= R.x - STAGE_MAX; R.x = STAGE_MAX; }
 }
@@ -246,7 +241,6 @@ function applyHit(s: DuelState, h: Hit): void {
     d.hp -= dmg;
     if (h.name === "sweep" || h.name === "throw") { d.act = "knockdown"; d.frame = KNOCKDOWN; }
     else { d.act = "hitstun"; d.frame = m.hs; }
-    d.hit = false;
     if (d.y === 0) { d.vx = 0; d.vy = 0; } else { d.vx = 0; }
   }
   if (h.name === "heavy") d.x += att.facing * 400;
@@ -272,8 +266,9 @@ export function step(s: DuelState, a: Bits, b: Bits): DuelState {
   if (n.pause > 0) { n.pause -= 1; return n; }
   n.roundTick += 1;
   const bits: [Bits, Bits] = [a & 63, b & 63];
-  update(n.f[0], n.f[1], bits[0]);
-  update(n.f[1], n.f[0], bits[1]);
+  const o0 = { ...n.f[0] }, o1 = { ...n.f[1] };
+  update(n.f[0], o1, bits[0]);
+  update(n.f[1], o0, bits[1]);
   physics(n.f[0]); physics(n.f[1]);
   separate(n);
   if (n.f[1].act !== "hitstun") n.f[0].combo = 0;
@@ -327,7 +322,7 @@ export function stateHash(s: DuelState): string {
 const MAX_TICKS = 3 * ROUND_TICKS + 3 * PAUSE_TICKS;
 
 export function replay(a: string, b: string): { winner: 0 | 1 | null; rounds: [number, number]; ticks: number; hash: string } {
-  const ia = decodeInputs(a), ib = decodeInputs(b);
+  const ia = decodeInputs(a.slice(0, MAX_TICKS)), ib = decodeInputs(b.slice(0, MAX_TICKS));
   let s = initDuel();
   while (!s.over && s.tick < MAX_TICKS) {
     const i = s.tick;
@@ -336,10 +331,14 @@ export function replay(a: string, b: string): { winner: 0 | 1 | null; rounds: [n
   return { winner: s.winner, rounds: [s.f[0].rounds, s.f[1].rounds], ticks: s.tick, hash: stateHash(s) };
 }
 
-// Bots. Deterministic from the state only.
-// Level 1 walks in and jabs. Level 2 also blocks on reaction (crouching against a sweep) and
-// punishes with jab into heavy. Level 3 adds a mix of high (jump-in air attack), low (sweep) and
-// throw, chosen by a hash of the round and a coarse time bucket.
+// Bots (practice and free bot fights). Deterministic from the state only.
+// Level 1 walks in to 950 and jabs; it never blocks.
+// Level 2 keeps a longer spacing (waits around 1150 while the opponent walks in), meets a walk-in
+// with a heavy, blocks on reaction (crouching against a sweep), punishes a blocked or whiffed move
+// in range with jab into heavy, and throws a jab restarted point blank.
+// Level 3 plays like level 2 and, against a standing, crouching or blocking opponent, mixes high
+// (jump-in air attack), low (sweep) and throw, chosen by a hash of the round and a coarse time
+// bucket.
 function mix(s: DuelState, side: number): number {
   let h = Math.imul(s.round * 7919 + Math.floor(s.roundTick / 40) * 104729 + side * 31337, 0x9e3779b1) >>> 0;
   h ^= h >>> 15;
@@ -352,34 +351,36 @@ export function botInput(s: DuelState, side: 0 | 1, level: 1 | 2 | 3): Bits {
   const dir = op.x > me.x ? 1 : -1;
   const toward = dir === 1 ? RIGHT : LEFT, away = dir === 1 ? LEFT : RIGHT;
   const dist = op.x > me.x ? op.x - me.x : me.x - op.x;
+  const grounded = me.y === 0 && me.vy <= 0;
+  const free = grounded && isFree(me.act);
 
   if (me.act === "jump") return dist <= 900 && me.y < 1200 ? BA : 0;
-  if (level >= 2) {
-    // Punish: jab into heavy once the jab has connected.
-    if (me.act === "jab" && me.hit) return BB;
-    // Block on reaction to a move that can reach.
-    if (isMove(op.act) && op.act !== "throw" && !op.hit && isFree(me.act) && me.y === 0) {
-      const m = MOVES[op.act];
-      const live = op.act === "air" || op.frame < m.s + m.a;
-      if (live && dist <= m.reach + 150) return op.act === "sweep" ? away | DOWN : away;
+  if (level === 1) return dist <= 950 ? BA : toward;
+
+  // Levels 2 and 3.
+  if (me.act === "jab" && me.hit) return BB; // jab into heavy (or keeps the heavy if blocked)
+  if (me.act === "blockstun") return away;
+  if (!free) return 0;
+  if (isMove(op.act) && op.act !== "throw") {
+    const m = MOVES[op.act];
+    const recovering = op.act !== "air" && op.frame >= m.s + m.a;
+    if (recovering) {
+      if (dist <= 950) return BA; // punish
+    } else if (!op.hit && dist <= m.reach + 150) {
+      if (op.act === "jab" && op.frame <= 1 && dist <= 780) return BA | BB; // throw beats a fresh jab
+      return op.act === "sweep" ? away | DOWN : away; // block on reaction
     }
-    if (me.act === "blockstun") return away;
-    // Whiff or blocked-move punish: the opponent is recovering in range.
-    if (isMove(op.act) && op.act !== "air" && isFree(me.act) && me.y === 0) {
-      const m = MOVES[op.act];
-      if (op.frame >= m.s + m.a && dist <= 950) return BA;
-    }
-    // Sometimes hold a block in range instead of jabbing first, to punish.
-    if (isFree(op.act) && dist <= 1000 && isFree(me.act) && mix(s, side + 4) === 1) return away;
   }
-  if (level === 3 && isFree(me.act) && me.y === 0) {
+  if (op.act === "knockdown") return dist > 1000 ? toward : 0; // wait to meet the wake-up
+  if (op.act === "walk" && dist >= 1300 && dist <= 1500) return BB; // heavy meets the walk-in
+  if (level === 3 && op.act !== "walk" && isFree(op.act)) {
     const r = mix(s, side);
     if (r === 1 && dist <= 780) return BA | BB;
     if (r === 2 && dist <= 1250) return DOWN | BB;
     if (r === 3 && dist > 1100 && dist <= 1500) return UP | toward;
   }
-  if (dist <= 950) return BA;
-  // Levels 2 and 3 sometimes hold just outside jab range for the opponent to commit.
-  if (level >= 2 && dist <= 1150 && isFree(op.act) && mix(s, side + 2) === 0) return 0;
+  if (dist <= 1000) return BA;
+  // Hold the spacing for a while to make the opponent commit, then walk in.
+  if (dist <= 1600 && isFree(op.act) && mix(s, side + 2) !== 0) return 0;
   return toward;
 }
