@@ -3,6 +3,8 @@
 // settlement prices, buildReport -> consensus on the scored result -> signed report -> writeReport to the escrow.
 // Royale and prediction lobbies share this path: buildReport branches on the book's mode and, for a
 // prediction book, refuses unless its creator, creator fee, entry and player count equal the on-chain lobby's.
+// Stickman Duel: HTTP trigger {"duelId": N} -> read the duel from DuelEscrow -> on each node: GET /duels/N/final,
+// buildDuelReport (replays the inputs with shared/duel.ts) -> consensus -> signed report -> writeReport to DuelEscrow.
 import {
   EVMClient,
   HTTPCapability,
@@ -26,11 +28,12 @@ import { decodeFunctionResult, encodeFunctionData, parseAbi, zeroAddress } from 
 import type { Market, Prices } from "../../shared/scoring.ts";
 import { MARKETS, candleStart, candleUrl, closeFromCandles } from "./prices.ts";
 import { observe, type Observation } from "./observation.ts";
-import type { OnchainRound } from "./report.ts";
+import { buildDuelReport, type OnchainDuel, type OnchainRound } from "./report.ts";
 
 type Config = {
   chainName: string; // CRE chain selector name, e.g. "ethereum-testnet-sepolia-base-1"
   escrowAddress: string;
+  duelEscrowAddress: string; // DuelEscrow; the zero address until it is deployed (duel settlement then refuses)
   engineUrl: string; // ENGINE_PUBLIC_URL, no trailing slash
   priceSourceUrl: string; // PRICE_SOURCE_URL with {MARKET}, {START}, {END}
   feeBps: string;
@@ -40,6 +43,10 @@ type Config = {
 
 const ESCROW_ABI = parseAbi([
   "function getLobby(uint256 id) view returns ((uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps))",
+]);
+
+const DUEL_ESCROW_ABI = parseAbi([
+  "function getDuel(uint256 id) view returns ((uint8 status, uint96 stake, address playerA, address playerB, uint256 pot, bytes32 bookHash, address winner))",
 ]);
 
 const STATUS_LIVE = 2;
@@ -96,9 +103,98 @@ const scoreOnNode = (sendRequester: HTTPSendRequester, a: NodeArgs): string => {
   return observe(rawBook, prices, start, a.pot, a.feeBps, a.chainSelector, a.onchain);
 };
 
+type DuelObservation = { duelId: string; bookHash: `0x${string}`; winner: `0x${string}`; report: `0x${string}` };
+
+type DuelNodeArgs = { bookUrl: string; duelId: bigint; chainSelector: bigint; onchain: OnchainDuel };
+
+// Node mode: fetch the exact duel book bytes, replay and score them. Returns the observation JSON consensus compares.
+const scoreDuelOnNode = (sendRequester: HTTPSendRequester, a: DuelNodeArgs): string => {
+  const resp = sendRequester.sendRequest({ url: a.bookUrl, method: "GET", timeout: "10s" }).result();
+  if (resp.statusCode !== 200) throw new Error(`duel book: HTTP ${resp.statusCode}`);
+  const out = buildDuelReport(resp.body, a.chainSelector, a.onchain);
+  if (out.duelId !== a.duelId) throw new Error(`book is for duel ${out.duelId}`);
+  const obs: DuelObservation = { duelId: out.duelId.toString(), bookHash: out.bookHash, winner: out.winner, report: out.report };
+  return JSON.stringify(obs);
+};
+
+const writeSigned = (runtime: Runtime<Config>, evmClient: EVMClient, receiver: string, reportHex: `0x${string}`): string => {
+  const report = runtime
+    .report({
+      encodedPayload: hexToBase64(reportHex),
+      encoderName: "evm",
+      signingAlgo: "ecdsa",
+      hashingAlgo: "keccak256",
+    })
+    .result();
+  const write = evmClient
+    .writeReport(runtime, {
+      receiver,
+      report,
+      gasConfig: { gasLimit: runtime.config.gasLimit },
+    })
+    .result();
+  if (write.txStatus !== EVM_PB.TxStatus.SUCCESS) {
+    throw new Error(`writeReport tx status ${write.txStatus}: ${write.errorMessage ?? ""}`);
+  }
+  if (write.receiverContractExecutionStatus !== EVM_PB.ReceiverContractExecutionStatus.SUCCESS) {
+    throw new Error(`escrow execution status ${write.receiverContractExecutionStatus}: ${write.errorMessage ?? ""}`);
+  }
+  if (!write.txHash) throw new Error("writeReport returned no txHash");
+  return bytesToHex(write.txHash);
+};
+
+const onSettleDuel = (runtime: Runtime<Config>, duelId: bigint): string => {
+  const config = runtime.config;
+  if (duelId < 1n) throw new Error(`bad duelId ${duelId}`);
+  if (!/^0x[0-9a-fA-F]{40}$/.test(config.duelEscrowAddress) || BigInt(config.duelEscrowAddress) === 0n) {
+    throw new Error("duelEscrowAddress is not configured");
+  }
+
+  const network = getNetwork({ chainFamily: "evm", chainSelectorName: config.chainName });
+  if (!network) throw new Error(`unknown chain ${config.chainName}`);
+  const chainSelector = network.chainSelector.selector;
+  const evmClient = new EVMClient(chainSelector);
+
+  const call = evmClient
+    .callContract(runtime, {
+      call: encodeCallMsg({
+        from: zeroAddress,
+        to: config.duelEscrowAddress as `0x${string}`,
+        data: encodeFunctionData({ abi: DUEL_ESCROW_ABI, functionName: "getDuel", args: [duelId] }),
+      }),
+      blockNumber: LATEST_BLOCK_NUMBER,
+    })
+    .result();
+  const duel = decodeFunctionResult({ abi: DUEL_ESCROW_ABI, functionName: "getDuel", data: bytesToHex(call.data) });
+  if (duel.status !== STATUS_LIVE) throw new Error(`duel ${duelId} is not live (status ${duel.status})`);
+  const onchain: OnchainDuel = { playerA: duel.playerA, playerB: duel.playerB, stake: BigInt(duel.stake) };
+  runtime.log(`duel ${duelId}: ${onchain.playerA} vs ${onchain.playerB}, stake ${onchain.stake}, pot ${duel.pot}`);
+
+  const http = new HTTPClient();
+  const observed = http
+    .sendRequest(runtime, scoreDuelOnNode, consensusIdenticalAggregation<string>())({
+      bookUrl: `${config.engineUrl}/duels/${duelId}/final`,
+      duelId,
+      chainSelector,
+      onchain,
+    })
+    .result();
+  const out = JSON.parse(observed) as DuelObservation;
+  if (out.duelId !== duelId.toString()) throw new Error(`observation is for duel ${out.duelId}`);
+  runtime.log(`bookHash ${out.bookHash}, winner ${out.winner}`);
+  // Logged before the write so SETTLE_MODE=simulated can pass these exact bytes to DuelEscrow.settleFallback.
+  runtime.log(`report ${out.report}`);
+
+  const txHash = writeSigned(runtime, evmClient, config.duelEscrowAddress, out.report);
+  runtime.log(`settled duel ${duelId}, txHash ${txHash}`);
+
+  return JSON.stringify({ duelId: duelId.toString(), bookHash: out.bookHash, winner: out.winner, report: out.report, txHash });
+};
+
 const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   const config = runtime.config;
-  const input = decodeJson(payload.input) as { lobbyId?: unknown };
+  const input = decodeJson(payload.input) as { lobbyId?: unknown; duelId?: unknown };
+  if (input.duelId !== undefined) return onSettleDuel(runtime, BigInt(String(input.duelId)));
   const lobbyId = BigInt(String(input.lobbyId));
   if (lobbyId < 1n) throw new Error(`bad lobbyId ${input.lobbyId}`);
 
@@ -159,29 +255,7 @@ const onSettle = (runtime: Runtime<Config>, payload: HTTPPayload): string => {
   runtime.log(`report ${out.report}`);
 
   // 5. Sign and write.
-  const report = runtime
-    .report({
-      encodedPayload: hexToBase64(out.report),
-      encoderName: "evm",
-      signingAlgo: "ecdsa",
-      hashingAlgo: "keccak256",
-    })
-    .result();
-  const write = evmClient
-    .writeReport(runtime, {
-      receiver: config.escrowAddress,
-      report,
-      gasConfig: { gasLimit: config.gasLimit },
-    })
-    .result();
-  if (write.txStatus !== EVM_PB.TxStatus.SUCCESS) {
-    throw new Error(`writeReport tx status ${write.txStatus}: ${write.errorMessage ?? ""}`);
-  }
-  if (write.receiverContractExecutionStatus !== EVM_PB.ReceiverContractExecutionStatus.SUCCESS) {
-    throw new Error(`escrow execution status ${write.receiverContractExecutionStatus}: ${write.errorMessage ?? ""}`);
-  }
-  if (!write.txHash) throw new Error("writeReport returned no txHash");
-  const txHash = bytesToHex(write.txHash);
+  const txHash = writeSigned(runtime, evmClient, config.escrowAddress, out.report);
   runtime.log(`settled lobby ${lobbyId}, txHash ${txHash}`);
 
   return JSON.stringify({
