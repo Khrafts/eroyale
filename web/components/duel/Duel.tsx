@@ -53,7 +53,14 @@ function useMe(): Me {
     } catch {
       /* ignore */
     }
-    setMe({ address, avatar: loadAvatar(address), callsign });
+    // Your saved look, else the look everyone else derives from your address (so you match the arena and your opponent).
+    let saved = false;
+    try {
+      saved = !!address && localStorage.getItem(`royale.avatar.${address.toLowerCase()}`) !== null;
+    } catch {
+      /* storage blocked */
+    }
+    setMe({ address, avatar: saved || !address ? loadAvatar(address) : cfgFor(address, callsign.trim() || "Player"), callsign });
   }, []);
   return me;
 }
