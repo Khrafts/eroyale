@@ -12,7 +12,7 @@ import type { PredictScene } from "./b/predict";
 const DW = 1920;
 const DH = 1080;
 
-export default function VariantB({ match }: ArenaProps) {
+export default function VariantB({ match, pinned }: ArenaProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const matchRef = useRef(match);
   matchRef.current = match;
@@ -150,8 +150,8 @@ export default function VariantB({ match }: ArenaProps) {
             <p style={{ fontSize: 28, margin: "20px auto 0", color: ink2 }}>
               {st.error ??
                 (predict
-                  ? `${st.cancelReason ? `${st.cancelReason.charAt(0).toUpperCase()}${st.cancelReason.slice(1).replace(/[.\s]+$/, "")}. ` : ""}Every entry is refunded on chain. The next protocol round shows up here.`
-                  : "Not enough players made it in. Every entry is refunded on chain. The next lobby opens here.")}
+                  ? `${st.cancelReason ? `${st.cancelReason.charAt(0).toUpperCase()}${st.cancelReason.slice(1).replace(/[.\s]+$/, "")}. ` : ""}Every entry is refunded on chain.${pinned ? "" : " The next protocol round shows up here."}`
+                  : `Not enough players made it in. Every entry is refunded on chain.${pinned ? "" : " The next lobby opens here."}`)}
             </p>
           </div>
         </div>

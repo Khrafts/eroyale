@@ -75,3 +75,19 @@
 
 /* below 420 px the brand chip keeps its mark only, so a game chip and the wallet chip fit in the top bar */
 @media (max-width: 420px){.top > a:first-child > span{display:none}.top > a:first-child{padding-right:5px}}
+
+/* navigation (Phase 12): the Practice/Ranked switch (links in the kit's .seg), the live duels on the menu, the
+   practice end block */
+.modeSwitch{flex:none}
+.modeSwitch a{display:inline-flex;align-items:center;padding:6px 12px;border-radius:var(--radius-round);font:600 13px/1.2 var(--body);color:var(--ink2);text-decoration:none;transition:background .2s,color .2s}
+.modeSwitch a[aria-current="page"]{background:var(--ink);color:var(--paper)}
+.modeSwitch a:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}
+.live h2{margin:6px 0 8px;font:800 16px/1.2 var(--display)}
+.live ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.live li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--radius-card);background:var(--island-white)}
+.live li b{display:block;font:600 14px/1.25 var(--body)}
+.live li small{display:block;font:400 12px/1.3 var(--mono);color:var(--muted)}
+.live li a{cursor:pointer;font-weight:600}
+.endBox{top:12px;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end}
+.endBox > div{max-height:100%;overflow:auto}
+@media (prefers-reduced-motion: reduce){.modeSwitch a{transition:none}}

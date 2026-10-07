@@ -1,8 +1,13 @@
-// The island's kit for /play and /arena's DOM: chip, primary and ghost buttons, card, panel and panel head, segmented
-// toggle, bot tag, and the top bar (brand chip back to the island, wallet chip). Styles in kit.module.css, values from
-// app/theme.css and lib/theme.ts. No hooks and no engine access: screens pass what to show.
+// The island's kit for /play, /duel, /arena's DOM and the 404: chip, primary and ghost buttons, card, panel and panel
+// head, segmented toggle, bot tag, the app bar (TopBar: back, brand, game switcher, you chip) and the end-state action
+// block (EndActions, in actions.tsx: import it from "@/components/kit/actions", not from here). Styles in kit.module.css, values from app/theme.css and lib/theme.ts. No hooks and no engine
+// access here (server components can render it). The app bar is bar.tsx (client); its switcher (switcher.tsx) and you
+// chip (you.tsx) load lazily, outside /play's and /arena's first-load JS (server-rendered where the page is).
+// In-app links are the kit's Link (link.tsx: Next's router, no reload). Web/NOTES.md "Navigation" documents the API.
+import Link, { type AppLinkProps } from "./link";
+export { default as AppLink } from "./link";
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode } from "react";
-import { GAME, ISLAND, ink, paper, sun } from "@/lib/theme";
+import { GAME } from "@/lib/theme";
 import k from "./kit.module.css";
 
 export { k as kit };
@@ -12,7 +17,6 @@ type Game = keyof typeof GAME;
 export type Tint = Game | string;
 const tint = (c: Tint | undefined): CSSProperties | undefined => (c ? ({ ["--c" as string]: c in GAME ? GAME[c as Game] : c } as CSSProperties) : undefined);
 const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
-const shortAddr = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 
 /** Glass pill over a scene or on paper. `fill` gives it a game-meaning colour (MEANING.long.fill, ...): ink text on it. */
 export function Chip({ fill, className, style, ...rest }: HTMLAttributes<HTMLSpanElement> & { fill?: string }) {
@@ -20,19 +24,20 @@ export function Chip({ fill, className, style, ...rest }: HTMLAttributes<HTMLSpa
 }
 
 type BtnOwn = { color?: Tint; big?: boolean };
-type BtnProps = (ButtonHTMLAttributes<HTMLButtonElement> & { href?: undefined }) | (AnchorHTMLAttributes<HTMLAnchorElement> & { href: string });
+type LinkProps = AppLinkProps;
+type BtnProps = (ButtonHTMLAttributes<HTMLButtonElement> & { href?: undefined }) | LinkProps;
 /** Primary button in the game's colour (default royale coral). `big` is the display-face game button with ink text
  *  (LONG on mint, SHORT on violet). With `href` it renders a link. */
 export function Button({ color, big, className, style, ...rest }: BtnOwn & BtnProps) {
   const c = cx(k.btn, big && k.big, className);
   const st = { ...tint(color), ...style };
-  if (typeof rest.href === "string") return <a {...(rest as AnchorHTMLAttributes<HTMLAnchorElement>)} className={c} style={st} />;
+  if (typeof rest.href === "string") return <Link {...(rest as LinkProps)} className={c} style={st} />;
   return <button type="button" {...(rest as ButtonHTMLAttributes<HTMLButtonElement>)} className={c} style={st} />;
 }
 
 /** Paper button with an ink outline, for the second action. With `href` it renders a link. */
 export function GhostButton({ className, ...rest }: BtnProps) {
-  if (typeof rest.href === "string") return <a {...(rest as AnchorHTMLAttributes<HTMLAnchorElement>)} className={cx(k.ghost, className)} />;
+  if (typeof rest.href === "string") return <Link {...(rest as LinkProps)} className={cx(k.ghost, className)} />;
   return <button type="button" {...(rest as ButtonHTMLAttributes<HTMLButtonElement>)} className={cx(k.ghost, className)} />;
 }
 
@@ -82,35 +87,4 @@ export function BotTag({ children = "bot" }: { children?: ReactNode }) {
   return <span className={k.bot}>{children}</span>;
 }
 
-/** The island's brand mark. */
-export function BrandMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 32 32" aria-hidden="true" className={cx(k.mark, className)}>
-      <circle cx="16" cy="16" r="15" fill={ink} />
-      <path d="M7 23h18" stroke={paper} strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M16 22V13M16 13c-3-4-6.5-3-7.5 1.5M16 13c3-4 6.5-3 7.5 1.5" stroke={ISLAND.wave} strokeWidth="2.2" fill="none" strokeLinecap="round" />
-      <circle cx="16" cy="8" r="2.6" fill={sun} stroke={paper} strokeWidth="1" />
-    </svg>
-  );
-}
-
-/** Top bar: the brand chip (a link back to the island at `/`), whatever the screen puts in the middle, and the wallet
- *  chip with the burner address (`burner().address`, no balance). */
-export function TopBar({ wallet, children, className }: { wallet?: string | null; children?: ReactNode; className?: string }) {
-  return (
-    <header className={cx(k.top, className)}>
-      <a className={cx(k.chip, k.brand)} href="/" aria-label="Royale Isle, back to the island">
-        <BrandMark />
-        <span className={k.word}>Royale Isle</span>
-      </a>
-      {children}
-      {wallet && (
-        <span className={k.right}>
-          <span className={cx(k.chip, k.wallet)} title={wallet}>
-            {shortAddr(wallet)}
-          </span>
-        </span>
-      )}
-    </header>
-  );
-}
+export { TopBar, BrandMark, type Back } from "./bar";

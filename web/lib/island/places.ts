@@ -3,26 +3,27 @@
 import type { IslandSnap, UserRound } from "./store";
 import { short, usdcShort } from "./format";
 import { ISLAND, coral, ink, mint, sun, tang, violet } from "../theme";
+import { CREATE, navGame } from "../nav";
 import { dojoPlayers } from "../../components/duel/dojo";
 
 /** The shared tokens (lib/theme.ts) the panels and the world colour places with. */
 export const COLORS = { coral, violet, tang, mint, sky: ISLAND.sky, sun, ink };
 
 export type Game = { id: "royale" | "predict" | "duel" | "create"; name: string; short: string; color: string; route: string; h: (s: IslandSnap) => number };
-/** The fountain's four jets; each jet's height follows its game's player count. */
+/** The fountain's four jets (names and colours from lib/nav.ts); each jet's height follows its game's player count. */
 export const GAMES: Game[] = [
   {
     id: "royale",
-    name: "Trading Royale",
+    name: navGame("royale").name,
     short: "TR",
-    color: COLORS.coral,
+    color: navGame("royale").color,
     route: "arena",
     h: (s) => 2.6 + (s.royale ? Math.min(50, s.royale.status === "live" ? s.royale.alive : s.royale.players) : 0) / 50 * 4.4,
   },
-  { id: "predict", name: "Price Prediction", short: "PP", color: COLORS.violet, route: "observatory", h: (s) => 2.6 + (Math.min(50, s.predict?.players ?? 0) / 50) * 4.4 },
+  { id: "predict", name: navGame("predict").name, short: "PP", color: navGame("predict").color, route: "observatory", h: (s) => 2.6 + (Math.min(50, s.predict?.players ?? 0) / 50) * 4.4 },
   // the Duel jet: the queue plus the players in live duels (GET /duels)
-  { id: "duel", name: "Stickman Duel", short: "SD", color: COLORS.tang, route: "dojo", h: () => 1.4 + (Math.min(20, dojoPlayers()) / 20) * 4.4 },
-  { id: "create", name: "Create a round", short: "+", color: COLORS.mint, route: "create", h: () => 3.4 },
+  { id: "duel", name: navGame("duel").name, short: "SD", color: navGame("duel").color, route: "dojo", h: () => 1.4 + (Math.min(20, dojoPlayers()) / 20) * 4.4 },
+  { id: "create", name: CREATE.name, short: CREATE.short, color: CREATE.color, route: "create", h: () => 3.4 },
 ];
 
 export type AdSlot = { id: "bb1" | "bb2" | "bb3" | "bb4"; deg: number; kind: "promo" | "sponsor" | "open"; rank?: number; bg: string };

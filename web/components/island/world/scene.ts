@@ -87,7 +87,7 @@ function disposeTree(root: THREE.Object3D) {
   }
 }
 
-export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, getSnap: () => IslandSnap, cb: WorldCallbacks, reduceMotion: boolean): World | null {
+export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, getSnap: () => IslandSnap, cb: WorldCallbacks, reduceMotion: boolean, skipIntro = false): World | null {
   // r147 colour behaviour on a current three: no colour management, linear output.
   THREE.ColorManagement.enabled = false;
   let renderer: THREE.WebGLRenderer;
@@ -411,7 +411,11 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
     const c3 = c1 + 1;
     return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
   };
-  flyTo(HOME.target, HOME.pos, reduceMotion ? 0 : 3400);
+  // back from an in-app page (or a deep-linked panel): no swoop and no pop-in, the island is simply there
+  const noIntro = reduceMotion || skipIntro;
+  if (skipIntro) intro = false;
+  flyTo(HOME.target, HOME.pos, noIntro ? 0 : 3400);
+  if (skipIntro) controls.autoRotate = !reduceMotion;
   let last = performance.now();
   let lastLines = 0;
   let readyFlag = false;
@@ -434,7 +438,7 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
       const p = id ? picker.picks.get(id) : undefined;
       const hot = !!id && (hovered === id || (!!p && selected === (p.route || id)));
       r.userData.hs += ((hot ? 1.035 : 1) - r.userData.hs) * Math.min(1, dt * 10);
-      r.scale.setScalar(Math.max(0.001, (reduceMotion ? 1 : backOut(k)) * r.userData.base * r.userData.hs));
+      r.scale.setScalar(Math.max(0.001, (noIntro ? 1 : backOut(k)) * r.userData.base * r.userData.hs));
     });
     for (const f of ctx.onFrame) f(dt, t, s, ms);
     mePick.anchor.copy(parkH.mine.root.position).add(new THREE.Vector3(0, (5.6 * parkH.mine.root.scale.x) / 1.5, 0));
@@ -507,7 +511,7 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
       panelRect = { l: pr.left - 8, r: pr.right, t: pr.top - 8, b: pr.bottom };
     }
     labels.layout(picker.picks, camera, W, H, selected, hovered, panelRect);
-    if (!readyFlag && (reduceMotion || ms > popEnd)) {
+    if (!readyFlag && (noIntro || ms > popEnd)) {
       readyFlag = true;
       (window as unknown as { __islandReady?: boolean }).__islandReady = true;
     }

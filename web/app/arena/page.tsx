@@ -1,25 +1,44 @@
 "use client";
-// /arena follows the engine's royale lobby, or the protocol prediction round with ?mode=predict (or ?mock=predict).
-// With neither ?lobby= nor a mode, it falls back to prediction mode when the engine runs no royale lobby
-// (GET /lobbies reports current: null twice in a row, 3 s apart, as with --predict-only). Once in prediction mode it
-// stays there; a royale arena keeps checking every 10 s.
-import { Suspense, lazy, useEffect, useState } from "react";
+// /arena follows the engine's royale lobby (?mode=royale asks for it explicitly), or the protocol prediction round with
+// ?mode=predict (or ?mock=predict). ?lobby=N pins one royale lobby or prediction round, ?duel=N one duel.
+// With no ?lobby= and no mode, it falls back to prediction mode when the engine runs no royale lobby (GET /lobbies
+// reports current: null twice in a row, 3 s apart, as with --predict-only); once there it stays, a royale arena keeps
+// checking every 10 s. The overlay (components/arena/Overlay.tsx) appears on input only; ?kiosk=1 turns it off.
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMatch } from "@/lib/useMatch";
 import { engineHttp } from "@/lib/engineUrl";
+import { useUrlState } from "@/lib/useUrlState";
+import { docTitle } from "@/lib/nav";
 import Storm from "@/components/arena/VariantB";
+import Overlay from "@/components/arena/Overlay";
+import { useDocTitle } from "@/components/arena/title";
 
 // ?duel=:id (or ?mock=duel) is the Stickman Duel big screen, in its own lazily loaded chunk (React.lazy: /arena's
 // first-load JS stays as it was).
 const DuelArena = lazy(() => import("@/components/duel/DuelArena"));
+const posInt = (v: string | null) => {
+  const n = Number(v);
+  return v && Number.isInteger(n) && n > 0 ? n : null;
+};
 
 export default function ArenaPage() {
+  // a picker move changes the query without a reload: start over on the new one
+  const { params } = useUrlState();
+  return <ArenaRoute key={params.toString()} />;
+}
+
+function ArenaRoute() {
   const [predict, setPredict] = useState<boolean | null>(null);
   const [duel, setDuel] = useState<{ id: number | null; mock: boolean } | null>(null);
+  const [lobby, setLobby] = useState<number | null>(null);
+  const [mock, setMock] = useState(false);
+  const [duelOver, setDuelOver] = useState(false);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
+    setMock(!!q.get("mock"));
+    setLobby(posInt(q.get("lobby")));
     if (q.get("duel") || q.get("mock") === "duel") {
-      const id = Number(q.get("duel"));
-      setDuel({ id: Number.isInteger(id) && id > 0 ? id : null, mock: q.get("mock") === "duel" });
+      setDuel({ id: posInt(q.get("duel")), mock: q.get("mock") === "duel" });
       return;
     }
     if (q.get("mock") || q.get("lobby") || q.get("mode") || !process.env.NEXT_PUBLIC_ENGINE_WS) {
@@ -50,17 +69,54 @@ export default function ArenaPage() {
       clearInterval(id);
     };
   }, []);
+  useDocTitle(duel ? docTitle("duel", duel.id ? `Duel #${duel.id} on the big screen` : "Big screen") : null);
   if (duel)
     return (
-      <Suspense fallback={<main style={{ position: "fixed", inset: 0, background: "var(--sky-top)" }} />}>
-        <DuelArena duelId={duel.id} mock={duel.mock} />
-      </Suspense>
+      <>
+        <Suspense fallback={<main style={{ position: "fixed", inset: 0, background: "var(--sky-top)" }} />}>
+          <DuelArena duelId={duel.id} mock={duel.mock} onOver={setDuelOver} />
+        </Suspense>
+        <Overlay game="duel" lobby={null} duel={duel.id} ended={!!duel.id && duelOver} mock={duel.mock} />
+      </>
     );
   if (predict === null) return <main style={{ position: "fixed", inset: 0, background: "var(--sky-top)" }} />;
-  return <Arena predict={predict} />;
+  return <Arena predict={predict} lobby={lobby} mock={mock} />;
 }
 
-function Arena({ predict }: { predict: boolean }) {
+/** Seconds a pinned lobby or round stays on its end before the overlay offers the next one (the podium, the reveal). */
+const HOLD_FINAL = 30;
+const HOLD_SETTLED = 12;
+const HOLD_CANCELLED = 4;
+
+function Arena({ predict, lobby, mock }: { predict: boolean; lobby: number | null; mock: boolean }) {
   const match = useMatch({ predict });
-  return <Storm match={match} />;
+  const game = match.state.mode === "predict" ? "predict" : "royale";
+  const [ended, setEnded] = useState(false);
+  const mref = useRef(match);
+  mref.current = match;
+  useEffect(() => {
+    if (lobby === null) return;
+    let cancelledAt: number | null = null;
+    const id = setInterval(() => {
+      const m = mref.current;
+      const s = m.ref.current;
+      const now = m.clock();
+      if (s.cancelled || s.status === "cancelled") {
+        cancelledAt ??= Date.now();
+        if (Date.now() - cancelledAt >= HOLD_CANCELLED * 1000) setEnded(true);
+        return;
+      }
+      const fin = s.mode === "predict" ? (s.pfinal ? s.pfinalT : null) : s.final ? s.finalT : null;
+      if ((s.settled && s.settledT !== null && now - s.settledT >= HOLD_SETTLED) || (fin !== null && now - fin >= HOLD_FINAL)) setEnded(true);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [lobby]);
+  const shown = match.state.lobbyId ?? lobby;
+  useDocTitle(docTitle(game, shown ? `${game === "predict" ? "Round" : "Lobby"} #${shown} on the big screen` : "Big screen"));
+  return (
+    <>
+      <Storm match={match} pinned={lobby !== null} />
+      <Overlay game={game} lobby={lobby} duel={null} ended={ended} mock={mock} />
+    </>
+  );
 }

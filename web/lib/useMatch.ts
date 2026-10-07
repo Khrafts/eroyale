@@ -387,6 +387,15 @@ export type Match = {
   reducedMotion: boolean;
   /** Apply a local event (mock mode: echo the player's own orders). */
   inject: (ev: MatchEvent) => void;
+  /** The lobby (or round) is pinned: by `opts.lobby` or `?lobby=`. A pinned match never moves on by itself. */
+  pinned: boolean;
+  /**
+   * The engine's current lobby (protocol round in prediction mode) once this one has ended, when it is a different
+   * one; null before the end or when there is none. On a pinned or held match it is only offered, never followed.
+   */
+  next: number | null;
+  /** Move a held match on to `next` now (the player tapped "Play the next lobby"). No-op without `next`. */
+  followNext: () => void;
 };
 
 function readParams() {
@@ -418,6 +427,11 @@ export type MatchOptions = {
    * for its locked, final and settled events alone). Default true.
    */
   feed?: boolean;
+  /**
+   * Hold a finished match on screen (CLAUDE.md "Navigation" rule 8): instead of switching to the engine's next lobby
+   * on its own, expose it as `next` and switch on `followNext()`. Default false (the big screen moves on by itself).
+   */
+  hold?: boolean;
 };
 
 export function useMatch(opts: MatchOptions = {}): Match {
@@ -429,6 +443,9 @@ export function useMatch(opts: MatchOptions = {}): Match {
   const [me, setMe] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [mockSeed, setMockSeed] = useState<number | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const [next, setNext] = useState<number | null>(null);
+  const followRef = useRef<() => void>(() => undefined);
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -438,7 +455,11 @@ export function useMatch(opts: MatchOptions = {}): Match {
     const mock = q.get("mock") === "1" || mockPred;
     const predict = !!opts.predict || mockPred || q.get("mode") === "predict";
     const withFeed = opts.feed !== false;
+    const hold = !!opts.hold;
     setSource(mock ? "mock" : "live");
+    setPinned(fixedLobby !== null);
+    setNext(null);
+    followRef.current = () => undefined;
     const publish = (s: MatchState) => {
       ref.current = s;
       setState({ ...s });
@@ -631,9 +652,27 @@ export function useMatch(opts: MatchOptions = {}): Match {
     };
 
     // Follow the next match: with no ?lobby, switch when the engine's current lobby changes after this one ends.
-    // Prediction mode follows the protocol round instead, switching once this round is resolved.
+    // Prediction mode follows the protocol round instead, switching once this round is resolved. A pinned or held match
+    // only reports it as `next` (rule 8: pinned screens move on when asked, never by surprise).
+    let offered: number | null = null;
+    const switchTo = (current: number) => {
+      const offset = s.serverOffsetMs;
+      s = emptyState(current);
+      s.serverOffsetMs = offset;
+      if (predict) s.mode = "predict";
+      offered = null;
+      setNext(null);
+      publish(s);
+      const old = ws;
+      gen++;
+      old?.close();
+      connect();
+    };
+    followRef.current = () => {
+      if (offered !== null && !closed && fixedLobby === null) switchTo(offered);
+    };
     const follow = setInterval(async () => {
-      if (fixedLobby !== null || closed) return;
+      if (closed) return;
       const done = predict
         ? s.lobbyId === null || s.cancelled || !!s.settled || (s.pfinal !== null && s.pfinalT !== null && clock() - s.pfinalT > 20)
         : s.status === "cancelled" || !!s.settled || (s.final !== null && s.finalT !== null && clock() - s.finalT > 20);
@@ -645,16 +684,14 @@ export function useMatch(opts: MatchOptions = {}): Match {
           const r = await fetch(`${engineHttp()}/lobbies`, { cache: "no-store" });
           current = ((await r.json()) as { current: number | null }).current;
         }
+        if (closed) return;
         if (current !== null && current !== s.lobbyId) {
-          const offset = s.serverOffsetMs;
-          s = emptyState(current);
-          s.serverOffsetMs = offset;
-          if (predict) s.mode = "predict";
-          publish(s);
-          const old = ws;
-          gen++;
-          old?.close();
-          connect();
+          if (fixedLobby !== null || hold) {
+            if (offered !== current) {
+              offered = current;
+              setNext(current);
+            }
+          } else switchTo(current);
         }
       } catch {
         /* try again next round */
@@ -735,9 +772,10 @@ export function useMatch(opts: MatchOptions = {}): Match {
       feed?.close();
       ws?.close();
     };
-  }, [opts.lobby, opts.predict, opts.feed]);
+  }, [opts.lobby, opts.predict, opts.feed, opts.hold]);
 
   const clock = useMemo(() => () => clockRef.current(), []);
   const inject = useMemo(() => (ev: MatchEvent) => injectRef.current(ev), []);
-  return { state, ref, clock, mockSeed, source, me, connected, reducedMotion, inject };
+  const followNext = useMemo(() => () => followRef.current(), []);
+  return { state, ref, clock, mockSeed, source, me, connected, reducedMotion, inject, pinned, next, followNext };
 }

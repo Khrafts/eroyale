@@ -2,7 +2,9 @@
 // The side panel (a bottom sheet on phones) for each building. Buttons that act hand off to the existing screens:
 // /play?lobby= to join a royale lobby, /arena?lobby= to watch, /play?mode=predict&lobby= to predict, and
 // /play?mode=predict&screen=create to create a round.
-import { useEffect, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import Link from "@/components/kit/link";
+import { createRound, docTitle, playRound, playRoyale, watchLobby, watchRound } from "@/lib/nav";
 import { useIsland, type IslandSnap, type UserRound } from "@/lib/island/store";
 import {
   lastPayoutAgo,
@@ -38,14 +40,33 @@ export function useNow() {
 }
 
 type Def = { eyebrow: string; c: string; title: string; body: ReactNode };
+/** The place's own name for the tab title: "The Arena", "The Observatory", else the panel title. */
+const placeName = (d: Def) => (/^(Hall|Islet) · /.test(d.eyebrow) ? d.eyebrow.split(" · ")[1] : d.title);
 
-const playRound = (id: number) => `/play?mode=predict&lobby=${id}`;
 const CHAIN_NAMES: Record<string, string> = { "base-sepolia": "Base Sepolia", "ethereum-sepolia": "Ethereum Sepolia", "eth-sepolia": "Ethereum Sepolia", sepolia: "Ethereum Sepolia" };
 
 export function Panel({ id, api, ref, me }: { id: string; api: IslandApi; ref: Ref<HTMLElement>; me: string | null }) {
   useNow();
   const s = useIsland((x) => x);
   const d = defOf(id, s, api, me);
+  const h = useRef<HTMLHeadingElement>(null);
+  const title = d ? placeName(d) : null;
+  // focus moves into the panel on open and back to what opened it on close (N30); the title names the place
+  useEffect(() => {
+    const prev = document.activeElement instanceof HTMLElement && !document.activeElement.closest(".panel") ? document.activeElement : null;
+    h.current?.focus({ preventScroll: true });
+    return () => {
+      const a = document.activeElement;
+      if (prev?.isConnected && (!a || a === document.body || !a.isConnected || a.closest(".panel"))) prev.focus({ preventScroll: true });
+    };
+  }, []);
+  useEffect(() => {
+    if (!title) return;
+    document.title = docTitle("island", title);
+    return () => {
+      document.title = docTitle("island");
+    };
+  }, [title]);
   if (!d) return null;
   return (
     <aside className="panel" ref={ref} style={{ ["--c" as string]: d.c }} aria-label={d.title}>
@@ -56,7 +77,9 @@ export function Panel({ id, api, ref, me }: { id: string; api: IslandApi; ref: R
             ×
           </button>
         </div>
-        <h2>{d.title}</h2>
+        <h2 ref={h} tabIndex={-1}>
+          {d.title}
+        </h2>
       </div>
       <div className="pbody">{d.body}</div>
     </aside>
@@ -84,9 +107,9 @@ export function RoundList({ rounds, s }: { rounds: UserRound[]; s: IslandSnap })
         <li key={u.lobbyId}>
           <div>
             <b>
-              <a href={playRound(u.lobbyId)} style={{ color: "inherit", textDecoration: "none" }}>
+              <Link href={playRound(u.lobbyId)} style={{ color: "inherit", textDecoration: "none" }}>
                 {roundTitle(u)}
-              </a>
+              </Link>
             </b>
             <span>{roundSub(u)}</span>
           </div>
@@ -201,21 +224,20 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
               <p className="empty">{lineOf("royale.line", s)}. The next lobby shows up here when the engine opens it.</p>
             ) : joinable ? (
               <>
-                <a className="cta" href={`/play?lobby=${r.lobbyId}`}>
+                <Link className="cta" href={playRoyale(r.lobbyId)}>
                   Join lobby #{r.lobbyId} · {usdcShort(r.entryUnits)} USDC
-                </a>
-                <a className="ghost" href={`/arena?lobby=${r.lobbyId}`}>
+                </Link>
+                <Link className="ghost" href={watchLobby(r.lobbyId)}>
                   Watch on the big screen
-                </a>
+                </Link>
               </>
             ) : (
               <>
-                <a className="cta" href={`/arena?lobby=${r.lobbyId}`}>
+                <Link className="cta" href={watchLobby(r.lobbyId)}>
                   {live ? "Watch live" : `Watch lobby #${r.lobbyId}`}
-                </a>
-                <a className="ghost" href="/play">
-                  Play the next lobby
-                </a>
+                </Link>
+                {/* not a button into /play: while this match runs it would land on a closed lobby (N9) */}
+                <p className="empty">{live ? "This match is closed to new players. The next lobby opens when it ends, and shows up here." : "The next lobby opens shortly and shows up here."}</p>
               </>
             )}
             <p className="fine">Payouts are released by a Chainlink CRE report.</p>
@@ -244,9 +266,12 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
                     <b>{p.predicted}</b>
                   </div>
                 </div>
-                <a className="cta" href={playRound(p.lobbyId)}>
+                <Link className="cta" href={playRound(p.lobbyId)}>
                   Make your call · {usdcShort(p.entryUnits)} USDC
-                </a>
+                </Link>
+                <Link className="ghost" href={watchRound(p.lobbyId)}>
+                  Watch on the big screen
+                </Link>
               </>
             ) : (
               <p className="empty">{lineOf("predict.line", s)}. A new protocol round opens as soon as the last one locks.</p>
@@ -292,12 +317,10 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
                 ))}
               </tbody>
             </table>
-            <a className="cta" href="/play?mode=predict&screen=create">
+            <Link className="cta" href={createRound()}>
               Start a round
-            </a>
-            <button className="ghost" onClick={() => api.select("bb4")}>
-              Promote it on a billboard
-            </button>
+            </Link>
+            <p className="fine">The biggest open player rounds go up on the beach billboards for free. Bidding for a billboard comes later.</p>
           </>
         ),
       };
@@ -338,9 +361,9 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
             {u ? (
               <>
                 <Stats rows={[["Now showing", `Round #${u.lobbyId}`], ["Created by", short(u.creator) || "a player"], ["Pot", usdc(u.potUnits)], ["Locks in", lockIn(s, u)]]} />
-                <a className="cta" href={playRound(u.lobbyId)}>
+                <Link className="cta" href={playRound(u.lobbyId)}>
                   Join round #{u.lobbyId}
-                </a>
+                </Link>
               </>
             ) : (
               <>
@@ -383,9 +406,9 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
           <p className="lede">The beach boards show the open player-created rounds with the biggest pots. Nobody pays for the spot. {promoFoot(u)}.</p>
           <RoundList rounds={[u]} s={s} />
           <div style={{ height: 14 }} />
-          <a className="cta" href={playRound(u.lobbyId)}>
+          <Link className="cta" href={playRound(u.lobbyId)}>
             Join round #{u.lobbyId}
-          </a>
+          </Link>
         </>
       ) : (
         <>
