@@ -383,7 +383,7 @@ function Ranked({ me, duelId, side, token, ranked, onAgain, onPractice }: { me: 
   return (
     <main className={s.fight}>
       <TopBar wallet={me.address}>
-        <span className={kit.chip}>{ranked ? <>Ranked · <b>{unitsToUsd(info?.stakeUnits ?? STAKE_UNITS)} USDC</b></> : <>Bot fight · <b>free</b></>}</span>
+        <span className={kit.chip}>{ranked ? <>Ranked · <b>{unitsToUsd(info?.stakeUnits ?? STAKE_UNITS).replace(/\.00$/, "")} USDC</b></> : <>Bot fight · <b>free</b></>}</span>
       </TopBar>
       <div className={s.strip}>
         <span>

@@ -32,9 +32,10 @@
     "**/*.ts",
     "**/*.tsx",
     "../shared/scoring.ts",
+    ".next-b/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-b/types/**/*.ts"
+    ".next-live/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

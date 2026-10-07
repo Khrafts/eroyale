@@ -2,7 +2,7 @@
 // /arena?duel=:id, the big screen at 1920x1080: the fight full bleed on one canvas, island chips for the duel, the
 // stake and the status, and at the end the result with the replay hash (re-run here from the book's inputs).
 // /arena?mock=duel&at=fight shows a frozen mock fight. Loaded lazily by app/arena/page.tsx, so /arena does not grow.
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Chip, kit } from "@/components/kit";
 import { cfgFor, type AvatarCfg } from "@/lib/island/avatar";
 import { isTxHash, unitsToUsd } from "@/lib/events";
@@ -18,7 +18,7 @@ const css = `
 .da-top{position:absolute;left:32px;right:32px;bottom:28px;display:flex;align-items:center;gap:16px;pointer-events:none}
 .da-top > span{font-size:22px;padding:12px 24px;border-width:3px}
 .da-top .grow{margin-left:auto}
-.da-end{position:absolute;left:50%;top:58%;transform:translateX(-50%);width:760px;padding:26px 30px;display:grid;gap:12px;border-width:3px}
+.da-end{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:820px;padding:26px 30px;display:grid;gap:12px;border-width:3px}
 .da-end h2{margin:0;font:900 44px/1.05 var(--display);letter-spacing:-.02em}
 .da-end p{margin:0;font:400 22px/1.4 var(--body);color:var(--ink2)}
 .da-end .row{display:flex;justify-content:space-between;gap:20px;font:400 20px/1.3 var(--body);color:var(--ink2);border-top:1px solid var(--line);padding-top:10px}
@@ -79,10 +79,12 @@ function LiveArena({ duelId }: { duelId: number }) {
   }, [info?.final]);
   const ranked = !players.some((p) => p.bot);
   const name = (i: 0 | 1) => players[i]?.callsign || `fighter ${i + 1}`;
+  const endedRef = useRef(false);
+  endedRef.current = ended;
   const view = (now: number): View | null => {
     const fr = link?.frame(now);
     if (!fr) return null;
-    return { ...fr, names: [name(0), name(1)], bots: [!!players[0]?.bot, !!players[1]?.bot], avatars: [cfgFor(players[0]?.player ?? "a", name(0)), cfgFor(players[1]?.player ?? "b", name(1))], me: null };
+    return { ...fr, names: [name(0), name(1)], bots: [!!players[0]?.bot, !!players[1]?.bot], avatars: [cfgFor(players[0]?.player ?? "a", name(0)), cfgFor(players[1]?.player ?? "b", name(1))], me: null, quietEnd: endedRef.current };
   };
   const fin = info?.final;
   const winnerName = fin ? (fin.winner === null ? null : players.find((p) => p.player.toLowerCase() === fin.winner!.toLowerCase())?.callsign ?? "the winner") : null;
@@ -97,12 +99,15 @@ function LiveArena({ duelId }: { duelId: number }) {
         <section className={`${kit.panel} da-end`}>
           <h2>{winnerName ? `${winnerName} wins` : "A draw"} <span style={{ fontFamily: "var(--mono)" }}>{fin.rounds[0]}–{fin.rounds[1]}</span></h2>
           {ranked && (
-            <div className="row">
-              {winnerName ? "Payout" : "Stakes"}
-              <b>
-                {winnerName ? <span className="da-sun">{unitsToUsd(fin.payoutUnits)} USDC</span> : "refunded"} {!info?.settled ? "provisional" : offline ? "settled offline, nothing paid on chain" : "paid"}
-              </b>
-            </div>
+            <>
+              <div className="row">
+                {winnerName ? "Payout" : "Stakes"}
+                <b>{winnerName ? <span className="da-sun">{unitsToUsd(fin.payoutUnits)} USDC</span> : "refunded to both"}{!info?.settled ? " provisional" : ""}</b>
+              </div>
+              <div className="row">
+                Settlement<b>{!info?.settled ? "waiting for the replay report" : offline ? "settled offline, nothing paid on chain" : `paid, tx ${info.settled.txHash.slice(0, 12)}…`}</b>
+              </div>
+            </>
           )}
           <div className="row">
             Replay hash<b>{verify ? `${verify.hash}${verify.matches ? " · same winner" : " · differs"}` : "replaying…"}</b>

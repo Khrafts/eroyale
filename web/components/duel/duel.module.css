@@ -1,5 +1,5 @@
 /* /duel: the island's panel at full screen, tang as the game colour. Every value from app/theme.css. */
-.screen{min-height:100dvh;display:flex;flex-direction:column;background:var(--paper);color:var(--ink);font-family:var(--body)}
+.screen{min-height:100dvh;overflow-x:hidden;display:flex;flex-direction:column;background:var(--paper);color:var(--ink);font-family:var(--body)}
 .body{padding:16px 16px calc(env(safe-area-inset-bottom,0px) + 24px);display:flex;flex-direction:column;gap:14px;max-width:560px;width:100%;margin:0 auto;box-sizing:border-box}
 .lede{margin:0;font:400 15px/1.45 var(--body);color:var(--ink2)}
 .fine{margin:0;font:400 12.5px/1.45 var(--body);color:var(--muted)}
@@ -23,7 +23,7 @@
 .field input:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}
 
 /* the fight: stage on top, controls in the bottom third */
-.fight{height:100dvh;display:flex;flex-direction:column;background:var(--paper);overflow:hidden;color:var(--ink);overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+.fight{height:100dvh;display:flex;flex-direction:column;background:var(--paper);overflow:hidden;max-width:100vw;color:var(--ink);overscroll-behavior:none;-webkit-user-select:none;user-select:none}
 .stageBox{position:relative;flex:1;min-height:0;border-bottom:var(--stroke) solid var(--ink)}
 .strip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 14px;border-bottom:var(--stroke) solid var(--line);font:500 12.5px/1.2 var(--body);color:var(--ink2)}
 .strip .fig{color:var(--ink);font-weight:600}

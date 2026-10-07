@@ -18,6 +18,8 @@ export type View = {
   avatars: [AvatarCfg, AvatarCfg];
   /** Which side is "you" (labelled), or null for a spectator. */
   me: 0 | 1 | null;
+  /** The screen shows its own result card: no "wins" banner on the canvas. */
+  quietEnd?: boolean;
 };
 
 const ROUND_TICKS = 1800;
@@ -625,6 +627,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       bannerT = 0;
     }
     bannerT += dt;
+    if (v.over && v.quietEnd) return;
     if (v.over) {
       text = v.winner === null ? "Draw" : `${v.names[v.winner]} wins`;
       sub = `${v.f[0].rounds} – ${v.f[1].rounds}`;
