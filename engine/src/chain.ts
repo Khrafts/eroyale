@@ -141,6 +141,7 @@ const CONFIRM_READ_MS = 30_000;
 // Receipt wait per tx (viem's default is 180 s). Base Sepolia mines every 2 s; a tx not mined in this long is stuck,
 // and every escrow call waits behind it on the one serial queue.
 const RECEIPT_TIMEOUT_MS = Number(process.env.RECEIPT_TIMEOUT_MS ?? 60_000);
+const RECEIPT_WAITS = 3; // a tx the node can still mine is waited on this many times RECEIPT_TIMEOUT_MS
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -231,16 +232,30 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
     }
   }
   /**
-   * A tx whose receipt never came. If the node does not know it (dropped, or it sat behind a nonce gap), forget the
-   * local nonce so the next send re-reads the node's pending count and fills the gap, instead of queueing every later
-   * tx behind it forever.
+   * A tx whose receipt has not come after RECEIPT_TIMEOUT_MS. If the node can execute it (it knows the tx and its
+   * pending nonce is past it), the chain is just slow: keep waiting (true). If the node does not know it, or its
+   * nonce is at or past the node's pending nonce (a gap below it: it can never be mined), forget the local nonce so
+   * the next send re-reads the node's pending count and fills the gap (false), instead of queueing every later tx
+   * behind it until each one times out.
    */
-  async function receiptTimedOut(wallet: typeof owner, hash: Hex) {
-    const known = await pub.getTransaction({ hash }).then(() => true, () => false);
+  async function receiptTimedOut(wallet: typeof owner, hash: Hex): Promise<boolean> {
     const who = wallet.account.address;
-    const latest = await pub.getTransactionCount({ address: who, blockTag: "latest" }).catch(() => null);
-    log(`[chain] no receipt for ${hash} after ${RECEIPT_TIMEOUT_MS / 1000} s (node ${known ? "has it pending" : "does not know it"}, mined nonce ${latest ?? "?"}, local ${nonces.get(who) ?? "?"}); nonce re-read on the next send`);
+    const tx = await pub.getTransaction({ hash }).catch(() => null);
+    const pending = await pub.getTransactionCount({ address: who, blockTag: "pending" }).catch(() => null);
+    if (tx && pending !== null && tx.nonce < pending) {
+      log(`[chain] no receipt for ${hash} after ${RECEIPT_TIMEOUT_MS / 1000} s; the node has it queued to mine (nonce ${tx.nonce}), still waiting`);
+      return true;
+    }
+    log(`[chain] no receipt for ${hash} after ${RECEIPT_TIMEOUT_MS / 1000} s; ${tx ? `nonce ${tx.nonce} is not below the node's pending nonce ${pending ?? "?"} (a gap)` : "the node does not know it"}; local nonce ${nonces.get(who) ?? "?"} dropped, re-read on the next send`);
     nonces.delete(who);
+    return false;
+  }
+  async function receipt(wallet: typeof owner, hash: Hex) {
+    for (let n = 1; ; n++) {
+      try { return await pub.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS }); } catch (e) {
+        if (!(e instanceof WaitForTransactionReceiptTimeoutError) || !(await receiptTimedOut(wallet, hash)) || n >= RECEIPT_WAITS) throw e;
+      }
+    }
   }
   const escrow = need(env, "ESCROW_ADDRESS") as Address;
   const token = need(env, "TOKEN_ADDRESS") as Address;
@@ -291,10 +306,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
   async function send(wallet: typeof owner, fn: EscrowFn, args: readonly unknown[]) {
     const { request, result } = await simulate(wallet, fn, args);
     const hash = await write(wallet, request as never);
-    const rc = await pub.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS }).catch(async (e) => {
-      if (e instanceof WaitForTransactionReceiptTimeoutError) await receiptTimedOut(wallet, hash);
-      throw e;
-    });
+    const rc = await receipt(wallet, hash);
     if (rc.status !== "success") throw new Error(`${fn} reverted: ${hash}`);
     log(`[chain] ${fn}(${fn === "settleFallback" ? "report" : args.join(", ")}) ${hash}`);
     return { hash, result };
@@ -321,7 +333,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
         const bal = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [relayer.account.address] });
         if (bal < RELAYER_FLOOR) {
           const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "mint", args: [relayer.account.address, RELAYER_MINT] } as never);
-          const rc = await pub.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+          const rc = await receipt(relayer, hash);
           if (rc.status !== "success") throw new Error(`mint reverted: ${hash}`);
           log(`[chain] relayer minted ${RELAYER_MINT} MockUSDC units ${hash}`);
           await confirmRead("the relayer's minted balance", async () =>
@@ -330,7 +342,7 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
         const have = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, escrow] });
         if (have < 10n ** 30n) {
           const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "approve", args: [escrow, maxUint256] } as never);
-          const rc = await pub.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+          const rc = await receipt(relayer, hash);
           if (rc.status !== "success") throw new Error(`approve reverted: ${hash}`);
           log(`[chain] relayer approved escrow ${hash}`);
           await confirmRead("the relayer's allowance", async () =>

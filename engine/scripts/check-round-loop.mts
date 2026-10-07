@@ -10,6 +10,12 @@
 // Part 2, stall: a CHAIN=off engine (--predict-only --predict-bots 5, temp data dir) is frozen with SIGSTOP from the
 // moment protocol round 1 opens until 75 s after its lock, then resumed. The engine must open exactly one new protocol
 // round, with its full join window, cancel nothing for lack of players, and answer GET /health at once.
+//
+// Part 3 (--anvil, needs CHAIN=anvil, RPC_URL, keys, TOKEN_ADDRESS, ESCROW_ADDRESS, CHAIN_SELECTOR of a local anvil in
+// the env, e.g. the exports of scripts/e2e-local.sh): the incident's shape on a real chain. Anvil stops mining from
+// 25 s before round 1's lock until 75 s after it, so the precreated lobby, start() and every receipt stall on the
+// serial queue (RECEIPT_TIMEOUT_MS=10000). After mining resumes the engine must open one round with its full window,
+// with at most two createLobby calls, and keep answering HTTP throughout.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -59,13 +65,21 @@ async function unit() {
 }
 
 // ---------- part 2
-async function stall() {
+async function stall(anvil: boolean) {
   const data = mkdtempSync(join(tmpdir(), "round-loop-"));
+  const rpc = async (method: string, params: unknown[]) => {
+    const r = await fetch(process.env.RPC_URL!, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+    const j = await r.json() as { error?: unknown };
+    if (j.error) throw new Error(`${method}: ${JSON.stringify(j.error)}`);
+  };
+  if (anvil && (process.env.CHAIN !== "anvil" || !/^http:\/\/(127\.0\.0\.1|localhost):/.test(process.env.RPC_URL ?? ""))) throw new Error("--anvil needs CHAIN=anvil and a local RPC_URL");
   const port = 8830 + Math.floor(Math.random() * 100);
   const entry = process.env.ROUND_LOOP_SERVER ?? "src/server.ts";
   // One process (node --import tsx), so SIGSTOP freezes the engine itself, not a launcher.
   const eng = spawn(process.execPath, ["--import", "tsx", entry, "--predict-only", "--predict-bots", "5", "--port", String(port)], {
-    cwd: resolve(import.meta.dirname, ".."), env: { ...process.env, CHAIN: "off", ENGINE_DATA_DIR: data }, stdio: ["ignore", "pipe", "pipe"],
+    cwd: resolve(import.meta.dirname, ".."), env: anvil
+      ? { ...process.env, ENGINE_DATA_DIR: data, RECEIPT_TIMEOUT_MS: "10000", SETTLE_MODE: "simulated", ENGINE_READ_LAG_MS: "0" }
+      : { ...process.env, CHAIN: "off", ENGINE_DATA_DIR: data }, stdio: ["ignore", "pipe", "pipe"],
   });
   const lines: { at: number; text: string }[] = [];
   let buf = "";
@@ -81,16 +95,35 @@ async function stall() {
     const r1 = opened()[0];
     while (!lines.some((l) => /\[round \d+\] open, 5 players/.test(l.text)) && Date.now() < deadline) await sleep(200);
     const resumeAt = (r1.lock + 75) * 1000;
-    console.log(`round ${r1.id} open, lock ${r1.lock}; SIGSTOP for ${Math.round((resumeAt - Date.now()) / 1000)} s (until 75 s after its lock)`);
-    eng.kill("SIGSTOP");
-    await sleep(resumeAt - Date.now());
+    let slowest = 0;
+    if (anvil) {
+      await sleep(r1.lock * 1000 - 25_000 - Date.now());
+      console.log(`round ${r1.id} lock ${r1.lock}: anvil stops mining for ${Math.round((resumeAt - Date.now()) / 1000)} s (until 75 s after the lock)`);
+      await rpc("evm_setAutomine", [false]); await rpc("evm_setIntervalMining", [0]);
+      while (Date.now() < resumeAt) { // HTTP must answer while the tx queue is stalled
+        const t = Date.now();
+        await fetch(`http://127.0.0.1:${port}/rounds`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+        slowest = Math.max(slowest, Date.now() - t);
+        await sleep(2000);
+      }
+    } else {
+      console.log(`round ${r1.id} open, lock ${r1.lock}; SIGSTOP for ${Math.round((resumeAt - Date.now()) / 1000)} s (until 75 s after its lock)`);
+      eng.kill("SIGSTOP");
+      await sleep(resumeAt - Date.now());
+    }
     const mark = lines.length;
-    eng.kill("SIGCONT");
+    if (anvil) await rpc("evm_setIntervalMining", [1]); else eng.kill("SIGCONT");
     const resumed = Date.now();
     const t0 = Date.now();
     const health = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(5000) }).then((r) => r.ok, () => false);
     const healthMs = Date.now() - t0;
-    await sleep(8000);
+    await sleep(anvil ? 40_000 : 8000);
+    if (anvil) {
+      ok(slowest < 2000, `GET /rounds answered within ${slowest} ms throughout the stall`);
+      const creates = lines.slice(mark).filter((l) => /\[chain\] createLobby\(/.test(l.text)).length;
+      ok(creates <= 2, `${creates} createLobby after mining resumed (at most 2: the stalled one and the next round's early one)`);
+      console.log(lines.filter((l) => /\[chain\] (createLobby|start|cancel)|no receipt|round \d+\] (open, 0|cancelled|the previous)/.test(l.text)).map((l) => l.text).join("\n"));
+    }
     const after = opened(mark);
     const tail = lines.slice(mark).map((l) => l.text);
     console.log(tail.filter((l) => /\[round /.test(l)).slice(0, 30).join("\n"));
@@ -106,6 +139,6 @@ async function stall() {
 }
 
 await unit();
-if (!process.argv.includes("--unit")) await stall();
+if (!process.argv.includes("--unit")) await stall(process.argv.includes("--anvil"));
 console.log(fails.length ? `ROUND LOOP CHECK FAIL (${fails.length})` : "ROUND LOOP CHECK PASS");
 process.exit(fails.length ? 1 : 0);
