@@ -198,7 +198,7 @@ function Practice({ me, onExit }: { me: Me; onExit: () => void }) {
       delete window.__duelState;
     };
   }, [game]);
-  const name = me.callsign || me.avatar.name || "you";
+  const name = me.callsign || (me.avatar.name !== "you" ? me.avatar.name : "") || "Player";
   const avatars: [AvatarCfg, AvatarCfg] = [me.avatar, cfgFor(BOT_ADDR + level, "dojo bot")];
   const view = (now: number): View => {
     const g = sim.current;
@@ -235,7 +235,7 @@ function Practice({ me, onExit }: { me: Me; onExit: () => void }) {
   };
   return (
     <main className={s.fight}>
-      <TopBar wallet={me.address}>
+      <TopBar wallet={me.address} className={s.top}>
         <span className={kit.chip}>Practice</span>
       </TopBar>
       <div className={s.levelRow}>
@@ -310,6 +310,8 @@ function Queue({ me, ticket, since, onMatched, onLeft }: { me: Me; ticket: strin
       const r = await leaveQueue(ticket);
       if (r.status === 200 || r.status === 404) return onLeft();
       if (r.status === 409 && r.ticket && r.ticket.duelId !== null && r.ticket.side !== null) return onMatched({ duelId: r.ticket.duelId, side: r.ticket.side, token: r.ticket.sessionToken, ranked: r.ticket.ranked });
+      // 409 while waiting: already paired, the duel is being set up; the poll takes you to the fight
+      if (r.status === 409) return setErr("You were just paired with a player: the duel is being set up, so the queue can no longer be left.");
       setErr(`Could not leave the queue (the engine answered ${r.status}).`);
     } catch (e) {
       setErr(`Could not leave the queue: ${(e as Error).message}`);
@@ -329,7 +331,7 @@ function Queue({ me, ticket, since, onMatched, onLeft }: { me: Me; ticket: strin
   };
   return (
     <main className={s.screen}>
-      <TopBar wallet={me.address}>
+      <TopBar wallet={me.address} className={s.top}>
         <span className={kit.chip}>Ranked</span>
       </TopBar>
       <PanelHead color="duel" eyebrow="The Dojo · queue" title="Looking for an opponent" />
@@ -396,7 +398,7 @@ function Ranked({ me, duelId, side, token, ranked, onAgain, onPractice }: { me: 
   const status = info?.missing ? "No such duel on this engine" : info?.cancelled ? `Cancelled: ${info.cancelled}` : info?.final ? "Replaying the match" : !info?.connected ? "Connecting…" : info.status === "countdown" || info.status === "matching" ? "Get ready" : info.status === "settling" ? "Replaying the match" : "Live";
   return (
     <main className={s.fight}>
-      <TopBar wallet={me.address}>
+      <TopBar wallet={me.address} className={s.top}>
         <span className={kit.chip}>{ranked ? "Ranked" : "Bot fight"}</span>
       </TopBar>
       <div className={s.strip}>
@@ -436,13 +438,13 @@ function Result({ me, side, players, final, settled, verify, ranked, stakeUnits,
   const opp = players[1 - side]?.callsign ?? "your opponent";
   return (
     <main className={s.screen}>
-      <TopBar wallet={me.address}>
+      <TopBar wallet={me.address} className={s.top}>
         <span className={kit.chip}>{ranked ? "Ranked" : "Bot fight"}</span>
       </TopBar>
       <PanelHead color="duel" eyebrow={`Duel #${duelId} · result`} title={verdict} />
       {last && (
         <div style={{ height: 190, borderBottom: "var(--stroke) solid var(--ink)" }}>
-          <Stage view={() => last} hud={false} label="The last frame of the fight" />
+          <Stage view={() => ({ ...last, quietEnd: true })} hud={false} label="The last frame of the fight" />
         </div>
       )}
       <div className={s.body}>
@@ -471,13 +473,13 @@ function Result({ me, side, players, final, settled, verify, ranked, stakeUnits,
         {!ranked && <p className={s.fine}>A free fight against the bot: no stake, no payout.</p>}
         <div className={s.rows}>
           <div>
-            Replay hash<b>{verify ? verify.hash : "replaying…"}</b>
+            Replay hash<b className={s.hash}>{verify ? verify.hash : "replaying…"}</b>
           </div>
           <div>
             Replayed here<b>{verify ? (verify.matches ? `same winner, ${verify.ticks} ticks` : "does not match the engine") : "–"}</b>
           </div>
           <div>
-            Book hash<b title={final.bookHash}>{final.bookHash.slice(0, 10)}…{final.bookHash.slice(-6)}{verify ? (verify.bookHashOk ? " ✓" : " (differs)") : ""}</b>
+            Book hash<b className={s.hash} title={final.bookHash}>{final.bookHash.slice(0, 10)}…{final.bookHash.slice(-6)}{verify ? (verify.bookHashOk ? " ✓" : " (differs)") : ""}</b>
           </div>
         </div>
         <div className={s.two}>
@@ -532,7 +534,7 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
     : () => toView(st, [players[0].callsign, youName], [false, false], [oppAvatar, me.avatar], MOCK_ME);
   return (
     <main className={s.fight}>
-      <TopBar wallet={me.address}>
+      <TopBar wallet={me.address} className={s.top}>
         <span className={kit.chip}>{practice ? "Practice" : "Ranked"}</span>
       </TopBar>
       {practice ? (

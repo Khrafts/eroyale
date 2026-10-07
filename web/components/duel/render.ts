@@ -2,8 +2,22 @@
 // its sky gradient with slow clouds, a toon meadow and a wooden dojo deck with a 3 px ink outline, and two stickmen
 // in ink lines wearing their avatar's colours. Everything is read from a plain view each frame; the renderer keeps
 // only presentation state (camera, smoothed joints, sparks, the damage trail, banners).
-import type { AvatarCfg } from "@/lib/island/avatar";
-import { ISLAND, canvasFont, coral, coralText, gloss, ink, muted, paper, shade, skyBottom, skyTop, sun, tang } from "@/lib/theme";
+import { AV, type AvatarCfg } from "@/lib/island/avatar";
+import { ISLAND, canvasFont, coral, coralText, gloss, ink, paper, shade, skyBottom, skyTop, sun, tang, violet } from "@/lib/theme";
+
+/** Each side's accent (the ring under its feet), so the two fighters never read as one. */
+const SIDE = [tang, violet] as const;
+const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const dist = (a: string, b: string) => {
+  const [x, y] = [rgb(a), rgb(b)];
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+};
+/** Side 1 changes shirt when it is too close to side 0's (presentation only). */
+function distinct(a0: AvatarCfg, a1: AvatarCfg): AvatarCfg {
+  if (dist(a0.shirt, a1.shirt) >= 90) return a1;
+  const alt = AV.shirt.find((c) => dist(c, a0.shirt) >= 140 && dist(c, a1.pants) >= 90 && dist(c, a0.pants) >= 60);
+  return alt ? { ...a1, shirt: alt } : a1;
+}
 
 export type RFighter = { x: number; y: number; hp: number; facing: 1 | -1; act: string; frame: number; combo: number; rounds: number };
 export type View = {
@@ -134,7 +148,7 @@ function poseOf(f: RFighter, t: number): Joints {
 // ---------- the renderer ----------
 type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number };
 type Burst = { x: number; y: number; life: number; color: string; blocked: boolean };
-type FState = { j: Joints | null; trail: number; trailHold: number; lastHp: number; lastKind: string; comboShown: number; comboPop: number; comboFade: number };
+type FState = { j: Joints | null; trail: number; trailHold: number; lastHp: number; seenHp: number | null; lastKind: string; comboShown: number; comboPop: number; comboFade: number; flash: number };
 
 export type Renderer = {
   draw: (v: View, now: number) => void;
@@ -151,9 +165,12 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
   let W = 0,
     H = 0,
     dpr = 1;
-  let cam = { x: 6000, w: 6400 };
+  let cam = { x: 6000, w: 6400, top: 0 };
+  let hitstop = 0;
+  let held: [RFighter, RFighter] | null = null;
+  let comboRound = 0;
   let last = 0;
-  const fs: [FState, FState] = [0, 1].map(() => ({ j: null, trail: 100, trailHold: 0, lastHp: 100, lastKind: "idle", comboShown: 0, comboPop: 0, comboFade: 0 })) as [FState, FState];
+  const fs: [FState, FState] = [0, 1].map(() => ({ j: null, trail: 100, trailHold: 0, lastHp: 100, seenHp: null, lastKind: "idle", comboShown: 0, comboPop: 0, comboFade: 0, flash: 0 })) as [FState, FState];
   const sparks: Spark[] = [];
   const bursts: Burst[] = [];
   let shake = 0;
@@ -172,8 +189,11 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
   resize();
 
   const u = () => (big ? W / 1920 : Math.min(W / 390, H / 420));
-  const groundY = () => H * (big ? 0.8 : 0.82);
-  const scale = () => Math.min(W / cam.w, (groundY() - (big ? 0.2 : 0.2) * H) / 1900);
+  const groundY = () => H * (big ? 0.8 : 0.86);
+  /** Below the HUD: the highest a head may reach. */
+  const hudBottom = () => (big ? (W / 1920) * 230 : 84 * u());
+  // fit the pair across and the highest of them (a jump) plus a body above the ground
+  const scale = () => Math.min(W / cam.w, (groundY() - hudBottom()) / (cam.top + 1900));
   const sx = (x: number) => (x - cam.x) * scale() + W / 2;
   const sy = (y: number) => groundY() - y * scale();
 
@@ -192,7 +212,13 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       const sp = 40 + ((i * 53) % 50);
       sparks.push({ x, y, vx: Math.cos(a) * sp + att.facing * 25, vy: Math.sin(a) * sp + 20, life: 1, max: 0.35 + ((i * 7) % 5) * 0.05, color: i % 3 === 0 ? tang : color, size: 70 + ((i * 31) % 50) });
     }
-    if (!blocked && !opts.reduceMotion) shake = Math.max(shake, kind === "heavy" || kind === "throw" ? 1 : 0.55);
+    if (!blocked && !opts.reduceMotion) {
+      shake = Math.max(shake, kind === "heavy" || kind === "throw" ? 1 : 0.55);
+      // hitstop: hold the picture ~50 ms, the defender flashes paper for two frames (presentation only)
+      hitstop = 0.05;
+      held = [{ ...v.f[0] }, { ...v.f[1] }];
+      fs[d].flash = 2;
+    }
   }
 
   // ---------- stage ----------
@@ -311,17 +337,24 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     ctx.stroke();
   }
 
-  function fighter(f: RFighter, j: Joints, av: AvatarCfg, hurt: number) {
+  function fighter(f: RFighter, j: Joints, av0: AvatarCfg, hurt: number, accent: string, flash: boolean) {
     const s = scale();
     const ox = sx(f.x);
     const oy = sy(f.y);
     const face = f.facing;
     const w = Math.max(big ? 9 : 5, 105 * s);
-    // floor shadow
+    const av = flash ? { ...av0, shirt: paper, pants: paper, skin: paper, hatColor: paper } : av0;
+    // floor shadow with the side's accent ring
+    const rx = 380 * s * Math.max(0.4, 1 - f.y / 2400);
     ctx.fillStyle = shade;
     ctx.beginPath();
-    ctx.ellipse(ox, groundY(), 380 * s * Math.max(0.4, 1 - f.y / 2400), 60 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(ox, groundY(), rx, 60 * s, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = Math.max(2, 26 * s);
+    ctx.beginPath();
+    ctx.ellipse(ox, groundY(), rx * 1.05, 64 * s, 0, 0, Math.PI * 2);
+    ctx.stroke();
     // back limbs first, then torso, then front limbs
     limb(j.hip, j.kB, j.fB, av.pants, ox, oy, face, w);
     limb(j.neck, j.eB, j.hB, av.shirt, ox, oy, face, w);
@@ -481,7 +514,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       // name row: head, callsign, bot tag, "you"
       const hr = 9 * k;
       const hx = side === 0 ? x0 + hr : x0 + barW - hr;
-      head(hx, nameY + hr, hr, v.avatars[side], side === 0 ? 1 : -1, 0, Math.max(1.5, lw * 0.8));
+      head(hx, nameY + hr, hr, side === 1 ? distinct(v.avatars[0], v.avatars[1]) : v.avatars[0], side === 0 ? 1 : -1, 0, Math.max(1.5, lw * 0.8));
       ctx.font = canvasFont("display", 700, 11 * k);
       ctx.textBaseline = "middle";
       ctx.textAlign = side === 0 ? "left" : "right";
@@ -541,7 +574,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       ctx.fillStyle = coral;
       if (side === 0) ctx.fillRect(x0, by, tw2, barH);
       else ctx.fillRect(x0 + barW - tw2, by, tw2, barH);
-      ctx.fillStyle = hp <= 25 ? coral : tang;
+      ctx.fillStyle = hp <= 25 ? coralText : tang;
       if (side === 0) ctx.fillRect(x0, by, hw, barH);
       else ctx.fillRect(x0 + barW - hw, by, hw, barH);
       ctx.fillStyle = gloss;
@@ -573,18 +606,33 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     const secs = Math.max(0, Math.ceil((ROUND_TICKS - v.roundTick) / 60));
     const tx = W / 2 - timerW / 2;
     const ty = top + 2 * k;
-    chip(tx, ty, timerW, 30 * k, paper, lw, 3 * k * 0.8);
+    // one paper chip: the seconds left, and the round under them in ink
+    ctx.fillStyle = ink;
+    rr(tx, ty + 3 * k * 0.8, timerW, 42 * k, 14 * k);
+    ctx.fill();
+    ctx.fillStyle = paper;
+    rr(tx, ty, timerW, 42 * k, 14 * k);
+    ctx.fill();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = lw;
+    ctx.stroke();
     ctx.font = canvasFont("mono", 800, 17 * k);
     ctx.fillStyle = secs <= 5 && !v.pause ? coralText : ink;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(v.pause > 0 && v.roundTick === 0 ? 30 : secs).padStart(2, "0"), W / 2, ty + 15 * k + 1);
-    ctx.font = canvasFont("body", 600, 8 * k);
-    ctx.fillStyle = muted;
-    ctx.fillText(`Round ${v.round}`, W / 2, ty + 30 * k + 12 * k);
+    ctx.font = canvasFont("body", 700, 8 * k);
+    ctx.fillStyle = ink;
+    ctx.fillText(`Round ${v.round}`, W / 2, ty + 32 * k);
 
-    // combo counters, on the attacker's side (the rules keep the count on the attacker)
+    // combo counters, on the attacker's side (the rules keep the count on the attacker); cleared at a new round and
+    // hidden during the round intro
+    if (v.round !== comboRound) {
+      comboRound = v.round;
+      fs.forEach((x) => Object.assign(x, { comboShown: 0, comboFade: 0, comboPop: 0 }));
+    }
     for (const side of [0, 1] as const) {
+      if (v.pause > 0) break;
       const st = fs[side];
       const c = v.f[side].combo;
       if (c >= 2 && c !== st.comboShown) {
@@ -665,23 +713,35 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     const dt = last ? Math.min(0.1, (now - last) / 1000) : 1 / 60;
     last = now;
     // hits inferred from hp drops or a fresh blockstun
+    // (seenHp is this loop's own memory: the HUD may be off, as on the result screen)
     for (const side of [0, 1] as const) {
       const f = v.f[side];
       const st = fs[side];
       const kind = kindOf(f.act);
-      const prevHp = st.j ? st.lastHp : f.hp;
-      if (st.j && (f.hp < prevHp || (kind === "bstun" && st.lastKind !== "bstun"))) spawnHit(v, side, kind === "bstun");
+      if (st.seenHp !== null && (f.hp < st.seenHp || (kind === "bstun" && st.lastKind !== "bstun"))) spawnHit(v, side, kind === "bstun");
+      st.seenHp = f.hp;
       st.lastKind = kind;
     }
     // camera: centre on the pair, zoom to fit them with room for reach
     const mid = (v.f[0].x + v.f[1].x) / 2;
     const span = Math.abs(v.f[0].x - v.f[1].x);
-    const wantW = Math.max(big ? 6400 : 5000, Math.min(11800, span + (big ? 4200 : 3400)));
+    const full = STAGE_MAX - STAGE_MIN + 600;
+    // the end of a match on the big screen pulls back to the whole deck, leaving the top third for the result card
+    const wantW = big && v.over && v.quietEnd ? full : Math.max(big ? 5200 : 2900, Math.min(full, span + (big ? 3800 : 2200)));
     const k = 1 - Math.exp(-dt * 6);
     cam.w += (wantW - cam.w) * k;
-    const half = cam.w / 2;
-    const wantX = Math.max(STAGE_MIN - 600 + half, Math.min(STAGE_MAX + 600 - half, mid));
+    cam.top += (Math.max(v.f[0].y, v.f[1].y, 0) - cam.top) * (1 - Math.exp(-dt * 8));
+    // keep the view on the deck: never past the posts
+    const half = W / 2 / scale();
+    const lo = STAGE_MIN - 300 + half,
+      hi = STAGE_MAX + 300 - half;
+    const wantX = lo > hi ? (STAGE_MIN + STAGE_MAX) / 2 : Math.max(lo, Math.min(hi, mid));
     cam.x += (wantX - cam.x) * k;
+    if (lo <= hi) cam.x = Math.max(lo, Math.min(hi, cam.x));
+    if (hitstop > 0) hitstop -= dt;
+    else held = null;
+    const shown = held ?? v.f;
+    const avs: [AvatarCfg, AvatarCfg] = [v.avatars[0], distinct(v.avatars[0], v.avatars[1])];
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     shake = Math.max(0, shake - dt * 5);
@@ -691,12 +751,14 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     stage(now);
     const order = v.me === 1 ? [0, 1] : [1, 0];
     for (const side of order as (0 | 1)[]) {
-      const f = v.f[side];
+      const f = shown[side];
       const st = fs[side];
       const target = poseOf(f, now);
-      st.j = st.j ? mix(st.j, target, opts.reduceMotion ? 1 : 1 - Math.exp(-dt * 38)) : target;
+      if (!held) st.j = st.j ? mix(st.j, target, opts.reduceMotion ? 1 : 1 - Math.exp(-dt * 38)) : target;
+      else st.j = st.j ?? target;
       const kind = kindOf(f.act);
-      fighter(f, st.j, v.avatars[side], kind === "hstun" || kind === "down" || f.hp <= 0 ? 1 : 0);
+      fighter(f, st.j, avs[side], kind === "hstun" || kind === "down" || f.hp <= 0 ? 1 : 0, SIDE[side], st.flash > 0);
+      if (st.flash > 0) st.flash--;
     }
     // sparks and hit bursts (world units)
     const s = scale();

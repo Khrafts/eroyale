@@ -1,8 +1,8 @@
 ## Status
-- Step: duel-ui review fixes on feat/duel (engine merged): leave-queue DELETE, offline wording, Dojo results flags, tokens, winnerSide.
-- Last check: GATE PASS ui, predict-ui, island-ui, duel-ui (free PORT); typecheck clean. look-ui fails only on look-play/look-arena paths.
-- Next: the look judge's findings, if any.
-- Blockers: none (DELETE /duels/queue/:ticket answers 404 until the engine adds it; the phone then returns to the menu).
+- Step: duel-ui review and look-judge fixes on feat/duel (engine with DELETE /duels/queue/:ticket merged).
+- Last check: GATE PASS ui, predict-ui, island-ui, duel-ui (free PORT); typecheck clean; PvP, leave-queue, arena end card rechecked on a local CHAIN=off engine.
+- Next: further review findings, if any.
+- Blockers: none.
 
 ## Running
 
@@ -141,5 +141,6 @@ look-arena restyle /play and /arena on it.
 - Leaving the queue sends `DELETE /duels/queue/:ticket` and returns to the menu only on 200 or 404; a 409 with a matched ticket goes to the fight. A `dfinal` is placed by its `winnerSide` (else the winner's address among the players); until it can be placed the result waits and no draw is shown. `GET /duels/:id` 404 stops following the duel; an archived or finished snapshot is shown from its `dfinal`/`settled` without reconnecting. Offline amounts always carry "not paid, offline"; draws say "Refunded, tx …". Stake amounts come from the engine's `stakeUnits`. Your name in a fight is the engine's `players[side].callsign`.
 - Island: `components/duel/dojo.ts` polls `GET /duels` every 3 s (paused while hidden); the Dojo panel (`DojoPanel.tsx`, mounted by Panel.tsx), the list card, the Dojo label line and the Duel jet (queue + players in live duels, out of 20) read it.
 - Mocks: `/duel?mock=duel&at=practice|fight|result`, `/arena?mock=duel&at=fight`, `/?mock=island&at=dojo` (Dojo panel open, mock GET /duels). The mock match is botInput level 3 against level 2 through the rules (`mock.ts`); in the ranked moments you are kestrel on side 1, who wins 2-0.
+- Framing: the camera fits the pair across and the highest fighter plus a body (phone: fighters about 45% of the stage), never shows past the posts, and at the end of a match on the big screen pulls back to the whole deck under the result card. Each side has an accent ring under its feet (tang, violet) and side 1 changes shirt when it is too close to side 0's. A clean hit holds the picture about 50 ms and flashes the defender paper for two frames. The combo count clears at a new round and hides during the round intro.
 - Renderer (`render.ts`): sky gradient and clouds, meadow, sand deck with an ink edge, dojo posts at the walls; stickmen in ink with avatar colours (yours from storage, others `cfgFor`), joints eased toward pose targets each frame, hit sparks and bursts on hp drops and fresh blockstun, the combo count (kept on the attacker by the rules), health with a coral trail, round dots, timer, round and winner banners. `prefers-reduced-motion`: no sparks, shake or banner pop.
 - Verified 2026-10-07 against a local CHAIN=off engine from the duel-engine branch: two browser contexts queued and fought (duel 2, alpha 2-0, both phones show the same replay hash 77c85e54 and a matching book hash, settled offline), a draw by time-out (duel 1, stakes refunded), a free bot fight, the big screen end card, and the live Dojo panel.

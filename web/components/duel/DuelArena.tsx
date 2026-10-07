@@ -18,7 +18,7 @@ const css = `
 .da-top{position:absolute;left:32px;right:32px;bottom:28px;display:flex;align-items:center;gap:16px;pointer-events:none}
 .da-top > span{font-size:22px;padding:12px 24px;border-width:3px}
 .da-top .grow{margin-left:auto}
-.da-end{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:820px;padding:26px 30px;display:grid;gap:12px;border-width:3px}
+.da-end{position:absolute;left:50%;top:230px;transform:translateX(-50%);width:820px;padding:26px 30px;display:grid;gap:12px;border-width:3px}
 .da-end h2{margin:0;font:900 44px/1.05 var(--display);letter-spacing:-.02em}
 .da-end p{margin:0;font:400 22px/1.4 var(--body);color:var(--ink2)}
 .da-end .row{display:flex;justify-content:space-between;gap:20px;font:400 20px/1.3 var(--body);color:var(--ink2);border-top:1px solid var(--line);padding-top:10px}
