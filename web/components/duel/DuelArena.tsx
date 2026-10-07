@@ -27,11 +27,13 @@ const css = `
 .da-wait{position:absolute;inset:0;display:grid;place-items:center;font:800 40px/1.2 var(--display);color:var(--paper);text-shadow:0 3px 0 var(--ink)}
 `;
 
-export default function DuelArena({ duelId, mock }: { duelId: number | null; mock: boolean }) {
+/** `onOver(true)` once the duel is over (its end card has shown for a while, it was cancelled, or it does not exist), so
+ *  the pinned big screen can offer the next duel (CLAUDE.md "Navigation" rule 8). */
+export default function DuelArena({ duelId, mock, onOver }: { duelId: number | null; mock: boolean; onOver?: (over: boolean) => void }) {
   return (
     <main className="da">
       <style>{css}</style>
-      {mock || duelId === null ? <MockArena /> : <LiveArena duelId={duelId} />}
+      {mock || duelId === null ? <MockArena /> : <LiveArena duelId={duelId} onOver={onOver} />}
     </main>
   );
 }
@@ -65,7 +67,7 @@ function Bottom({ duelId, stake, status, pot }: { duelId: number; stake: string;
   );
 }
 
-function LiveArena({ duelId }: { duelId: number }) {
+function LiveArena({ duelId, onOver }: { duelId: number; onOver?: (over: boolean) => void }) {
   const link = useMemo(() => (typeof window === "undefined" ? null : new DuelLink(duelId, null, null)), [duelId]);
   useEffect(() => () => link?.close(), [link]);
   const info = useSyncExternalStore((f) => link?.subscribe(f) ?? (() => {}), () => link?.info ?? null, () => null);
@@ -77,6 +79,13 @@ function LiveArena({ duelId }: { duelId: number }) {
     const id = setTimeout(() => setEnded(true), 2500);
     return () => clearTimeout(id);
   }, [info?.final]);
+  const gone = !!info?.missing || !!info?.cancelled;
+  useEffect(() => {
+    if (!ended && !gone) return;
+    // the end card holds the screen for a while before the next duel is offered; a cancelled or missing duel at once
+    const id = setTimeout(() => onOver?.(true), gone ? 3000 : 12000);
+    return () => clearTimeout(id);
+  }, [ended, gone, onOver]);
   const ranked = info?.ranked ?? !players.some((p) => p.bot);
   const name = (i: 0 | 1) => players[i]?.callsign || `fighter ${i + 1}`;
   const endedRef = useRef(false);
