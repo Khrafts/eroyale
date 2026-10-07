@@ -53,3 +53,17 @@ export function Pennant({ side, size = 22, plain }: { side: Side; size?: number;
     </svg>
   );
 }
+
+/** Between `final` and `settled`: the settlement report is on its way through Chainlink CRE. A mint arc turns in an
+ *  ink ring (a still mint dot under reduced motion); the confirmed stamp replaces it when `settled` lands. */
+export function Settling() {
+  return (
+    <div className={`${s.stamp} ${s.settling}`} role="status" aria-live="polite">
+      <p className={`${s.stampTitle} ${s.settlingTitle}`}>
+        <span className={s.spinner} aria-hidden="true" />
+        Settling on Base Sepolia
+      </p>
+      <p className={s.stampBody}>The Chainlink CRE report is on its way. Payouts are provisional until it lands.</p>
+    </div>
+  );
+}

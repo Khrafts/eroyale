@@ -228,9 +228,15 @@
 .stampTitle::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--mint); border: var(--stroke) solid var(--ink); }
 .stampOff::before { background: var(--muted); }
 .stampBody { margin: 3px 0 0; font-size: 13px; color: var(--ink2); }
+.settling { transform: none; animation: settleIn 0.4s ease-out; }
+.settlingTitle::before { display: none; }
+.spinner { flex: none; width: 16px; height: 16px; border-radius: 50%; border: var(--stroke) solid var(--ink); border-top-color: var(--mint); border-right-color: var(--mint); background: var(--island-white); animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes settleIn { from { opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   .sentenceDanger::after { animation: none; opacity: 0.14; }
   .market, .size { transition: none; }
   .toast { animation: none; }
+  .spinner { animation: none; border-color: var(--ink); background: var(--mint); }
 }

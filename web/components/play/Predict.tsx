@@ -37,7 +37,7 @@ import { PROTOCOL_LOBBY, mockMine } from "@/mocks/predict";
 import { useRolling } from "@/lib/useRolling";
 import { AvatarHead, useMyAvatar } from "./Avatar";
 import { Shell } from "./Bar";
-import { Head, figs } from "./parts";
+import { Head, figs, Settling } from "./parts";
 import s from "./play.module.css";
 import p from "./predict.module.css";
 
@@ -1133,7 +1133,7 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: Go }) 
           </div>
         )
       ) : (
-        <p className={s.fine}>Payouts are provisional until the Chainlink report settles the pot.</p>
+        <Settling />
       )}
       <RoundActions match={match} go={go} />
       </div>
