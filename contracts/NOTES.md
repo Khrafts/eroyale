@@ -1,8 +1,8 @@
 <!-- status -->
-Step: prediction rounds done and merged; escrow redeployed on Base Sepolia (0xf4D071E6713C60200C7deDD905be46c31aFa9394)
-Last checks: contracts, workflow, predict-contracts, predict-workflow pass
-Next: none
-Blockers: none
+Step: Phase 11 duel-contracts: DuelEscrow + 13 tests done (golden duel test waits for the gate fixture)
+Last checks: contracts PASS, predict-contracts PASS; duel-contracts gate not installed yet
+Next: DeployDuel.s.sol, workflow buildDuelReport
+Blockers: gates.next-duel fixtures, shared/duel.ts (duel-sim) not landed
 <!-- /status -->
 
 # Contracts track notes
