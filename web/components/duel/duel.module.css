@@ -106,3 +106,15 @@
 .endBox{top:12px;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end}
 .endBox > div{max-height:100%;overflow:auto}
 @media (prefers-reduced-motion: reduce){.modeSwitch a{transition:none}}
+
+/* ranked's "Coming soon" chip (the Dojo panel's label, as a chip) */
+.soonChip{display:table;margin:0 0 5px;font-style:normal;padding:2px 8px;border:var(--stroke) solid var(--ink);border-radius:var(--radius-round);background:var(--sun);color:var(--ink);font:600 11.5px/1.3 var(--mono);vertical-align:2px;white-space:nowrap}
+
+/* no touch screen (mouse and keyboard only): the pad, Block, A and B go, and the stage takes their height; the hint
+   names the arrow keys instead of the Block button */
+.keysOnly{display:none}
+@media not (any-pointer: coarse){
+  .controls{display:none}
+  .touchOnly{display:none}
+  .keysOnly{display:inline}
+}
