@@ -1,10 +1,11 @@
 "use client";
-// Arena variant B, the storm: the lobby as a mountain range, equity as altitude, the zone as a flood.
-// Prediction lobbies draw the same world as a price survey (b/predict.ts) on the same canvas.
+// The arena in the island's world: the lobby as a toon island under the island's sky, equity as altitude, the zone
+// as the island's sea. Prediction lobbies draw the same world as a price chart (b/predict.ts) on the same canvas.
 import { useEffect, useRef } from "react";
 import type { ArenaProps } from "./types";
-import { condensed, extra } from "./b/fonts";
-import { C } from "./b/draw";
+import { FONT, RADIUS, SHADOW, ink, ink2, paper, skyTop } from "@/lib/theme";
+import { loadAvatar } from "@/lib/island/avatar";
+import { rgba } from "./b/draw";
 import { Scene } from "./b/scene";
 import { PredictScene } from "./b/predict";
 
@@ -20,24 +21,33 @@ export default function VariantB({ match }: ArenaProps) {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const scene = new Scene(condensed.style.fontFamily, extra.style.fontFamily);
-    const pscene = new PredictScene(condensed.style.fontFamily, extra.style.fontFamily);
-    const fonts = [
-      `800 40px ${condensed.style.fontFamily}`,
-      `500 20px ${condensed.style.fontFamily}`,
-      `700 40px ${extra.style.fontFamily}`,
-    ];
-    Promise.all(fonts.map((f) => document.fonts.load(f)))
-      .catch(() => undefined)
-      .then(() => {
-        scene.T.cache.clear();
-        pscene.T.cache.clear();
-      });
-    const onFonts = () => {
+    const scene = new Scene();
+    const pscene = new PredictScene();
+    const clear = () => {
       scene.T.cache.clear();
       pscene.T.cache.clear();
     };
-    document.fonts.addEventListener("loadingdone", onFonts);
+    const fonts = [`800 40px ${FONT.display}`, `600 20px ${FONT.body}`, `800 40px ${FONT.mono}`, `600 20px ${FONT.mono}`];
+    Promise.all(fonts.map((f) => document.fonts.load(f)))
+      .catch(() => undefined)
+      .then(clear);
+    document.fonts.addEventListener("loadingdone", clear);
+
+    // Your own avatar, when this browser already has a burner key (the phone's); the arena never creates one.
+    let alive = true;
+    try {
+      if (localStorage.getItem("royale.burner")) {
+        void import("@/lib/engine").then((e) => {
+          if (!alive) return;
+          const address = e.burner().address.toLowerCase();
+          const me = { address, cfg: loadAvatar(address) };
+          scene.me = me;
+          pscene.me = me;
+        });
+      }
+    } catch {
+      /* storage blocked: everyone gets the address-derived look */
+    }
 
     let w = 0;
     let h = 0;
@@ -62,7 +72,7 @@ export default function VariantB({ match }: ArenaProps) {
       const ox = (w - DW * s) / 2;
       const oy = (h - DH * s) / 2;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = C.sky;
+      ctx.fillStyle = skyTop;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
       ctx.save();
@@ -77,9 +87,10 @@ export default function VariantB({ match }: ArenaProps) {
     };
     raf = requestAnimationFrame(loop);
     return () => {
+      alive = false;
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
-      document.fonts.removeEventListener("loadingdone", onFonts);
+      document.fonts.removeEventListener("loadingdone", clear);
     };
   }, []);
 
@@ -90,35 +101,28 @@ export default function VariantB({ match }: ArenaProps) {
     ? `Trading Royale prediction round ${st.lobbyId ?? ""}, ${st.status ?? "loading"}, ${st.players.length} players`
     : `Trading Royale arena, ${st.status ?? "loading"}, ${alive} players standing`;
   return (
-    <main
-      className={`${condensed.className} ${extra.className}`}
-      style={{ position: "fixed", inset: 0, background: C.sky, overflow: "hidden" }}
-    >
-      <canvas
-        ref={canvasRef}
-        role="img"
-        aria-label={label}
-        style={{ width: "100%", height: "100%", display: "block" }}
-      />
+    <main style={{ position: "fixed", inset: 0, background: skyTop, overflow: "hidden", fontFamily: FONT.body, color: ink }}>
+      <canvas ref={canvasRef} role="img" aria-label={label} style={{ width: "100%", height: "100%", display: "block" }} />
       {(st.error || st.status === "cancelled" || st.cancelled) && (
         <div
           role="alert"
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "grid",
-            placeItems: "center",
-            background: "rgba(23,41,48,0.86)",
-            color: C.chalk,
-            textAlign: "center",
-            padding: 48,
-          }}
+          style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: rgba(ink, 0.45), padding: 48 }}
         >
-          <div>
-            <p style={{ fontSize: 72, fontWeight: 800, margin: 0 }}>
+          <div
+            style={{
+              background: paper,
+              border: `3px solid ${ink}`,
+              borderRadius: RADIUS.panel,
+              boxShadow: SHADOW.panel,
+              padding: "40px 56px",
+              textAlign: "center",
+              maxWidth: "52ch",
+            }}
+          >
+            <p style={{ fontFamily: FONT.display, fontSize: 56, fontWeight: 800, margin: 0, lineHeight: 1.1 }}>
               {st.error ? "The arena is not connected" : predict ? "This round was called off" : "This match was called off"}
             </p>
-            <p style={{ fontSize: 30, margin: "16px auto 0", maxWidth: "40ch" }}>
+            <p style={{ fontSize: 28, margin: "20px auto 0", color: ink2 }}>
               {st.error ??
                 (predict
                   ? `${st.cancelReason ? `${st.cancelReason.charAt(0).toUpperCase()}${st.cancelReason.slice(1).replace(/[.\s]+$/, "")}. ` : ""}Every entry is refunded on chain. The next protocol round shows up here.`

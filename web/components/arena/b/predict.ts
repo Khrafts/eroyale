@@ -1,21 +1,23 @@
-// The storm, prediction rounds: a survey of one price over time. Every prediction is a contour line across the
-// map; the live price is the survey trace walking toward the resolve post. After the lock the storm closes in from
-// above and below, leaving one dry corridor: the prices the current winners span. At the resolve a strike lands
-// on the settlement price, the storm slams shut on the winners' corridor and their payouts roll in.
-// Same palette, type and motion as the royale storm; flood blue is still only the storm.
+// Prediction rounds in the island's world: one price over time under the island's sky. The live price is an ink line
+// walking toward the resolve post; every call is a line across the chart ending in its player's head chip. After the
+// lock the sea closes in from above and below, leaving one sun band: the prices the current winners span. At the
+// resolve the settlement price lands, the sea slams shut on the winners' band, their payouts roll in and confetti
+// flies. Same kit, type and motion as the royale arena; the sea tokens are only the zone (outside the band).
 import { num, unitsToUsd } from "@/lib/events";
 import type { MatchState } from "@/lib/useMatch";
-import { C, Type, clamp, commas, easeOut, easeOutBack, hash, lerp, mmss, rgba, rng, shortHash, smooth, spring, stamp } from "./draw";
+import type { AvatarCfg } from "@/lib/island/avatar";
+import { GAME, MEANING, ink, ink2, muted, paper, seaDeep, seaFoam, seaMid, seaShallow, sun } from "@/lib/theme";
+import { Type, clamp, commas, easeOut, easeOutBack, hash, lerp, mmss, rgba, shortHash, spring, stamp } from "./draw";
+import { Confetti, H, HUD_Y, LW, Sky, W, botTag, botW, box, countChip, head, headSprite, panel, potChip, wordmark } from "./toon";
 
-const W = 1920;
-const H = 1080;
 const PL = 150; // plot left
-const PR = 1470; // the resolve post
-const PT = 290; // plot top
-const PB = 985; // plot bottom
-const LX = 1528; // label column
+const PR = 1440; // the resolve post
+const PT = 320; // plot top
+const PB = 990; // plot bottom
+const LX = 1500; // label column
 const RX = 1888; // right edge of the label column
-const ROW = 30;
+const ROW = 32;
+const HR = 12; // head radius in a label chip
 
 type Line = {
   id: string;
@@ -26,13 +28,13 @@ type Line = {
   join: number;
   ly: number;
   vly: number;
-  sink: number;
 };
 
-type Drop = { x: number; y: number; len: number; sp: number };
-
 export class PredictScene {
-  T: Type;
+  T = new Type();
+  sky = new Sky(23, 2, [600, 900]);
+  confetti = new Confetti();
+  me: { address: string; cfg: AvatarCfg } | null = null;
   lo = 0;
   hi = 1;
   vlo = 0;
@@ -46,17 +48,17 @@ export class PredictScene {
   fBot = 0;
   vBot = 0;
   fronts = false;
-  drops: Drop[] = [];
   lobbyId: number | null = null;
-
-  constructor(cond: string, xc: string) {
-    this.T = new Type(cond, xc);
-    const r = rng(23);
-    for (let i = 0; i < 220; i++) this.drops.push({ x: r() * (W + 300), y: r() * H, len: 14 + r() * 26, sp: 900 + r() * 700 });
-  }
+  burst = false;
+  burstSettled = false;
 
   Y(v: number) {
     return PB - ((v - this.lo) / (this.hi - this.lo)) * (PB - PT);
+  }
+
+  private sprite(id: string, r: number, crown = false) {
+    const own = this.me && this.me.address === id.toLowerCase() ? this.me.cfg : null;
+    return headSprite(id.toLowerCase(), crown, r, own);
   }
 
   private reset() {
@@ -64,6 +66,8 @@ export class PredictScene {
     this.lineKey = "";
     this.first = true;
     this.fronts = false;
+    this.burst = false;
+    this.burstSettled = false;
     this.T.rolls.clear();
   }
 
@@ -74,13 +78,17 @@ export class PredictScene {
       this.reset();
     }
     const T = this.T;
-    ctx.fillStyle = C.sky;
-    ctx.fillRect(0, 0, W, H);
+    this.sky.draw(ctx, this.real, reduced);
     const round = s.round;
     if (!round) {
-      T.text(ctx, "Trading Royale", 40, 70, T.font("c", 800, 44), C.chalk);
-      T.text(ctx, s.error ? "" : "Waiting for the next prediction round", 960, 540, T.font("c", 700, 44), rgba(C.chalk, 0.8), "center");
-      if (!reduced) this.drawRain(ctx, dt, 0.2);
+      wordmark(ctx, T, "Predict", GAME.predict);
+      if (!s.error) {
+        const msg = "Waiting for the next prediction round";
+        const f = T.font("d", 700, 36);
+        const w = T.w(ctx, f, msg) + 80;
+        box(ctx, 960 - w / 2, 500, w, 84, { r: 24, shadow: 6, fill: paper });
+        T.text(ctx, msg, 960, 555, f, ink, "center");
+      }
       return;
     }
     const fin = s.pfinal;
@@ -95,7 +103,7 @@ export class PredictScene {
     // The trace runs one tick behind the clock and interpolates, so the head glides between 4 Hz updates.
     const lastU = s.path.length ? s.path[s.path.length - 1].u : u0;
     const headU = Math.max(u0, Math.min(now - 0.25, lastU));
-    const head = priceAt(s.path, headU);
+    const headP = priceAt(s.path, headU);
 
     // ---------- lines (revealed at the lock) ----------
     const leaders = new Map<string, number>();
@@ -106,17 +114,8 @@ export class PredictScene {
       this.lineKey = key;
       this.lines.clear();
       (s.locked?.predictions ?? []).forEach((p, i) => {
-        this.lines.set(p.player, {
-          id: p.player,
-          callsign: p.callsign,
-          bot: p.bot,
-          price: num(p.price),
-          priceStr: p.price,
-          join: s.players.findIndex((x) => x.player === p.player) ?? i,
-          ly: 0,
-          vly: 0,
-          sink: 0,
-        });
+        const j = s.players.findIndex((x) => x.player === p.player);
+        this.lines.set(p.player, { id: p.player, callsign: p.callsign, bot: p.bot, price: num(p.price), priceStr: p.price, join: j >= 0 ? j : i, ly: 0, vly: 0 });
       });
     }
 
@@ -129,7 +128,7 @@ export class PredictScene {
       vals = s.path.filter((p) => p.u >= u0).map((p) => p.p);
       for (const l of this.lines.values()) vals.push(l.price);
     }
-    if (!vals.length) vals = [head ?? 100];
+    if (!vals.length) vals = [headP ?? 100];
     let lo = Math.min(...vals);
     let hi = Math.max(...vals);
     const mid = (lo + hi) / 2;
@@ -149,7 +148,7 @@ export class PredictScene {
       [this.hi, this.vhi] = spring(this.hi, this.vhi, thi, fin ? 2.6 : 3.2, 1, dt);
     }
 
-    // ---------- the storm fronts: the dry corridor is the winners' span ----------
+    // ---------- the sea fronts: the band between them is the winners' span ----------
     let cTop: number | null = null;
     let cBot: number | null = null;
     if (fin && fin.winners.length) {
@@ -162,7 +161,7 @@ export class PredictScene {
     }
     if (cTop !== null && cBot !== null) {
       if (!this.fronts) {
-        // the storm rolls in from the map edges at the lock (or sits in place on a reload)
+        // the sea rolls in from the chart edges at the lock (or sits in place on a reload)
         this.fTop = this.first || reduced ? cTop : this.hi;
         this.fBot = this.first || reduced ? cBot : this.lo;
         this.fronts = true;
@@ -181,46 +180,62 @@ export class PredictScene {
     const step = niceStep((this.hi - this.lo) / 9);
     this.drawGrid(ctx, step);
     const lockX = X(lockT);
-    this.drawPosts(ctx, lockX, now, lockT, endT, locked, !!fin);
-    // the map itself is clipped below the HUD, so a zoom never draws over the headline
+    // the chart itself is clipped below the HUD, so a zoom never draws over the headline
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, PT - 60, W, H - PT + 60);
     ctx.clip();
-    this.drawLines(ctx, lockX, leaders, s, now, reduced, fDt);
-    this.drawTrace(ctx, s, X, u0, headU, head);
+    this.drawSealed(ctx, lockX);
     const surge = fin && !reduced ? Math.exp(-Math.max(0, fDt - 0.25) * 1.6) : 0;
-    if (this.fronts) this.drawFronts(ctx, lockX, reduced, surge, fDt);
+    if (this.fronts) this.drawSea(ctx, lockX, reduced, surge, fDt);
+    this.drawLines(ctx, lockX, leaders, s, now, reduced, fDt);
+    this.drawTrace(ctx, s, X, u0, headU, headP);
     if (fin && sp !== null) this.drawSettlement(ctx, sp, fDt, reduced);
-    this.drawHead(ctx, X(headU), head, !!fin, reduced);
+    this.drawHead(ctx, X(headU), headP, !!fin, reduced);
     ctx.restore();
-    if (!reduced) this.drawRain(ctx, dt, fin ? 0.3 * (1 - smooth(fDt / 2.5)) : locked ? 0.45 : 0.25);
-    this.drawLabels(ctx, s, leaders, now, dt, reduced, fDt);
-    if (fin) this.drawStrike(ctx, sp!, fDt, reduced);
+    this.drawPosts(ctx, lockX, now, endT, locked, !!fin);
+    this.drawLabels(ctx, s, leaders, dt, reduced, fDt);
+    if (fin) this.drawFlash(ctx, fDt, reduced);
 
-    // HUD
+    // HUD, set a little below the top edge so the sky reads above it
+    ctx.save();
+    ctx.translate(0, HUD_Y);
     this.drawTitle(ctx, s, reduced);
-    this.drawMarket(ctx, s, head, reduced);
+    this.drawMarket(ctx, s, headP, reduced);
     this.drawCenter(ctx, s, now, reduced, fDt);
     if (s.settled && settledDt >= 0) {
       ctx.save();
-      ctx.translate(1752, 138);
-      ctx.scale(0.78, 0.78);
+      ctx.translate(1752, 150);
+      ctx.scale(0.72, 0.72);
       stamp(ctx, T, s.settled.txHash, s.settled.mode, settledDt, reduced, 0, 0);
       ctx.restore();
     }
+    ctx.restore();
+    // confetti on the reveal, a gentle rain once settled
+    if (!reduced) {
+      if (fin && sp !== null && !this.burst && fDt >= 0.3 && fDt < 6) {
+        this.burst = true;
+        this.confetti.burst(PR, this.Y(sp), 120, 1.2);
+        this.confetti.burst(1700, Math.min(PB, this.Y(sp)), 80, 0.9);
+      }
+      if (s.settled && !this.burstSettled && settledDt >= 0 && settledDt < 6) {
+        this.burstSettled = true;
+        this.confetti.rain(80);
+      }
+    }
+    this.confetti.draw(ctx, reduced ? 0 : dt);
     this.first = false;
   }
 
-  // ---------- map ----------
+  // ---------- chart ----------
   private drawGrid(ctx: CanvasRenderingContext2D, step: number) {
     const T = this.T;
     const from = Math.ceil(this.lo / step) * step;
     const dec = step < 1 ? 2 : 0;
     ctx.save();
-    ctx.setLineDash([2, 7]);
-    ctx.strokeStyle = rgba(C.ink, 0.1);
-    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 9]);
+    ctx.strokeStyle = rgba(ink, 0.16);
+    ctx.lineWidth = 1.5;
     for (let v = from; v <= this.hi; v += step) {
       const y = this.Y(v);
       if (y < PT - 40 || y > H - 10) continue;
@@ -228,50 +243,47 @@ export class PredictScene {
       ctx.moveTo(PL - 20, y);
       ctx.lineTo(PR, y);
       ctx.stroke();
-      T.text(ctx, commas(v.toFixed(dec)), PL - 28, y + 8, T.font("x", 600, 23), rgba(C.ink, 0.72), "right", C.sky);
+      T.text(ctx, commas(v.toFixed(dec)), PL - 28, y + 7, T.font("x", 600, 20), rgba(ink, 0.75), "right");
     }
     ctx.restore();
   }
 
-  private drawPosts(ctx: CanvasRenderingContext2D, lockX: number, now: number, lockT: number, endT: number, locked: boolean, final: boolean) {
+  /** The stretch before the lock: calls were sealed, so it sits under a paper veil. */
+  private drawSealed(ctx: CanvasRenderingContext2D, lockX: number) {
     const T = this.T;
-    // lock post: dashed, the sealed stretch before it is shaded
-    ctx.fillStyle = rgba("#0B1A20", 0.35);
-    ctx.fillRect(PL, PT - 40, lockX - PL, PB - PT + 40);
+    ctx.fillStyle = rgba(paper, 0.32);
+    ctx.fillRect(PL, PT - 40, Math.max(0, lockX - PL), PB - PT + 40);
+    if (lockX - PL > 180) T.text(ctx, "sealed calls", (PL + lockX) / 2, PB - 16, T.font("c", 600, 20), ink2, "center");
+  }
+
+  private drawPosts(ctx: CanvasRenderingContext2D, lockX: number, now: number, endT: number, locked: boolean, final: boolean) {
+    const T = this.T;
+    // lock post: dashed ink
     ctx.save();
-    ctx.setLineDash([6, 8]);
-    ctx.strokeStyle = rgba(C.chalk, 0.45);
-    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 8]);
+    ctx.strokeStyle = rgba(ink, 0.7);
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.moveTo(lockX, PT - 40);
+    ctx.moveTo(lockX, PT - 30);
     ctx.lineTo(lockX, PB);
     ctx.stroke();
     ctx.restore();
-    T.text(ctx, locked ? "Locked" : "Lock", lockX - 12, PT - 14, T.font("c", 700, 22), rgba(C.chalk, 0.75), "right", C.sky);
-    T.text(ctx, "sealed calls", (PL + lockX) / 2, PB - 16, T.font("c", 600, 22), rgba(C.ink, 0.6), "center");
-    // resolve post: a survey pole
-    ctx.strokeStyle = C.ink;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(PR, PT - 40);
-    ctx.lineTo(PR, PB);
-    ctx.stroke();
-    for (let y = PT - 40; y < PB; y += 36) {
-      ctx.fillStyle = rgba(C.ink, 0.9);
-      ctx.fillRect(PR - 3, y, 6, 18);
-    }
-    T.text(ctx, final ? "Resolved" : now < endT ? "Resolve" : "Resolving", PR - 12, PT - 14, T.font("c", 700, 22), C.ink, "right", C.sky);
+    const tag = (x: number, text: string, fill: string) => {
+      const f = T.font("d", 700, 15);
+      const w = T.w(ctx, f, text) + 26;
+      box(ctx, x - w / 2, PT - 62, w, 32, { r: 16, shadow: 3, fill, line: 2.5 });
+      T.text(ctx, text, x, PT - 40, f, ink, "center");
+    };
+    tag(lockX, locked ? "Locked" : "Lock", paper);
+    // resolve post: an ink pole striped like a survey staff
+    ctx.fillStyle = ink;
+    ctx.fillRect(PR - 5, PT - 30, 10, PB - PT + 30);
+    ctx.fillStyle = paper;
+    for (let y = PT - 24; y < PB - 6; y += 36) ctx.fillRect(PR - 2, y, 4, 16);
+    tag(PR, final ? "Resolved" : now < endT ? "Resolve" : "Resolving", final ? sun : paper);
   }
 
-  private drawLines(
-    ctx: CanvasRenderingContext2D,
-    lockX: number,
-    leaders: Map<string, number>,
-    s: MatchState,
-    now: number,
-    reduced: boolean,
-    fDt: number,
-  ) {
+  private drawLines(ctx: CanvasRenderingContext2D, lockX: number, leaders: Map<string, number>, s: MatchState, now: number, reduced: boolean, fDt: number) {
     const lockAge = s.locked && s.round ? now - s.round.lockTime : 0;
     let i = 0;
     for (const l of this.lines.values()) {
@@ -283,122 +295,119 @@ export class PredictScene {
       const gone = s.pfinal && !lead ? clamp((fDt - 0.4) / 1.2) : 0;
       ctx.save();
       ctx.globalAlpha = (reduced ? g : 1) * (1 - gone * 0.85);
-      ctx.strokeStyle = lead ? C.profit : rgba(C.ink, 0.6);
-      ctx.lineWidth = lead ? 2.5 : 1.5;
-      if (!lead) ctx.setLineDash([7, 7]);
       ctx.beginPath();
       ctx.moveTo(PR - (PR - lockX) * g, y);
       ctx.lineTo(PR, y);
-      ctx.stroke();
+      if (lead) {
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 6;
+        ctx.stroke();
+        ctx.strokeStyle = sun;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      } else {
+        ctx.setLineDash([7, 7]);
+        ctx.strokeStyle = rgba(ink, 0.55);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
       ctx.restore();
     }
   }
 
-  private drawTrace(ctx: CanvasRenderingContext2D, s: MatchState, X: (u: number) => number, u0: number, headU: number, head: number | null) {
+  /** The live price: an ink line over a paper underlay, so it reads over sky, sun and sea alike. */
+  private drawTrace(ctx: CanvasRenderingContext2D, s: MatchState, X: (u: number) => number, u0: number, headU: number, p: number | null) {
     const pts = s.path;
-    if (!pts.length || head === null) return;
+    if (!pts.length || p === null) return;
     const stride = Math.max(1, Math.ceil(pts.length / 1600));
     ctx.save();
     ctx.beginPath();
     let started = false;
     for (let i = 0; i < pts.length; i += stride) {
-      const p = pts[i];
-      if (p.u < u0) continue;
-      if (p.u > headU) break;
-      const x = X(p.u);
-      const y = this.Y(p.p);
+      const q = pts[i];
+      if (q.u < u0) continue;
+      if (q.u > headU) break;
+      const x = X(q.u);
+      const y = this.Y(q.p);
       if (!started) {
         ctx.moveTo(x, y);
         started = true;
       } else ctx.lineTo(x, y);
     }
-    ctx.lineTo(X(headU), this.Y(head));
+    ctx.lineTo(X(headU), this.Y(p));
     ctx.lineJoin = "round";
-    ctx.strokeStyle = rgba(C.sky, 0.9);
-    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = rgba(paper, 0.9);
+    ctx.lineWidth = 9;
     ctx.stroke();
-    ctx.strokeStyle = C.chalk;
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 4;
     ctx.stroke();
     ctx.restore();
   }
 
-  private drawFronts(ctx: CanvasRenderingContext2D, lockX: number, reduced: boolean, surge: number, fDt: number) {
+  /** Outside the band is the island's sea: from above and from below, with shallows and a foam line at each edge;
+   *  between the edges, the band is sun. */
+  private drawSea(ctx: CanvasRenderingContext2D, lockX: number, reduced: boolean, surge: number, fDt: number) {
     const t = this.real;
     const amp = reduced ? 0 : 3 + surge * 9;
     const yTop = this.Y(this.fTop) - 16;
     const yBot = this.Y(this.fBot) + 16;
     const x0 = lockX;
-    const x1 = PR + 10;
-    const wave = (x: number, y0: number, ph: number) => y0 + Math.sin(x * 0.017 + t * 1.3 + ph) * amp + Math.sin(x * 0.043 - t * 2.2 + ph) * amp * 0.45;
-    // the storm from above: a cloud bank whose underside is the front
-    const top = Math.max(PT - 60, Math.min(yTop, H));
-    if (top > PT - 60) {
+    const x1 = PR;
+    const wave = (x: number, y0: number, ph: number) => y0 + Math.sin(x * 0.011 + t * 0.9 + ph) * amp + Math.sin(x * 0.031 - t * 1.4 + ph) * amp * 0.45;
+    const ceil = PT - 30;
+    const top = Math.max(ceil, Math.min(yTop, H));
+    const bot = Math.min(H + 20, Math.max(yBot, ceil));
+    // the band: sun, laid on paper so the sky does not muddy it
+    ctx.fillStyle = paper;
+    ctx.fillRect(x0, top, x1 - x0, Math.max(0, bot - top));
+    ctx.fillStyle = rgba(sun, 0.55);
+    ctx.fillRect(x0, top, x1 - x0, Math.max(0, bot - top));
+    const edge = (y0: number, ph: number, dir: 1 | -1) => {
+      // the water body, from the edge away from the band
+      const far = dir === 1 ? H + 10 : ceil;
       ctx.save();
       ctx.beginPath();
-      ctx.moveTo(x0, PT - 60);
-      ctx.lineTo(x1, PT - 60);
-      for (let x = x1; x >= x0; x -= 12) ctx.lineTo(x, Math.max(PT - 60, wave(x, top, 1.7)));
+      for (let x = x0; x <= x1; x += 12) (x === x0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, wave(x, y0, ph));
+      ctx.lineTo(x1, wave(x1, y0, ph));
+      ctx.lineTo(x1, far);
+      ctx.lineTo(x0, far);
       ctx.closePath();
-      const g = ctx.createLinearGradient(0, PT - 60, 0, top);
-      g.addColorStop(0, rgba(C.floodDeep, 0));
-      g.addColorStop(Math.min(0.5, 60 / Math.max(61, top - PT + 60)), rgba(C.floodDeep, 0.9));
-      g.addColorStop(1, rgba(C.flood, 0.78));
+      const g = ctx.createLinearGradient(0, y0 + dir * 18, 0, far);
+      g.addColorStop(0, seaMid);
+      g.addColorStop(1, seaDeep);
       ctx.fillStyle = g;
       ctx.fill();
       ctx.clip();
-      this.sweep(ctx, PT - 60, top, t);
-      ctx.restore();
+      // shallows along the edge
       ctx.beginPath();
-      for (let x = x0; x <= x1; x += 12) (x === x0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, Math.max(PT - 60, wave(x, top, 1.7)));
-      ctx.strokeStyle = C.floodHi;
-      ctx.lineWidth = surge > 0.05 ? 4 : 2.5;
+      for (let x = x0; x <= x1; x += 12) (x === x0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, wave(x, y0, ph));
+      for (let x = x1; x >= x0; x -= 12) ctx.lineTo(x, wave(x, y0, ph) + dir * (20 + Math.sin(x * 0.02 + t * 0.6) * 3));
+      ctx.closePath();
+      ctx.fillStyle = seaShallow;
+      ctx.fill();
+      ctx.restore();
+      // foam
+      ctx.beginPath();
+      for (let x = x0; x <= x1; x += 12) (x === x0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, wave(x, y0, ph));
+      ctx.strokeStyle = seaFoam;
+      ctx.lineWidth = surge > 0.05 ? 7 : 5;
+      ctx.lineJoin = "round";
       ctx.stroke();
-    }
-    // the flood from below
-    const bot = Math.min(H + 20, Math.max(yBot, PT - 60));
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(x0, H + 10);
-    for (let x = x0; x <= x1; x += 12) ctx.lineTo(x, wave(x, bot, 0));
-    ctx.lineTo(x1, H + 10);
-    ctx.closePath();
-    const g2 = ctx.createLinearGradient(0, bot, 0, H);
-    g2.addColorStop(0, rgba(C.flood, 0.8));
-    g2.addColorStop(1, rgba(C.floodDeep, 0.95));
-    ctx.fillStyle = g2;
-    ctx.fill();
-    ctx.clip();
-    this.sweep(ctx, bot, H, t);
-    ctx.restore();
-    ctx.beginPath();
-    for (let x = x0; x <= x1; x += 12) (x === x0 ? ctx.moveTo : ctx.lineTo).call(ctx, x, wave(x, bot, 0));
-    ctx.strokeStyle = C.floodHi;
-    ctx.lineWidth = surge > 0.05 ? 4 : 2.5;
-    ctx.stroke();
-    if (surge > 0.05 && fDt > 0.2) {
-      ctx.fillStyle = rgba("#E8EEFF", 0.75 * surge);
-      for (let x = x0 + 6; x < x1; x += 11) {
-        const j = (hash("f" + x) % 100) / 100;
-        const r = 1.2 + j * 2.4;
-        ctx.beginPath();
-        ctx.arc(x, wave(x, bot, 0) - 2 + j * 7, r, 0, Math.PI * 2);
-        ctx.arc(x, wave(x, top, 1.7) + 2 - j * 7, r, 0, Math.PI * 2);
-        ctx.fill();
+      if (!reduced) {
+        ctx.fillStyle = seaFoam;
+        const every = surge > 0.05 && fDt > 0.2 ? 11 : 37;
+        for (let x = x0 + 6; x < x1; x += every) {
+          const j = (hash("f" + x) % 100) / 100;
+          ctx.beginPath();
+          ctx.arc(x + Math.sin(t * 2 + j * 9) * 3, wave(x, y0, ph) + dir * (7 + j * 10), 1.5 + j * 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
-    }
-  }
-
-  private sweep(ctx: CanvasRenderingContext2D, y0: number, y1: number, t: number) {
-    ctx.strokeStyle = rgba(C.floodHi, 0.09);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    const off = (t * 14) % 16;
-    for (let y = y0 + off; y < y1; y += 16) {
-      ctx.moveTo(PL, y);
-      ctx.lineTo(PR + 10, y);
-    }
-    ctx.stroke();
+    };
+    if (top > ceil) edge(top, 1.7, -1);
+    edge(bot, 0, 1);
   }
 
   private drawHead(ctx: CanvasRenderingContext2D, x: number, p: number | null, final: boolean, reduced: boolean) {
@@ -406,17 +415,17 @@ export class PredictScene {
     const y = this.Y(p);
     const pulse = reduced || final ? 0 : (this.real * 1.2) % 1;
     if (pulse > 0) {
-      ctx.strokeStyle = rgba(C.chalk, 0.6 * (1 - pulse));
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = rgba(ink, 0.6 * (1 - pulse));
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(x, y, 8 + pulse * 26, 0, Math.PI * 2);
+      ctx.arc(x, y, 9 + pulse * 26, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.fillStyle = C.chalk;
-    ctx.strokeStyle = C.sky;
-    ctx.lineWidth = 3;
+    ctx.fillStyle = paper;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = LW;
     ctx.beginPath();
-    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    ctx.arc(x, y, 10, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   }
@@ -427,104 +436,89 @@ export class PredictScene {
     if (g <= 0) return;
     ctx.save();
     ctx.globalAlpha = reduced ? g : 1;
-    ctx.strokeStyle = C.chalk;
-    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(PR, y);
     ctx.lineTo(PR - (PR - PL) * (reduced ? 1 : g), y);
+    ctx.strokeStyle = paper;
+    ctx.lineWidth = 8;
     ctx.stroke();
-    // a benchmark triangle on the post
-    ctx.fillStyle = C.chalk;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = LW;
+    ctx.stroke();
+    // a marker on the post
     ctx.beginPath();
     ctx.moveTo(PR, y - 4);
-    ctx.lineTo(PR + 22, y - 26);
-    ctx.lineTo(PR - 22, y - 26);
+    ctx.lineTo(PR + 22, y - 28);
+    ctx.lineTo(PR - 22, y - 28);
     ctx.closePath();
+    ctx.fillStyle = sun;
     ctx.fill();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = LW;
+    ctx.stroke();
     ctx.restore();
   }
 
-  private drawStrike(ctx: CanvasRenderingContext2D, sp: number, fDt: number, reduced: boolean) {
-    const flashA = reduced ? 0.18 * clamp(1 - fDt / 0.6) : 0.6 * Math.exp(-fDt * 5);
-    if (flashA > 0.005) {
-      ctx.fillStyle = rgba("#DCE6FF", flashA);
+  /** The resolve lands as one bright beat. */
+  private drawFlash(ctx: CanvasRenderingContext2D, fDt: number, reduced: boolean) {
+    const a = reduced ? 0.15 * clamp(1 - fDt / 0.6) : 0.5 * Math.exp(-fDt * 5);
+    if (a > 0.005) {
+      ctx.fillStyle = rgba(paper, a);
       ctx.fillRect(0, 0, W, H);
     }
-    if (reduced) return;
-    const vis = fDt < 0.18 || (fDt > 0.26 && fDt < 0.42) || (fDt > 0.8 && fDt < 1.05);
-    if (!vis) return;
-    const r = rng(hash("strike") + Math.round(sp * 100));
-    const ty = this.Y(sp) - 26;
-    let x = PR + (r() - 0.5) * 360;
-    let y = 0;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    const segs = 16;
-    for (let i = 1; i <= segs; i++) {
-      const f = i / segs;
-      x = i === segs ? PR : lerp(x, PR, f * 0.6) + (r() - 0.5) * 80;
-      y = ty * f;
-      ctx.lineTo(x, y);
-    }
-    ctx.strokeStyle = rgba("#C9D7FF", 0.35);
-    ctx.lineWidth = 10;
-    ctx.stroke();
-    ctx.strokeStyle = "#F4F7FF";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-  }
-
-  private drawRain(ctx: CanvasRenderingContext2D, dt: number, I: number) {
-    if (I <= 0.01) return;
-    const count = Math.floor(this.drops.length * I);
-    ctx.strokeStyle = rgba(C.floodHi, 0.18);
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (let i = 0; i < this.drops.length; i++) {
-      const d = this.drops[i];
-      d.y += d.sp * dt;
-      d.x -= d.sp * 0.22 * dt;
-      if (d.y > H) {
-        d.y -= H + 40;
-        d.x = (d.x + 300 + W * 0.37) % (W + 300);
-      }
-      if (i >= count) continue;
-      ctx.moveTo(d.x, d.y);
-      ctx.lineTo(d.x + d.len * 0.22, d.y - d.len);
-    }
-    ctx.stroke();
   }
 
   // ---------- the label column ----------
-  private drawLabels(
-    ctx: CanvasRenderingContext2D,
-    s: MatchState,
-    leaders: Map<string, number>,
-    now: number,
-    dt: number,
-    reduced: boolean,
-    fDt: number,
-  ) {
+  /** A head chip: the player's head, name and bot tag; returns the width used by the name part. */
+  private headChip(ctx: CanvasRenderingContext2D, id: string, name: string, bot: boolean, x: number, y: number, w: number, h: number, fill: string, big: boolean) {
     const T = this.T;
-    const round = s.round!;
+    box(ctx, x, y, w, h, { r: h / 2, shadow: 3, fill, line: 2.5 });
+    const r = big ? 15 : HR;
+    head(ctx, this.sprite(id, r), x + 4 + r + 2, y + h / 2, r);
+    const nf = T.font("d", 700, big ? 17 : 14);
+    const nx = x + 4 + 2 * r + 12;
+    T.text(ctx, name, nx, y + h / 2 + (big ? 6 : 5), nf, ink);
+    let used = nx - x + T.w(ctx, nf, name);
+    if (bot) {
+      botTag(ctx, T, x + used + 6, y + h / 2 - 9);
+      used += botW(ctx, T) + 6;
+    }
+    return used;
+  }
+
+  private drawLabels(ctx: CanvasRenderingContext2D, s: MatchState, leaders: Map<string, number>, dt: number, reduced: boolean, fDt: number) {
+    const T = this.T;
     if (!s.locked) {
       // sealed: who is in, how many have called, no prices
       const n = s.players.length;
-      T.text(ctx, "Sealed calls", LX, PT - 14, T.font("c", 700, 22), rgba(C.chalk, 0.75));
-      const w = T.roll(ctx, "sealed", String(s.predictedCount), LX, PT + 62, T.font("x", 800, 84), 84, C.chalk, "left", this.real, reduced);
-      T.text(ctx, `of ${n} ${n === 1 ? "player" : "players"}`, LX + w + 12, PT + 60, T.font("c", 600, 28), rgba(C.chalk, 0.75));
-      const top = PT + 112;
+      box(ctx, LX, PT - 62, RX - LX, 98, { r: 24, shadow: 4, fill: paper });
+      T.text(ctx, "Sealed calls", LX + 20, PT - 30, T.font("d", 700, 17), ink);
+      const w = T.roll(ctx, "sealed", String(s.predictedCount), LX + 20, PT + 20, T.font("x", 800, 44), 44, ink, "left", this.real, reduced);
+      T.text(ctx, `of ${n} ${n === 1 ? "player" : "players"}`, LX + 20 + w + 12, PT + 16, T.font("c", 600, 22), ink2);
+      const top = PT + 62;
       const per = Math.max(2, Math.floor((PB - top) / ROW));
       const cols = n > per ? 2 : 1;
+      const cw = cols === 2 ? (RX - LX - 8) / 2 : RX - LX;
       s.players.forEach((p, i) => {
         const c = Math.floor(i / per);
         if (c >= cols) return;
-        const x = LX + c * 186;
+        const x = LX + c * (cw + 8);
         const y = top + (i % per) * ROW;
-        this.nameTag(ctx, p.callsign, p.bot, x, y, rgba(C.chalk, 0.85), 22);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x - 2, y - 4, cw + 4, ROW + 4);
+        ctx.clip();
+        this.headChip(ctx, p.player, p.callsign, p.bot, x, y, cw, ROW - 4, paper, false);
+        ctx.restore();
       });
-      if (n > per * cols) T.text(ctx, `and ${n - per * cols} more`, LX, top + per * ROW, T.font("c", 600, 22), rgba(C.ink, 0.8));
-      if (n < 4) T.text(ctx, `${4 - n} more to play`, LX, PB, T.font("c", 700, 24), C.floodHi);
+      if (n > per * cols) T.text(ctx, `and ${n - per * cols} more`, LX, top + per * ROW + 20, T.font("c", 600, 20), ink);
+      if (n < 4) {
+        const msg = `${4 - n} more to play`;
+        const f = T.font("d", 700, 18);
+        const mw = T.w(ctx, f, msg) + 30;
+        box(ctx, LX, PB - 20, mw, 36, { r: 18, shadow: 3, fill: GAME.predict });
+        T.text(ctx, msg, LX + 15, PB + 4, f, ink);
+      }
       return;
     }
 
@@ -532,138 +526,133 @@ export class PredictScene {
     const paid = new Map<string, string>();
     if (s.settled) s.settled.winners.forEach((w, i) => paid.set(w, s.settled!.amounts[i]));
     const rows = [...this.lines.values()].sort((a, b) => b.price - a.price || a.join - b.join);
-    // spread labels around their line, keeping order and a minimum gap
-    const gap = fin ? 38 : ROW;
+    const gap = fin ? 50 : ROW;
+    const h = fin ? 42 : ROW - 4;
     const visible = rows.filter((l) => !fin || leaders.has(l.id) || clamp((fDt - 0.4) / 1.2) < 1);
-    const want = visible.map((l) => this.Y(l.price) + 8);
+    // spread labels around their line, keeping order and a minimum gap
+    const want = visible.map((l) => this.Y(l.price) - h / 2);
     const ys: number[] = [];
-    want.forEach((y, i) => ys.push(i === 0 ? Math.max(y, PT - 8) : Math.max(y, ys[i - 1] + gap)));
-    const over = ys.length ? ys[ys.length - 1] - (H - 24) : 0;
+    want.forEach((y, i) => ys.push(i === 0 ? Math.max(y, PT - 20) : Math.max(y, ys[i - 1] + gap)));
+    const over = ys.length ? ys[ys.length - 1] + h - (H - 12) : 0;
     if (over > 0) for (let i = ys.length - 1; i >= 0; i--) ys[i] = Math.min(ys[i] - over, i < ys.length - 1 ? ys[i + 1] - gap : Infinity);
-    const minY = 34;
+    const minY = 240;
     if (ys.length && ys[0] < minY) {
       const d = minY - ys[0];
-      for (let i = 0; i < ys.length; i++) ys[i] = i === 0 ? minY : Math.max(ys[i] + 0, ys[i - 1] + gap, ys[i] + d * (1 - i / ys.length));
+      for (let i = 0; i < ys.length; i++) ys[i] = i === 0 ? minY : Math.max(ys[i], ys[i - 1] + gap, ys[i] + d * (1 - i / ys.length));
     }
-    const yTop = this.Y(this.fTop) - 16;
-    const yBot = this.Y(this.fBot) + 16;
     visible.forEach((l, i) => {
       if (this.first || reduced || l.ly === 0) l.ly = ys[i];
       else [l.ly, l.vly] = spring(l.ly, l.vly, ys[i], 9, 0.85, dt);
       const lead = leaders.get(l.id);
       const lineY = this.Y(l.price);
-      const wet = this.fronts && (lineY < yTop || lineY > yBot);
       const gone = fin && lead === undefined ? clamp((fDt - 0.4) / 1.2) : 0;
       const sinkY = reduced ? 0 : gone * 40;
+      const y = l.ly + sinkY;
       ctx.save();
       ctx.globalAlpha = 1 - gone;
-      const col = lead !== undefined ? C.profit : wet ? rgba(C.floodHi, 0.85) : rgba(C.chalk, 0.85);
-      // elbow from the resolve post to the label
-      ctx.strokeStyle = lead !== undefined ? rgba(C.profit, 0.8) : rgba(C.ink, 0.35);
-      ctx.lineWidth = lead !== undefined ? 2 : 1;
+      // elbow from the resolve post to the chip
+      ctx.strokeStyle = lead !== undefined ? ink : rgba(ink, 0.4);
+      ctx.lineWidth = lead !== undefined ? 2.5 : 1.5;
       ctx.beginPath();
-      ctx.moveTo(PR + 4, lineY);
-      ctx.lineTo(LX - 22, lineY);
-      ctx.lineTo(LX - 6, l.ly - 8 + sinkY);
+      ctx.moveTo(PR + 6, lineY);
+      ctx.lineTo(LX - 30, lineY);
+      ctx.lineTo(LX - 8, y + h / 2);
       ctx.stroke();
-      const y = l.ly + sinkY;
-      const halo = wet ? undefined : C.sky;
-      if (lead !== undefined) T.roll(ctx, "rk" + l.id, String(lead), LX + 22, y, T.font("x", 800, 26), 26, C.profit, "right", this.real, reduced);
-      const nameW = this.nameTag(ctx, l.callsign, l.bot, LX + 32, y, col, lead !== undefined ? 24 : 22, lead !== undefined ? 800 : 600, halo);
+      // rank badge for the current winners
+      let x = LX;
+      if (lead !== undefined) {
+        const rf = T.font("x", 800, fin ? 20 : 16);
+        const d = h;
+        box(ctx, LX - 4, y, d, d, { r: d / 2, shadow: 3, fill: sun, line: 2.5 });
+        T.roll(ctx, "rk" + l.id, String(lead), LX - 4 + d / 2, y + d / 2 + (fin ? 7 : 6), rf, fin ? 20 : 16, ink, "center", this.real, reduced);
+        x = LX + d + 2;
+      }
+      const w = RX - x;
+      const fill = lead !== undefined ? MEANING.profit.fill : paper;
+      const used = this.headChip(ctx, l.id, l.callsign, l.bot, x, y, w, h, fill, !!fin);
       if (fin && lead !== undefined) {
-        const w = fin.winners.find((x) => x.player === l.id)!;
-        const units = s.settled ? (paid.get(l.id) ?? w.provisionalPayoutUnits) : w.provisionalPayoutUnits;
-        const reveal = reduced ? clamp((fDt - 0.6) / 0.4) : clamp((fDt - 1.1 - (fin.winners.length - w.rank) * 0.12) / 0.3);
+        const win = fin.winners.find((q) => q.player === l.id)!;
+        const units = s.settled ? (paid.get(l.id) ?? win.provisionalPayoutUnits) : win.provisionalPayoutUnits;
+        const reveal = reduced ? clamp((fDt - 0.6) / 0.4) : clamp((fDt - 1.1 - (fin.winners.length - win.rank) * 0.12) / 0.3);
         if (reveal > 0) {
           ctx.globalAlpha = reveal;
           const amt = "$" + commas(unitsToUsd(units));
-          T.roll(ctx, "pay" + l.id, amt, RX, y + 2, T.font("x", 800, 32), 32, C.profit, "right", this.real, reduced);
-          const aw = T.widthOf(ctx, T.font("x", 800, 32), amt);
-          const dx = Math.max(LX + 40 + nameW, RX - aw - 14);
-          T.text(ctx, `off ${commas(w.distance)}`, dx, y, T.font("c", 600, 20), rgba(C.chalk, 0.7), "right");
+          const af = T.font("x", 800, 22);
+          const aw = T.widthOf(ctx, af, amt) + 20;
+          box(ctx, RX - aw - 6, y + 6, aw, h - 12, { r: (h - 12) / 2, shadow: 0, fill: paper, line: 2 });
+          T.roll(ctx, "pay" + l.id, amt, RX - 16, y + h / 2 + 8, af, 22, ink, "right", this.real, reduced);
+          const off = `off ${commas(win.distance)}`;
+          const of = T.font("x", 600, 15);
+          const ox = RX - aw - 14;
+          if (ox - T.widthOf(ctx, of, off) > x + used + 8) T.text(ctx, off, ox, y + h / 2 + 5, of, ink2, "right");
           ctx.globalAlpha = 1 - gone;
         }
       } else {
-        T.text(ctx, commas(l.priceStr), RX, y, T.font("x", lead !== undefined ? 800 : 600, lead !== undefined ? 27 : 24), col, "right", halo);
+        const pf = T.font("x", lead !== undefined ? 800 : 600, 16);
+        T.text(ctx, commas(l.priceStr), RX - 14, y + h / 2 + 6, pf, ink, "right");
       }
       ctx.restore();
     });
-    if (fin) {
-      const total = fin.winners.reduce((a, w) => a + BigInt(w.provisionalPayoutUnits), 0n);
-      T.text(ctx, s.settled ? "Paid" : "Provisional payouts", LX, 46 + Math.max(0, Math.min(PT - 80, (ys[0] ?? PT) - 80)), T.font("c", 700, 22), rgba(C.chalk, 0.75));
-      void total;
-    } else {
-      const k = s.ptick?.leaders.length ?? 0;
-      T.text(ctx, `Closest ${k} win`, LX, PT - 14, T.font("c", 700, 22), C.profit, "left", C.sky);
-    }
-    void round;
-  }
-
-  private nameTag(
-    ctx: CanvasRenderingContext2D,
-    name: string,
-    bot: boolean,
-    x: number,
-    y: number,
-    color: string,
-    size: number,
-    weight = 700,
-    halo?: string,
-  ) {
-    const T = this.T;
-    const f = T.font("c", weight, size);
-    T.text(ctx, name, x, y, f, color, "left", halo);
-    let w = T.w(ctx, f, name);
-    if (bot) {
-      const bf = T.font("c", 700, 14);
-      const bw = T.w(ctx, bf, "BOT") + 8;
-      ctx.strokeStyle = rgba(C.ink, 0.8);
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x + w + 7, y - 15, bw, 17);
-      T.text(ctx, "BOT", x + w + 11, y - 1, bf, rgba(C.ink, 0.9));
-      w += bw + 7;
-    }
-    return w;
+    const caption = fin ? (s.settled ? "Paid" : "Provisional payouts") : `Closest ${s.ptick?.leaders.length ?? 0} win`;
+    const cf = T.font("d", 700, 16);
+    const cy = fin ? Math.max(196, Math.min(PT - 64, (ys[0] ?? PT) - 52)) : PT - 62;
+    const cw = T.w(ctx, cf, caption) + 28;
+    box(ctx, LX, cy, cw, 34, { r: 17, shadow: 3, fill: fin ? paper : sun, line: 2.5 });
+    T.text(ctx, caption, LX + 14, cy + 23, cf, ink);
   }
 
   // ---------- HUD ----------
   private drawTitle(ctx: CanvasRenderingContext2D, s: MatchState, reduced: boolean) {
     const T = this.T;
     const r = s.round!;
-    T.text(ctx, "Trading Royale", 40, 70, T.font("c", 800, 44), C.chalk);
     const creator = r.params.creator ? s.players.find((p) => p.player === r.params.creator)?.callsign : null;
     const who = r.protocol ? "protocol round" : creator ? `${creator}'s round` : "player round";
-    T.text(ctx, `Predict ${r.params.market}, ${who} ${r.lobbyId}`, 40, 104, T.font("c", 500, 22), rgba(C.chalk, 0.7));
-    T.text(ctx, "Pot", 40, 154, T.font("c", 600, 22), rgba(C.chalk, 0.7));
-    T.roll(ctx, "pot", "$" + commas(unitsToUsd(s.potUnits)), 84, 156, T.font("x", 700, 38), 38, C.profit, "left", this.real, reduced);
+    wordmark(ctx, T, "", GAME.predict);
+    // the round's name on its own chip, so the centre panel keeps its width
+    const cap = `Predict ${r.params.market}, ${who} ${r.lobbyId}`;
+    const cf = T.font("d", 700, 18);
+    box(ctx, 32, 98, T.w(ctx, cf, cap) + 36, 50, { r: 25, shadow: 4, fill: GAME.predict });
+    T.text(ctx, cap, 50, 130, cf, ink);
+    ctx.save();
+    ctx.translate(0, 74);
+    const x = potChip(ctx, T, "$" + commas(unitsToUsd(s.potUnits)), this.real, reduced);
     const n = s.players.length;
     const k = Math.max(1, Math.floor((n * r.params.winnerBps) / 10000));
-    const fw = T.roll(ctx, "n", String(n), 40, 196, T.font("x", 700, 30), 30, C.chalk, "left", this.real, reduced);
     const fee = r.params.creator && r.params.creatorFeeBps ? `, ${r.params.creatorFeeBps / 100}% to the creator` : "";
-    T.text(ctx, `in, closest ${k} split the pot ${r.params.split === "equal" ? "evenly" : r.params.split === "steep" ? "steeply" : "by rank"}${fee}`, 40 + fw + 8, 195, T.font("c", 500, 22), rgba(C.chalk, 0.7));
+    countChip(ctx, T, x + 12, "n", String(n), `in, closest ${k} split the pot ${r.params.split === "equal" ? "evenly" : r.params.split === "steep" ? "steeply" : "by rank"}${fee}`, this.real, reduced);
+    ctx.restore();
   }
 
-  private drawMarket(ctx: CanvasRenderingContext2D, s: MatchState, head: number | null, reduced: boolean) {
+  private drawMarket(ctx: CanvasRenderingContext2D, s: MatchState, p: number | null, reduced: boolean) {
     const T = this.T;
     const m = s.round!.params.market;
     const fin = s.pfinal;
+    const R0 = 1888;
     if (fin) {
       if (!s.settled) {
-        T.text(ctx, "Settlement report", 1880, 58, T.font("c", 700, 24), rgba(C.chalk, 0.7), "right");
-        T.text(ctx, "on its way to the chain", 1880, 92, T.font("c", 600, 24), rgba(C.chalk, 0.7), "right");
-        T.text(ctx, `Book ${shortHash(fin.bookHash)}`, 1880, 126, T.font("x", 600, 24), rgba(C.chalk, 0.6), "right");
+        const lines = ["Settlement report", "on its way to the chain"];
+        const f = T.font("c", 600, 20);
+        const bf = T.font("x", 600, 18);
+        const bk = `Book ${shortHash(fin.bookHash)}`;
+        const w = Math.max(...lines.map((x) => T.w(ctx, f, x)), T.widthOf(ctx, bf, bk)) + 40;
+        box(ctx, R0 - w, 24, w, 110, { r: 24, shadow: 4, fill: paper });
+        T.text(ctx, lines[0], R0 - 20, 56, T.font("d", 700, 17), ink, "right");
+        T.text(ctx, lines[1], R0 - 20, 86, f, ink2, "right");
+        T.text(ctx, bk, R0 - 20, 116, bf, muted, "right");
       }
       return;
     }
-    T.text(ctx, `${m} live`, 1880, 58, T.font("c", 700, 24), rgba(C.chalk, 0.7), "right");
-    const str = s.ptick?.mark ?? (head !== null ? head.toFixed(2) : null);
+    const w = 330;
+    box(ctx, R0 - w, 24, w, 124, { r: 24, shadow: 4, fill: paper });
+    T.text(ctx, `${m} live`, R0 - 22, 58, T.font("d", 700, 18), ink, "right");
+    const str = s.ptick?.mark ?? (p !== null ? p.toFixed(2) : null);
     if (str === null) {
-      T.text(ctx, "waiting for a price", 1880, 120, T.font("c", 600, 30), rgba(C.chalk, 0.5), "right");
+      T.text(ctx, "waiting for a price", R0 - 22, 116, T.font("c", 600, 24), muted, "right");
       return;
     }
     const prev = s.prevPtick ? num(s.prevPtick.mark) : null;
-    const d = prev !== null && !fin ? num(str) - prev : 0;
-    T.roll(ctx, "mark", commas(str), 1880, 126, T.font("x", 700, 66), 66, C.chalk, "right", this.real, reduced, d < 0 ? -1 : 1);
+    const d = prev !== null ? num(str) - prev : 0;
+    T.roll(ctx, "mark", commas(str), R0 - 22, 126, T.font("x", 800, 50), 50, ink, "right", this.real, reduced, d < 0 ? -1 : 1);
   }
 
   private drawCenter(ctx: CanvasRenderingContext2D, s: MatchState, now: number, reduced: boolean, fDt: number) {
@@ -671,67 +660,76 @@ export class PredictScene {
     const r = s.round!;
     const cx = 960;
     const fin = s.pfinal;
+    const big = T.font("x", 800, 96);
     if (fin) {
       const a = reduced ? clamp(fDt / 0.5) : clamp((fDt - 0.3) / 0.3);
       const sc = reduced ? 1 : lerp(0.6, 1, easeOutBack((fDt - 0.3) / 0.7));
-      ctx.save();
-      ctx.globalAlpha = a;
-      T.text(ctx, `${r.params.market} settled at`, cx, 54, T.font("c", 700, 28), rgba(C.chalk, 0.8), "center");
-      ctx.translate(cx, 166);
-      ctx.scale(sc, sc);
-      T.text(ctx, commas(fin.settlementPrice), 0, 0, T.font("x", 800, 128), C.chalk, "center");
-      ctx.restore();
       const w = [...fin.winners].sort((x, y) => x.rank - y.rank)[0];
       const total = fin.winners.reduce((acc, x) => acc + BigInt(x.provisionalPayoutUnits), 0n);
-      const sa = reduced ? clamp((fDt - 0.5) / 0.5) : clamp((fDt - 1.2) / 0.5);
       const creatorU = BigInt(fin.creatorFeeUnits);
       const treasuryU = BigInt(s.potUnits) - total - creatorU;
-      const fees =
-        `. $${commas(unitsToUsd((treasuryU < 0n ? 0n : treasuryU).toString()))} to the treasury` +
-        (creatorU > 0n ? `, $${commas(unitsToUsd(creatorU.toString()))} to the creator.` : ".");
-      ctx.save();
-      ctx.globalAlpha = sa;
-      if (w) {
-        const n = fin.winners.length;
-        T.text(ctx, `${w.callsign} called it within $${commas(w.distance)}.`, cx, 218, T.font("c", 800, 32), C.profit, "center");
-        T.text(
-          ctx,
-          (s.settled
+      const fees = `. $${commas(unitsToUsd((treasuryU < 0n ? 0n : treasuryU).toString()))} to the treasury` + (creatorU > 0n ? `, $${commas(unitsToUsd(creatorU.toString()))} to the creator.` : ".");
+      const n = fin.winners.length;
+      const sub = w
+        ? (s.settled
             ? `${n} ${n === 1 ? "winner was" : "winners were"} paid $${commas(unitsToUsd(total.toString()))} on chain`
-            : `${n} ${n === 1 ? "winner splits" : "winners split"} $${commas(unitsToUsd(total.toString()))}, provisional until settlement`) + fees,
-          cx,
-          254,
-          T.font("c", 600, 24),
-          rgba(C.chalk, 0.8),
-          "center",
-        );
-      } else T.text(ctx, "Nobody made a call. Every entry goes back.", cx, 218, T.font("c", 700, 30), C.chalk, "center");
+            : `${n} ${n === 1 ? "winner splits" : "winners split"} $${commas(unitsToUsd(total.toString()))}, provisional until settlement`) + fees
+        : "";
+      const sf = T.font("c", 600, 18);
+      const hf = T.font("d", 800, 22);
+      const head = w ? `${w.callsign} called it within $${commas(w.distance)}.` : "Nobody made a call. Every entry goes back.";
+      // the sentence breaks before its fees so the panel stays clear of the corner chips
+      const cut = sub.indexOf(". $");
+      const sub1 = cut >= 0 ? sub.slice(0, cut + 1) : sub;
+      const sub2 = cut >= 0 ? sub.slice(cut + 2) : "";
+      const pw = Math.min(620, Math.max(520, T.w(ctx, sf, sub1) + 50, T.w(ctx, sf, sub2) + 50, T.w(ctx, hf, head) + 50));
+      ctx.save();
+      ctx.globalAlpha = a;
+      panel(ctx, T, cx, pw, 242, `${r.params.market} settled at`, GAME.predict);
+      ctx.save();
+      ctx.translate(cx, 140);
+      ctx.scale(sc, sc);
+      T.text(ctx, commas(fin.settlementPrice), 0, 0, T.font("x", 800, 84), ink, "center");
+      ctx.restore();
+      const sa = reduced ? clamp((fDt - 0.5) / 0.5) : clamp((fDt - 1.2) / 0.5);
+      ctx.globalAlpha = a * sa;
+      T.text(ctx, head, cx, 184, hf, ink, "center");
+      if (sub1) T.text(ctx, sub1, cx, 212, sf, ink2, "center");
+      if (sub2) T.text(ctx, sub2, cx, 236, sf, ink2, "center");
       ctx.restore();
       return;
     }
     if (!s.locked) {
-      T.text(ctx, "Calls lock in", cx, 58, T.font("c", 600, 26), rgba(C.chalk, 0.75), "center");
-      T.roll(ctx, "cd", mmss(r.lockTime - now), cx, 172, T.font("x", 800, 112), 112, C.chalk, "center", this.real, reduced);
-      T.text(ctx, "Call where the price will be at the resolve. Closest calls win.", cx, 214, T.font("c", 500, 24), rgba(C.chalk, 0.75), "center");
+      panel(ctx, T, cx, 620, 200, "Calls lock in", GAME.predict);
+      T.roll(ctx, "cd", mmss(r.lockTime - now), cx, 154, big, 96, ink, "center", this.real, reduced);
+      T.text(ctx, "Call where the price will be at the resolve. Closest calls win.", cx, 196, T.font("c", 600, 19), ink2, "center");
       return;
     }
     if (now < r.endTime) {
-      T.text(ctx, "Resolves in", cx, 58, T.font("c", 600, 26), rgba(C.chalk, 0.75), "center");
+      const band = s.ptick?.band;
+      const bandText = band ? `Winning now: calls from ${commas(band.low)} to ${commas(band.high)}` : "";
+      const bf = T.font("x", 700, 18);
+      panel(ctx, T, cx, Math.min(620, Math.max(460, T.w(ctx, bf, bandText) + 60)), 206, "Resolves in", GAME.predict);
       const left = r.endTime - now;
       const close = left <= 10 && !reduced;
       const beat = close ? 1 + 0.08 * Math.exp(-((Math.ceil(left) - left) % 1) * 7) : 1;
       ctx.save();
-      ctx.translate(cx, 172);
+      ctx.translate(cx, 154);
       ctx.scale(beat, beat);
-      T.roll(ctx, "cd", mmss(left), 0, 0, T.font("x", 800, 112), 112, close ? C.floodHi : C.chalk, "center", this.real, reduced);
+      T.roll(ctx, "cd", mmss(left), 0, 0, big, 96, ink, "center", this.real, reduced);
       ctx.restore();
-      const band = s.ptick?.band;
-      if (band)
-        T.text(ctx, `Winning now: calls from ${commas(band.low)} to ${commas(band.high)}`, cx, 214, T.font("c", 600, 24), C.profit, "center");
+      if (band) {
+        const bw = T.w(ctx, bf, bandText) + 24;
+        box(ctx, cx - bw / 2, 170, bw, 32, { r: 16, shadow: 0, fill: sun, line: 2 });
+        T.text(ctx, bandText, cx, 192, bf, ink, "center");
+      }
       return;
     }
-    T.text(ctx, "Reading the settlement price", cx, 120, T.font("c", 800, 48), C.chalk, "center");
-    T.text(ctx, `The close of the last one-minute candle before ${clockOf(r.endTime)} UTC, from Coinbase`, cx, 166, T.font("c", 500, 24), rgba(C.chalk, 0.75), "center");
+    const sub = `The close of the last one-minute candle before ${clockOf(r.endTime)} UTC, from Coinbase`;
+    const sf = T.font("c", 600, 22);
+    panel(ctx, T, cx, T.w(ctx, sf, sub) + 80, 170, "Resolving", GAME.predict);
+    T.text(ctx, "Reading the settlement price", cx, 118, T.font("d", 800, 34), ink, "center");
+    T.text(ctx, sub, cx, 160, sf, ink2, "center");
   }
 }
 
