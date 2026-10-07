@@ -37,7 +37,7 @@ export function DojoBody() {
       <a className="cta" href="/duel">
         Fight for 5 USDC
       </a>
-      <a className="ghost" href="/duel?mode=practice">
+      <a className="ghost" href="/duel?mode=practice" style={{ color: "var(--ink)", textDecoration: "none" }}>
         Practice for free
       </a>
       {d.state === "none" && <p className="empty">No engine is configured, so ranked fights are off. Practice runs in your browser.</p>}

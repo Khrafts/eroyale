@@ -1,8 +1,8 @@
 ## Status
-- Step: duel-ui 8.3 steps 1-5 built against a stub of shared/duel.ts (practice, ranked queue/fight/result, /arena?duel=, Dojo panel, shots).
-- Last check: typecheck clean; build ok; island bundle check ok (/arena +1.1%, /play +1.0%); five duel shots written.
-- Next: merge feat/duel (shared/duel.ts landed), delete the stub, run ui, predict-ui, island-ui, duel-ui gates.
-- Blockers: duel-engine routes not landed (ranked PvP untested live); gates.next-duel/duel-ui.sh not written yet.
+- Step: duel-ui on shared/duel.ts (stub deleted): practice, ranked queue/fight/result, /arena?duel=, live Dojo panel, mocks, shots.
+- Last check: GATE PASS ui (PORT=free), predict-ui, island-ui, duel-ui (gates.next-duel); typecheck clean.
+- Next: a ranked PvP fight in two browsers against a local CHAIN=off engine once duel-engine lands in feat/duel.
+- Blockers: duel-engine routes (/duels, /ws?duel=) not in feat/duel yet.
 
 ## Running
 

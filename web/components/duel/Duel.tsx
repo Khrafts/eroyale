@@ -16,7 +16,7 @@ import type { View } from "./render";
 import { DuelLink } from "./link";
 import { botFight, engineConfigured, pollTicket, queue } from "./net";
 import { useVerify, type Verify } from "./verify";
-import { DUEL_MOMENTS, MOCK_DUEL_ID, MOCK_PLAYERS, MOCK_STAKE, mockReplay, mockRun, pickTick, type DuelMoment } from "./mock";
+import { DUEL_MOMENTS, MOCK_DUEL_ID, MOCK_ME, MOCK_PLAYERS, MOCK_STAKE, mockReplay, mockRun, pickTick, type DuelMoment } from "./mock";
 import type { DuelPlayer } from "./types";
 import s from "./duel.module.css";
 
@@ -220,7 +220,7 @@ function Practice({ me, onExit }: { me: Me; onExit: () => void }) {
     }
     // draw between the last two ticks
     const t = g.acc / TICK_MS;
-    const v = toView(g.st, [name, `dojo bot · ${LEVELS[Number(levelRef.current) - 1].label.toLowerCase()}`], [false, true], avatars, 0);
+    const v = toView(g.st, [name, "dojo bot"], [false, true], avatars, 0);
     for (const i of [0, 1] as const) {
       const p = g.prev.f[i],
         c = g.st.f[i];
@@ -370,14 +370,15 @@ function Ranked({ me, duelId, side, token, ranked, onAgain, onPractice }: { me: 
   const players = info?.players ?? [];
   const nameOf = (i: 0 | 1) => (i === side ? me.callsign || players[i]?.callsign || "you" : players[i]?.callsign || "opponent");
   const avatarOf = (i: 0 | 1) => (i === side ? me.avatar : cfgFor(players[i]?.player ?? `p${i}`, nameOf(i)));
+  const lastView = useRef<View | null>(null);
   const view = (now: number): View | null => {
     link?.input(input?.bits() ?? 0);
     const fr = link?.frame(now);
     if (!fr) return null;
-    return { ...fr, names: [nameOf(0), nameOf(1)], bots: [!!players[0]?.bot, !!players[1]?.bot], avatars: [avatarOf(0), avatarOf(1)], me: side };
+    return (lastView.current = { ...fr, names: [nameOf(0), nameOf(1)], bots: [!!players[0]?.bot, !!players[1]?.bot], avatars: [avatarOf(0), avatarOf(1)], me: side });
   };
   if (showResult && info?.final)
-    return <Result me={me} side={side} players={players} final={info.final} settled={info.settled} verify={verify} ranked={ranked} duelId={duelId} onAgain={onAgain} onPractice={onPractice} />;
+    return <Result me={me} side={side} players={players} final={info.final} settled={info.settled} verify={verify} ranked={ranked} duelId={duelId} last={lastView.current} onAgain={onAgain} onPractice={onPractice} />;
   const status = info?.cancelled ? `Cancelled: ${info.cancelled}` : !info?.connected ? "Connecting…" : info.status === "countdown" || info.status === "matching" ? "Get ready" : info.status === "settling" ? "Replaying the match" : "Live";
   return (
     <main className={s.fight}>
@@ -398,7 +399,7 @@ function Ranked({ me, duelId, side, token, ranked, onAgain, onPractice }: { me: 
   );
 }
 
-function Result({ me, side, players, final, settled, verify, ranked, duelId, onAgain, onPractice }: {
+function Result({ me, side, players, final, settled, verify, ranked, duelId, last, onAgain, onPractice }: {
   me: Me;
   side: 0 | 1;
   players: DuelPlayer[];
@@ -407,6 +408,8 @@ function Result({ me, side, players, final, settled, verify, ranked, duelId, onA
   verify: Verify;
   ranked: boolean;
   duelId: number;
+  /** The last frame of the fight, drawn above the result. */
+  last: View | null;
   onAgain: () => void;
   onPractice: () => void;
 }) {
@@ -422,6 +425,11 @@ function Result({ me, side, players, final, settled, verify, ranked, duelId, onA
         <span className={kit.chip}>{ranked ? <>Ranked · <b>5 USDC</b></> : <>Bot fight · <b>free</b></>}</span>
       </TopBar>
       <PanelHead color="duel" eyebrow={`Duel #${duelId} · result`} title={verdict} />
+      {last && (
+        <div style={{ height: 190, borderBottom: "var(--stroke) solid var(--ink)" }}>
+          <Stage view={() => last} hud={false} label="The last frame of the fight" />
+        </div>
+      )}
       <div className={s.body}>
         <p className={s.lede}>
           <span className={s.score}>
@@ -470,27 +478,32 @@ function Result({ me, side, players, final, settled, verify, ranked, duelId, onA
 }
 
 // ---------- mock moments ----------
+// The [3, 2] bot match: in practice you are fighter 0 against the bot; in the ranked moments you are kestrel, side 1,
+// who wins it 2-0.
 function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
   const run = useMemo(() => mockRun([3, 2]), []);
-  const tick = useMemo(() => pickTick(run, at === "practice" ? 200 : 1300), [run, at]);
+  const tick = useMemo(() => pickTick(run, at === "practice" ? 200 : 620), [run, at]);
   const rep = useMemo(() => mockReplay(run), [run]);
   const input = useMemo<InputSource | null>(() => (typeof window === "undefined" ? null : createInput()), []);
   useEffect(() => () => input?.dispose(), [input]);
-  const youName = me.callsign || MOCK_PLAYERS[0].callsign;
+  const youName = me.callsign || MOCK_PLAYERS[MOCK_ME].callsign;
+  const players: [DuelPlayer, DuelPlayer] = [MOCK_PLAYERS[0], { ...MOCK_PLAYERS[1], callsign: youName }];
+  const oppAvatar = cfgFor(MOCK_PLAYERS[0].player, MOCK_PLAYERS[0].callsign);
   if (at === "result") {
     const fin = run.final;
     const book = JSON.stringify({ mode: "duel", duelId: MOCK_DUEL_ID, players: MOCK_PLAYERS.map((p) => p.player), stakeUnits: MOCK_STAKE, feeBps: 500, inputs: rep.inputs, ticks: rep.ticks, logHash: "0x" + "0".repeat(64) });
     const winner = fin.winner === null ? null : MOCK_PLAYERS[fin.winner].player;
     return (
       <Result
-        me={{ ...me, address: me.address }}
-        side={0}
-        players={[{ ...MOCK_PLAYERS[0], player: MOCK_PLAYERS[0].player, callsign: youName }, MOCK_PLAYERS[1]]}
+        me={me}
+        side={MOCK_ME}
+        players={players}
         final={{ winner, bookHash: keccak256(stringToBytes(book)), rounds: [fin.f[0].rounds, fin.f[1].rounds], payoutUnits: "9500000" }}
         settled={null}
         verify={{ hash: rep.hash, ticks: rep.ticks, matches: true, bookHashOk: true }}
         ranked
         duelId={MOCK_DUEL_ID}
+        last={toView(fin, [players[0].callsign, youName], [false, false], [oppAvatar, me.avatar], MOCK_ME)}
         onAgain={() => {}}
         onPractice={() => {}}
       />
@@ -498,9 +511,9 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
   }
   const st = run.states[tick];
   const practice = at === "practice";
-  const names: [string, string] = practice ? [youName, "dojo bot · hard"] : [youName, MOCK_PLAYERS[1].callsign];
-  const avatars: [AvatarCfg, AvatarCfg] = [me.avatar, practice ? cfgFor(BOT_ADDR + "3", "dojo bot") : cfgFor(MOCK_PLAYERS[1].player, names[1])];
-  const view = () => toView(st, names, [false, practice], avatars, 0);
+  const view = practice
+    ? () => toView(st, [youName, "dojo bot"], [false, true], [me.avatar, cfgFor(BOT_ADDR + "3", "dojo bot")], 0)
+    : () => toView(st, [players[0].callsign, youName], [false, false], [oppAvatar, me.avatar], MOCK_ME);
   return (
     <main className={s.fight}>
       <TopBar wallet={me.address}>
@@ -528,4 +541,3 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
     </main>
   );
 }
-

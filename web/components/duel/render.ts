@@ -44,7 +44,6 @@ const RECOIL: Joints = { hip: [-50, 890], neck: [-170, 1380], head: [-260, 1540]
 const LYING: Joints = { hip: [-500, 110], neck: [-1080, 150], head: [-1290, 170], eF: [-800, 90], hF: [-560, 40], eB: [-920, 260], hB: [-700, 330], kF: [-160, 270], fF: [220, 60], kB: [-220, 120], fB: [160, 30] };
 
 const ease = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
-const clamp01 = (t: number) => Math.max(0, Math.min(1, t));
 function mix(a: Joints, b: Joints, t: number): Joints {
   const o = {} as Joints;
   for (const k of KEYS) o[k] = [a[k][0] + (b[k][0] - a[k][0]) * t, a[k][1] + (b[k][1] - a[k][1]) * t];
@@ -67,7 +66,7 @@ export function kindOf(act: string): string {
   if (a.includes("down") || a.includes("knock") || a === "ko") return "down";
   if (a.includes("bstun") || a.includes("blockstun") || (a.includes("block") && a.includes("stun"))) return "bstun";
   if (a.includes("stun") || a.includes("hit")) return "hstun";
-  if (a.includes("cblock") || (a.includes("block") && a.includes("c"))) return "cblock";
+  if (a.includes("cblock") || a.includes("crouchblock")) return "cblock";
   if (a.includes("block") || a.includes("guard")) return "block";
   if (a.includes("crouch")) return "crouch";
   if (a.includes("land")) return "land";
@@ -84,7 +83,8 @@ function poseOf(f: RFighter, t: number): Joints {
   switch (k) {
     case "walk":
     case "back": {
-      const ph = (fr * 0.22 * (k === "back" ? -1 : 1));
+      // the stride follows the ground covered (the rules keep frame at 0 while walking)
+      const ph = f.x / 150 * f.facing;
       const base = k === "back" ? BLOCK : STANCE;
       const o = mix(base, base, 0);
       o.fF = [300 + 170 * Math.sin(ph), Math.max(0, 70 * Math.cos(ph))];
@@ -143,7 +143,7 @@ export type Renderer = {
   big: boolean;
 };
 
-export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean; reduceMotion?: boolean } = {}): Renderer {
+export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean; reduceMotion?: boolean; hud?: boolean } = {}): Renderer {
   const ctx = canvas.getContext("2d")!;
   const big = !!opts.big;
   let W = 0,
@@ -210,14 +210,14 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       const x = cx * W * 1.1 - W * 0.05;
       const y = c.y * H;
       const r = 26 * u() * c.s;
-      ctx.globalAlpha = 0.9;
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.moveTo(x + r * 2.35, y - r * 0.4);
       ctx.arc(x + r * 1.1, y - r * 0.4, r * 1.25, 0, Math.PI * 2);
+      ctx.moveTo(x + r * 3.25, y);
       ctx.arc(x + r * 2.3, y, r * 0.95, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillRect(x, y - r * 0.2, r * 2.3, r * 1.0);
-      ctx.globalAlpha = 1;
+      ctx.rect(x, y, r * 2.3, r * 0.95);
+      ctx.fill("nonzero");
     }
     const lw = (big ? 3 : 2) * Math.max(1, u() * (big ? 1 : 0.9));
     // far meadow hills (parallax 0.25)
@@ -488,14 +488,23 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       ctx.strokeStyle = ink;
       ctx.lineWidth = 3 * k * 0.9;
       ctx.lineJoin = "round";
-      const label = v.names[side];
+      const tags: string[] = [];
+      if (v.bots[side]) tags.push("bot");
+      if (v.me === side) tags.push("you");
+      // the callsign shortens with an ellipsis so it never runs into the timer
+      ctx.font = canvasFont("mono", 700, 8.5 * k);
+      const tagsW = tags.reduce((n, t) => n + ctx.measureText(t).width + 14 * k, 0);
+      ctx.font = canvasFont("display", 700, 11 * k);
+      const room = barW - hr * 2 - 6 * k - tagsW - 4 * k;
+      let label = v.names[side];
+      if (ctx.measureText(label).width > room) {
+        while (label.length > 1 && ctx.measureText(label + "…").width > room) label = label.slice(0, -1);
+        label += "…";
+      }
       ctx.strokeText(label, tx, nameY + hr);
       ctx.fillText(label, tx, nameY + hr);
       const tw = ctx.measureText(label).width;
       let tagX = side === 0 ? tx + tw + 6 * k : tx - tw - 6 * k;
-      const tags: string[] = [];
-      if (v.bots[side]) tags.push("bot");
-      if (v.me === side) tags.push("you");
       for (const t of tags) {
         ctx.font = canvasFont("mono", 700, 8.5 * k);
         const w = ctx.measureText(t).width + 10 * k;
@@ -572,11 +581,10 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     ctx.fillStyle = muted;
     ctx.fillText(`Round ${v.round}`, W / 2, ty + 30 * k + 12 * k);
 
-    // combo counters, on the attacker's side
+    // combo counters, on the attacker's side (the rules keep the count on the attacker)
     for (const side of [0, 1] as const) {
       const st = fs[side];
-      const def = v.f[1 - side];
-      const c = def.combo;
+      const c = v.f[side].combo;
       if (c >= 2 && c !== st.comboShown) {
         st.comboShown = c;
         st.comboPop = 1;
@@ -733,7 +741,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       ctx.stroke();
     }
     ctx.restore();
-    hud(v, dt);
+    if (opts.hud !== false) hud(v, dt);
     banner(v, dt);
   }
 

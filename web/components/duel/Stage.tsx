@@ -4,7 +4,7 @@
 import { useEffect, useRef } from "react";
 import { createRenderer, type Renderer, type View } from "./render";
 
-export function Stage({ view, big, className, label, onRenderer }: { view: (now: number) => View | null; big?: boolean; className?: string; label: string; onRenderer?: (r: Renderer) => void }) {
+export function Stage({ view, big, hud, className, label, onRenderer }: { view: (now: number) => View | null; big?: boolean; hud?: boolean; className?: string; label: string; onRenderer?: (r: Renderer) => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -13,7 +13,7 @@ export function Stage({ view, big, className, label, onRenderer }: { view: (now:
     if (!c) return;
     const q = new URLSearchParams(window.location.search);
     const reduceMotion = q.get("motion") === "reduce" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const r = createRenderer(c, { big, reduceMotion });
+    const r = createRenderer(c, { big, reduceMotion, hud });
     onRenderer?.(r);
     let raf = 0;
     const loop = (now: number) => {

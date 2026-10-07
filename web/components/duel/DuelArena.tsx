@@ -40,9 +40,10 @@ const stakeLine = (stakeUnits: string | null, ranked: boolean) => (ranked ? `Sta
 
 function MockArena() {
   const run = useMemo(() => mockRun([3, 2]), []);
-  const st = run.states[useMemo(() => pickTick(run, 1300), [run])];
-  const avatars: [AvatarCfg, AvatarCfg] = [cfgFor(MOCK_PLAYERS[0].player, "kestrel"), cfgFor(MOCK_PLAYERS[1].player, "mira")];
-  const view = (): View => ({ f: [{ ...st.f[0] }, { ...st.f[1] }], round: st.round, roundTick: st.roundTick, pause: st.pause, over: st.over, winner: st.winner, names: ["kestrel", "mira"], bots: [false, false], avatars, me: null });
+  const st = run.states[useMemo(() => pickTick(run, 620), [run])];
+  const names: [string, string] = [MOCK_PLAYERS[0].callsign, MOCK_PLAYERS[1].callsign];
+  const avatars: [AvatarCfg, AvatarCfg] = [cfgFor(MOCK_PLAYERS[0].player, names[0]), cfgFor(MOCK_PLAYERS[1].player, names[1])];
+  const view = (): View => ({ f: [{ ...st.f[0] }, { ...st.f[1] }], round: st.round, roundTick: st.roundTick, pause: st.pause, over: st.over, winner: st.winner, names, bots: [false, false], avatars, me: null });
   return (
     <>
       <Stage view={view} big label="Mock duel on the big screen" />
