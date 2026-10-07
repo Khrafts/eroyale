@@ -1,0 +1,48 @@
+/* The lazily loaded navigation pieces: the game switcher (switcher.tsx), the you chip (you.tsx) and the end-state
+   action block (actions.tsx). Kept out of kit.module.css so their class map is not in /play's first-load JS.
+   Composes the kit's .chip and .seg (kit.module.css); every value from app/theme.css. */
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c, var(--ink));border:1.5px solid var(--ink);flex:none;box-sizing:border-box}
+.switch{flex:none}
+.switch a{display:inline-flex;align-items:center;gap:7px;padding:6px 13px;border-radius:var(--radius-round);font:600 13px/1.2 var(--body);color:var(--ink2);text-decoration:none;white-space:nowrap;transition:background .2s,color .2s;position:relative}
+.switch a:hover{color:var(--ink);background:color-mix(in srgb, var(--c) 18%, transparent)}
+.switch a[aria-current="page"]{background:var(--ink);color:var(--paper)}
+.switch a[aria-current="page"] .dot{border-color:var(--paper)}
+.short{display:none}
+/* "you're in": a sun pip on the entry (and the words in the phone menu) */
+.live{display:inline-flex;align-items:center;gap:4px;font:600 11px/1 var(--body);color:var(--ink)}
+.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--sun);border:1.5px solid var(--ink)}
+.switch .live{position:absolute;top:-3px;right:-2px}
+.bigLink{padding:7px 12px;font-weight:600;color:var(--ink)}
+.compact{display:none;position:relative}
+.compactBtn{cursor:pointer;font-weight:600;gap:7px;padding:7px 12px}
+.caret{width:10px;height:6px;transition:transform .15s}
+.compactBtn[aria-expanded="true"] .caret{transform:rotate(180deg)}
+.menu{position:absolute;top:calc(100% + 8px);left:0;min-width:220px;display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--paper);border:var(--stroke) solid var(--ink);border-radius:var(--radius-card);box-shadow:var(--shadow-panel);z-index:30}
+.item{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;padding:10px 12px;border:0;border-radius:10px;background:transparent;font:600 14px/1.2 var(--body);color:var(--ink);text-decoration:none;text-align:left;cursor:pointer}
+.item:hover{background:color-mix(in srgb, var(--c, var(--ink)) 14%, transparent)}
+.item[aria-current="page"]{background:var(--ink);color:var(--paper)}
+.item .live{margin-left:auto}
+.item[aria-current="page"] .live{color:var(--paper)}
+.you{position:relative}
+.youBtn{cursor:pointer;padding:4px 12px 4px 4px}
+.youBtn:only-child, .youBtn:not(:has(.youHead)){padding:7px 14px}
+.youHead{width:28px;height:28px;border-radius:50%;overflow:hidden;display:block;flex:none}
+.youHead > *, .youBig > *{width:100%;height:100%;display:block}
+.you .menu{left:auto;right:0}
+.youId{display:flex;align-items:center;gap:10px;padding:8px 10px 10px;border-bottom:var(--stroke) solid var(--line);margin-bottom:4px}
+.youId b{display:block;font:800 15px/1.2 var(--display)}
+.youBig{width:44px;height:44px;border-radius:50%;overflow:hidden;flex:none}
+.switch a:focus-visible, .bigLink:focus-visible, .compactBtn:focus-visible, .youBtn:focus-visible, .item:focus-visible, .other:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}
+
+/* the bar's width (container appbar on .top in kit.module.css): short labels under 1080 px */
+@container appbar (max-width: 1080px){.full{display:none}.short{display:inline}}
+/* under 640 px the switcher is a menu */
+@container appbar (max-width: 639px){.switch,.bigLink{display:none}.compact{display:block}}
+
+/* ---- end-state action block (the duel result screen's layout) ---- */
+.actions{display:flex;flex-direction:column;gap:10px}
+.others{display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px}
+.other{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 12px;border:var(--stroke) solid var(--ink);border-radius:var(--radius-card);background:color-mix(in srgb, var(--c) 14%, var(--paper));color:var(--ink);font:600 14px/1.2 var(--body);text-decoration:none;box-shadow:var(--shadow-chip);transition:transform .12s}
+.other:hover{transform:translateY(-2px)}
+
+@media (prefers-reduced-motion: reduce){.switch a,.other,.caret{transition:none}}
