@@ -16,7 +16,7 @@ import { useUrlState } from "@/lib/useUrlState";
 import { useRolling } from "@/lib/useRolling";
 import { MEANING } from "@/lib/theme";
 import { AvatarHead, PlayerHead, useMyAvatar } from "./Avatar";
-import { Head, Pennant, figs, Settling, WaitingClose } from "./parts";
+import { Head, Pennant, figs, Settling, WaitingClose, LoadBar } from "./parts";
 import { hasEnded, provisionalFinal } from "@/lib/provisional";
 import { EmptyShell, Shell } from "./Bar";
 import s from "./play.module.css";
@@ -174,7 +174,7 @@ function Body({
     case "error":
       return <Notice title="Not connected" body={state.error!} actions={<Retry />} />;
     case "finding":
-      return <Notice title="Finding the lobby" body="Asking the engine which lobby is open. This takes a second or two." actions={<Retry label="Try again" />} />;
+      return <Notice title="Finding the lobby" body="Asking the engine which lobby is open. This takes a second or two." actions={<LoadBar label="Connecting to the engine" />} />;
     case "cancelled":
       return (
         <Notice
@@ -343,6 +343,11 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
           Everyone starts on <span className={s.fig}>$10,000</span> of play money. The flood rises three times; anyone under the line goes under. The last
           summits split the pot.
         </p>
+        <ol className={s.howList}>
+          <li><b>1</b>Go long or short on BTC, ETH or SOL with 1x to 100x leverage.</li>
+          <li><b>2</b>Three checkpoints cut the bottom quarter and anyone under the flood line.</li>
+          <li><b>3</b>Survivors split the pot by profit, paid on chain via Chainlink CRE.</li>
+        </ol>
         <p className={s.stat}>
           <Chip className={s.statChip}>
             <b>{state.players.length}</b> in
@@ -351,6 +356,19 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
             pot <b>${unitsToUsd(state.potUnits)}</b>
           </Chip>
         </p>
+        {state.players.length > 0 && (
+          <ul className={s.roster}>
+            {state.players.slice(0, 12).map((p) => (
+              <li key={p.player}>
+                <Chip className={s.rosterChip}>
+                  <PlayerHead address={p.player} name={p.callsign} size={22} />
+                  {p.callsign}
+                  {p.bot && <KitBotTag />}
+                </Chip>
+              </li>
+            ))}
+          </ul>
+        )}
         <label className={s.field}>
           <span>Your callsign</span>
           <span className={s.fieldRow}>
@@ -776,7 +794,9 @@ function Result({ match, me }: { match: Match; me: string | null }) {
   // finalists arrive sorted by address; rank them by final equity for the headline and the list
   const ranked = fin ? [...fin.finalists].sort((a, b) => num(b.equity) - num(a.equity)) : [];
   const place = mine ? ranked.indexOf(mine) + 1 : 0;
-  if (!fin) return <p className={s.waiting}>The flood has stopped. Counting the summits.</p>;
+  if (!fin)
+    return <Notice title="The flood has stopped" body="Counting the summits and fetching the final prices." actions={<LoadBar label="Building the final book" />} />;
+  const out = (match.state.board?.rows ?? []).filter((r) => !r.alive).sort((a, b) => a.rank - b.rank);
   return (
     <section className={s.out}>
       <Head
@@ -809,6 +829,19 @@ function Result({ match, me }: { match: Match; me: string | null }) {
             </li>
           ))}
         </ul>
+        {out.length > 0 && (
+          <>
+            <p className={s.outHead}>Went under</p>
+            <ul className={`${s.standing} ${s.outList}`}>
+              {out.map((r) => (
+                <li key={r.player} className={r.player === me ? s.meRow : ""}>
+                  <Who match={match} player={r.player} callsign={r.callsign} me={me} />
+                  <span className={s.fig}>#{r.rank} · {usd(num(r.equity))}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {settled ? (
           isTxHash(settled.txHash) ? (
             <div className={s.stamp}>
