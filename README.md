@@ -6,7 +6,7 @@ A cartoon island of real-time money games on Base Sepolia. Each building is a ga
 - **Price Prediction**: pay the entry, call where BTC, ETH or SOL will close. Predictions are hidden until the lock. The closest quarter of players win, closest paid most. A protocol round is always open; players can also create their own rounds with a creator fee of up to 5%.
 - **Stickman Duel**: one-on-one stickman fighting with combos, blocks, throws and cross-ups, practised in the browser against a bot at three levels. Ranked duels for a stake are built (contract, engine, replay settlement) but shown as "Coming soon" while the rules are tuned.
 
-Play: <WEB_URL>
+Play: https://web-production-8b42b.up.railway.app
 Engine: https://eroyale-production.up.railway.app (`/health`, `/lobbies`, `/rounds`, `/stats`)
 
 Testnet only. The token is a mock USDC with an open `mint`; nothing here has real value. Players get a burner wallet in the browser and a relayer pays their entry.
