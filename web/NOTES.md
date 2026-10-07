@@ -1,8 +1,8 @@
 ## Status
-- Step: duel-ui review and look-judge fixes on feat/duel (engine with DELETE /duels/queue/:ticket merged).
-- Last check: GATE PASS ui, predict-ui, island-ui, duel-ui (free PORT); typecheck clean; PvP, leave-queue, arena end card rechecked on a local CHAIN=off engine.
-- Next: further review findings, if any.
-- Blockers: none.
+- Step: feat/duel with feat/island merged (Phase 10 look-play and look-arena in); duel UI merged (duel-ui review and look fixes).
+- Last check: duel-ui branch GATE PASS ui, predict-ui, island-ui, duel-ui; look-arena 67cef50 GATE PASS ui, predict-ui, island-ui, look-ui (/arena +1.7%, /play +4.4% vs main).
+- Duel verified live: CHAIN=off two-browser PvP + bot fight; Base Sepolia PvP settled through the CRE simulator.
+- Next: gates rerun on the merged tree, then the duel PR. Blockers: none.
 
 ## Running
 
@@ -25,11 +25,11 @@ Against a live engine (no `mock=1`; without NEXT_PUBLIC_ENGINE_WS the pages show
 
 Screenshots: `npm run build && SHOTS_DIR=<dir> npm run shots` writes the eight gate PNGs. `SHOTS_ONLY=a,b` limits the set; `NEXT_DIST_DIR` and `PORT` let a second build run beside the first.
 
-Files: `lib/events.ts` (wire types), `lib/useMatch.ts` (mock or WS feed, clock, positions), `lib/engine.ts` (burner key, signed join and orders), `mocks/match.ts`, `components/arena/VariantB.tsx` + `components/arena/b/` (the storm arena, one canvas), `components/play/` (phone).
+Files: `lib/events.ts` (wire types), `lib/useMatch.ts` (mock or WS feed, clock, positions), `lib/engine.ts` (burner key, signed join and orders), `mocks/match.ts`, `components/arena/VariantB.tsx` + `components/arena/b/` (the arena, one canvas in the island's world), `components/play/` (phone).
 
 ## Prediction mode
 
-Same app, same world: `/arena` draws a prediction lobby as a price survey on the storm canvas (`components/arena/b/predict.ts`, picked in `VariantB.tsx` when `state.mode === "predict"`); `/play?mode=predict` is the phone (`components/play/Predict.tsx`). Flood blue is still only the storm: after the lock it closes in from above and below, leaving a dry corridor that is the winners' band (`ptick.band`). Gold is winners and payouts, chalk the live price.
+Same app, same world: `/arena` draws a prediction lobby as a price chart on the same canvas (`components/arena/b/predict.ts`, picked in `VariantB.tsx` when `state.mode === "predict"`); `/play?mode=predict` is the phone (`components/play/Predict.tsx`). The sea is still only the zone: after the lock it closes in from above and below, leaving a sun band that is the winners' span (`ptick.band`). Sun is winners and payouts, ink the live price.
 
 Against the mock: `?mock=predict` on either page (implies predict mode).
 - `&at=` moments of the protocol round (lobby 41, BTC, 20 players, 18 calls, top 5, linear): `open` (18 s to the lock), `locked`, `close` (30 s to the resolve), `final` (settlement price landed, payouts provisional), `settled`, or seconds after the round opened.
@@ -117,7 +117,7 @@ look-arena restyle /play and /arena on it.
   (variable latin woff2, OFL texts, URLs in `app/fonts/SOURCES.txt`). Each face keeps its real family name
   (`declarations`), so canvas code and `document.fonts.check('16px "Unbounded"')` work; layout.tsx puts
   `--font-display`, `--font-body`, `--font-mono` on `<html>`. The island no longer loads fonts.googleapis.com.
-  Sofia Sans stays until look-arena drops it.
+  Sofia Sans is gone, and so is `components/arena/b/fonts.ts`: the arena draws with `canvasFont` from lib/theme.ts.
 - The island reads the shared tokens: `.isle` keeps only its extras, places.ts `COLORS` and world `C` are built from
   theme.ts, water/sky/terrain/common import it, canvas text uses `canvasFont`. No visible change (checked by pixel diff
   against feat/island with `motion=reduce` shots).
@@ -130,6 +130,17 @@ look-arena restyle /play and /arena on it.
   stay synthetic bold as before; everywhere else `--mono` has true weights up to 800. Class names are
   exported as `kit` for layouts the components do not cover. Buttons and chips use the spec's `0 3px 0` shadow (the
   island's own .cta keeps its 4px).
+- Arena (look-arena): one 1920x1080 canvas as before. `components/arena/b/toon.ts` is the island's world in 2D: the sky
+  gradient with pre-rendered toon clouds, `box` (chip/panel: fill, 3 px ink outline, hard ink shadow, optional tag tip),
+  `panel` (game-colour head with the two soft circles), the wordmark/pot/count chips, the bot tag, avatar heads drawn
+  from `cfgFor` (or your saved look when this browser has a burner key; the arena never creates one) into an offscreen
+  sprite once per look, size and crown, the podium step and confetti. `scene.ts`: toon land (meadow, grass, a sand
+  beach above the waterline, ink outline), the sea (seaMid to seaDeep, seaShallow band, seaFoam line and flecks), heads
+  on summits under label chips (equity on a sun or coral pill), mint/violet pennants, a coral ring for at-risk, the
+  cut line in coral and ink, the checkpoint surge with toon shards and a paper flash, the final podium (top three by
+  equity; their summits keep a numbered sun flag) with confetti. `predict.ts`: ink price line over a paper underlay,
+  dashed ink calls ending in head chips, the sun band between two sea fronts, confetti on the reveal. The HUD sits
+  `HUD_Y` (16 px) below the top edge so the sky reads above it. Every colour from theme.ts; no hex in arena files.
 
 ## Stickman Duel
 

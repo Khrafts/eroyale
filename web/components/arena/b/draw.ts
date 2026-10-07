@@ -1,22 +1,8 @@
-// Palette, maths and the two number renderers (odometer for spring values, roller for strings).
+// Maths and the two number renderers (odometer for spring values, roller for strings).
 // Digits are laid out in fixed-width cells, which gives tabular figures on a canvas.
+// Colours and fonts come from lib/theme.ts; the island world (sky, chips, heads, confetti) is in toon.ts.
 import { isTxHash } from "@/lib/events";
-
-export const C = {
-  sky: "#172930",
-  skyClear: "#1E3640",
-  ink: "#D9C9A0",
-  chalk: "#F1ECDD",
-  flood: "#2E5BFF",
-  floodHi: "#A3BBFF",
-  floodDeep: "#0F2470",
-  profit: "#FFD23F",
-  loss: "#FF4F6A",
-  long: "#57E0B0",
-  short: "#D88BFF",
-};
-
-export const RAMP = ["#1D322C", "#2A4337", "#3D5440", "#5B6344", "#837449", "#A88E5C", "#C7AE7C"];
+import { canvasFont, ink, mint, paper } from "@/lib/theme";
 
 export const clamp = (x: number, a = 0, b = 1) => (x < a ? a : x > b ? b : x);
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -39,15 +25,6 @@ export const rgba = (h: string, a: number) => {
   const [r, g, b] = hexToRgb(h);
   return `rgba(${r},${g},${b},${a})`;
 };
-export function ramp(t: number): string {
-  const x = clamp(t) * (RAMP.length - 1);
-  const i = Math.min(RAMP.length - 2, Math.floor(x));
-  const f = x - i;
-  const a = hexToRgb(RAMP[i]);
-  const b = hexToRgb(RAMP[i + 1]);
-  return `rgb(${Math.round(lerp(a[0], b[0], f))},${Math.round(lerp(a[1], b[1], f))},${Math.round(lerp(a[2], b[2], f))})`;
-}
-
 export function rng(seed: number) {
   let s = seed >>> 0;
   return () => {
@@ -93,9 +70,9 @@ type Align = "left" | "center" | "right";
 /** Text measurement with a cache that the scene clears once web fonts finish loading. */
 export class Type {
   cache = new Map<string, number>();
-  constructor(public cond: string, public xc: string) {}
-  font(face: "c" | "x", weight: number, size: number) {
-    return `${weight} ${size}px ${face === "c" ? this.cond : this.xc}`;
+  /** "d" display (Unbounded: titles, banners), "c" body (Instrument Sans: names, sentences), "x" figures (JetBrains Mono). */
+  font(face: "d" | "c" | "x", weight: number, size: number) {
+    return canvasFont(face === "d" ? "display" : face === "c" ? "body" : "mono", weight, size);
   }
   w(ctx: CanvasRenderingContext2D, font: string, s: string) {
     const k = font + "|" + s;
@@ -227,6 +204,7 @@ export class Type {
     now: number,
     reduced: boolean,
     dir = 1,
+    dur = 0.32,
   ) {
     let st = this.rolls.get(key);
     if (!st) {
@@ -237,7 +215,7 @@ export class Type {
       st.cur = s;
       st.at = now;
     }
-    const p = clamp((now - st.at) / 0.32);
+    const p = clamp((now - st.at) / dur);
     const e = easeOut(p);
     const total = this.widthOf(ctx, font, s);
     let cx = align === "left" ? x : align === "right" ? x - total : x - total / 2;
@@ -274,46 +252,53 @@ export class Type {
   }
 }
 
-/** The "Verified by Chainlink" stamp: a brass survey benchmark disc that lands on `settled`. */
+/** The "Verified by Chainlink" seal: an island badge (paper disc, ink outline, hard shadow, mint ring) that lands on `settled`. */
 export function stamp(ctx: CanvasRenderingContext2D, T: Type, tx: string, mode: string, dt: number, reduced: boolean, x: number, y: number) {
   const k = reduced ? 1 : clamp(dt / 0.22);
   const sc = reduced ? 1 : lerp(1.9, 1, easeIn(k));
   const a = reduced ? clamp(dt / 0.4) : clamp(k * 1.5);
   const R = 132;
+  const onchain = isTxHash(tx);
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(-0.16);
+  ctx.rotate(-0.12);
   ctx.scale(sc, sc);
   ctx.globalAlpha = a;
-  // a brass survey benchmark disc
-  ctx.fillStyle = rgba("#2A3A3C", 0.95);
+  ctx.fillStyle = ink;
+  ctx.beginPath();
+  ctx.arc(0, 7, R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = paper;
   ctx.beginPath();
   ctx.arc(0, 0, R, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = C.ink;
-  ctx.lineWidth = 5;
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 3;
   ctx.stroke();
-  ctx.lineWidth = 1.5;
+  // the ring carries the lettering
+  ctx.lineWidth = 34;
+  ctx.strokeStyle = onchain ? mint : paper;
   ctx.beginPath();
-  ctx.arc(0, 0, R - 12, 0, Math.PI * 2);
+  ctx.arc(0, 0, R - 32, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(0, 0, R - 52, 0, Math.PI * 2);
-  ctx.stroke();
-  // lettering around the rim
-  const onchain = isTxHash(tx);
-  const ring = onchain ? "Verified by Chainlink" : "Offline run · no chain";
-  ctx.font = T.font("c", 800, 26);
-  ctx.fillStyle = C.ink;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = ink;
+  for (const rad of [R - 15, R - 49]) {
+    ctx.beginPath();
+    ctx.arc(0, 0, rad, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  const ring = onchain ? "Verified by Chainlink" : "Offline run, no chain";
+  const ringF = T.font("d", 700, 17);
+  ctx.fillStyle = ink;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const rr = R - 32;
-  const ringF = T.font("c", 800, 26);
-  const total = T.w(ctx, ringF, ring) * 1.08;
+  const total = T.w(ctx, ringF, ring) * 1.06;
   let acc = -total / 2;
   ctx.font = ringF;
   for (const ch of ring) {
-    const cw = T.w(ctx, ringF, ch) * 1.08;
+    const cw = T.w(ctx, ringF, ch) * 1.06;
     const ang = (acc + cw / 2) / rr;
     ctx.save();
     ctx.rotate(ang);
@@ -321,22 +306,15 @@ export function stamp(ctx: CanvasRenderingContext2D, T: Type, tx: string, mode: 
     ctx.restore();
     acc += cw;
   }
-  // benchmark triangle and tx
-  ctx.beginPath();
-  ctx.moveTo(0, -38);
-  ctx.lineTo(18, -10);
-  ctx.lineTo(-18, -10);
-  ctx.closePath();
-  ctx.fill();
   ctx.textBaseline = "alphabetic";
-  T.text(ctx, "Settled", 0, 24, T.font("c", 800, 30), C.ink, "center");
-  T.text(ctx, onchain ? shortHash(tx) : "offline", 0, 52, T.font("x", 600, 24), C.ink, "center");
-  T.text(ctx, onchain ? (mode === "simulated" ? "simulated report" : "onchain report") : "no chain", 0, 96, T.font("c", 700, 22), rgba(C.ink, 0.85), "center");
+  T.text(ctx, "Settled", 0, 8, T.font("d", 800, 24), ink, "center");
+  T.text(ctx, onchain ? shortHash(tx) : "offline", 0, 38, T.font("x", 700, 19), ink, "center");
+  T.text(ctx, onchain ? (mode === "simulated" ? "simulated report" : "onchain report") : "no chain", 0, 106, T.font("c", 600, 18), ink, "center");
   ctx.restore();
-  // ink spread on impact
+  // a ripple on impact
   if (!reduced && dt > 0.2 && dt < 1) {
-    ctx.strokeStyle = rgba(C.ink, (1 - (dt - 0.2) / 0.8) * 0.6);
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = rgba(ink, (1 - (dt - 0.2) / 0.8) * 0.5);
+    ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(x, y, R + (dt - 0.2) * 90, 0, Math.PI * 2);
     ctx.stroke();
