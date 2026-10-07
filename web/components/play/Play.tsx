@@ -817,9 +817,9 @@ function Result({ match, me }: { match: Match; me: string | null }) {
         <NextChip match={match} />
         {mine && (
           <>
-            <p className={s.payout}>${unitsToUsd(myUnits ?? "0")}</p>
+            <p className={s.payout}>{early ? "Calculating…" : `$${unitsToUsd(myUnits ?? "0")}`}</p>
             <p className={s.sub}>
-              {settled ? (isTxHash(settled.txHash) ? "Paid to your address" : "Settled offline (no chain), nothing paid") : early ? "Provisional · live prices" : "Provisional, until the settlement report lands"} from an equity of{" "}
+              {settled ? (isTxHash(settled.txHash) ? "Paid to your address, from an equity of" : "Settled offline (no chain), nothing paid, from an equity of") : early ? "Your payout is calculated from the closing price, at a live equity of" : "Provisional, until the settlement report lands, from an equity of"}{" "}
               <span className={s.fig}>{usd(num(mine.equity))}</span>
             </p>
           </>
@@ -828,7 +828,7 @@ function Result({ match, me }: { match: Match; me: string | null }) {
           {ranked.map((f) => (
             <li key={f.player} className={f.player === me ? s.meRow : ""}>
               <Who match={match} player={f.player} callsign={f.callsign} me={me} />
-              <span className={s.fig}>${unitsToUsd(paid(f.player) ?? f.provisionalPayoutUnits)}</span>
+              <span className={s.fig}>{early ? "Calculating…" : `$${unitsToUsd(paid(f.player) ?? f.provisionalPayoutUnits)}`}</span>
             </li>
           ))}
         </ul>
