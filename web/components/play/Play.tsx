@@ -16,7 +16,8 @@ import { useUrlState } from "@/lib/useUrlState";
 import { useRolling } from "@/lib/useRolling";
 import { MEANING } from "@/lib/theme";
 import { AvatarHead, PlayerHead, useMyAvatar } from "./Avatar";
-import { Head, Pennant, figs, Settling } from "./parts";
+import { Head, Pennant, figs, Settling, WaitingClose } from "./parts";
+import { hasEnded, provisionalFinal } from "@/lib/provisional";
 import { EmptyShell, Shell } from "./Bar";
 import s from "./play.module.css";
 import PredictPhone from "./Predict";
@@ -104,7 +105,7 @@ function kindOf(match: Match, inLobby: boolean, myElim: MyElim): Kind {
   if (state.error) return "error";
   if (!state.status) return "finding";
   if (state.status === "cancelled") return "cancelled";
-  if (state.final || state.status === "settling" || state.status === "settled") return myElim ? "eliminated" : "result";
+  if (state.final || state.status === "settling" || state.status === "settled" || hasEnded(state, match.clock())) return myElim ? "eliminated" : "result";
   if (!inLobby && (state.status === "open" || state.status === "countdown")) return "join";
   if (state.status === "open" || state.status === "countdown") return "lobby";
   if (myElim) return "eliminated";
@@ -118,6 +119,13 @@ function RoyalePhone() {
   const [acct, setAcct] = useState<PrivateKeyAccount | null>(null);
   const [joinedAs, setJoinedAs] = useState<string | null>(null);
   useEffect(() => setAcct(burner()), []);
+  // re-render once a second while live, so the result shows the moment the match clock passes the end
+  const [, tickNow] = useState(0);
+  useEffect(() => {
+    if (state.status !== "live" || state.final) return;
+    const id = setInterval(() => tickNow((x) => x + 1), 1000);
+    return () => clearInterval(id);
+  }, [state.status, state.final]);
 
   const me = source === "mock" ? match.me : (acct?.address.toLowerCase() ?? null);
   const inLobby = (!!me && state.players.some((p) => p.player === me)) || !!joinedAs;
@@ -754,7 +762,9 @@ function PlayerHeadOrMine({ address, callsign }: { address: string; callsign: st
 
 function Result({ match, me }: { match: Match; me: string | null }) {
   const { state } = match;
-  const fin = state.final;
+  // before `final`: the survivors at the last live marks, priced with the shared settle()
+  const early = state.final ? null : provisionalFinal(state);
+  const fin = state.final ?? early;
   const settled = state.settled;
   const mine = fin?.finalists.find((f) => f.player === me);
   const paid = (p: string) => {
@@ -786,7 +796,7 @@ function Result({ match, me }: { match: Match; me: string | null }) {
           <>
             <p className={s.payout}>${unitsToUsd(myUnits ?? "0")}</p>
             <p className={s.sub}>
-              {settled ? (isTxHash(settled.txHash) ? "Paid to your address" : "Settled offline (no chain), nothing paid") : "Provisional, until the settlement report lands"} from an equity of{" "}
+              {settled ? (isTxHash(settled.txHash) ? "Paid to your address" : "Settled offline (no chain), nothing paid") : early ? "Provisional · live prices" : "Provisional, until the settlement report lands"} from an equity of{" "}
               <span className={s.fig}>{usd(num(mine.equity))}</span>
             </p>
           </>
@@ -814,6 +824,8 @@ function Result({ match, me }: { match: Match; me: string | null }) {
               <p className={s.stampBody}>This engine runs without a chain, so nothing was paid on chain.</p>
             </div>
           )
+        ) : early ? (
+          <WaitingClose />
         ) : (
           <Settling />
         )}

@@ -61,9 +61,23 @@ export function Settling() {
     <div className={`${s.stamp} ${s.settling}`} role="status" aria-live="polite">
       <p className={`${s.stampTitle} ${s.settlingTitle}`}>
         <span className={s.spinner} aria-hidden="true" />
-        Settling on Base Sepolia
+        Chainlink CRE is running the settlement
       </p>
-      <p className={s.stampBody}>The Chainlink CRE report is on its way. Payouts are provisional until it lands.</p>
+      <p className={s.stampBody}>Payouts above use the closing price. They are provisional until the report lands on Base Sepolia.</p>
+    </div>
+  );
+}
+
+/** After the end time, before `final`: the engine waits for the match's last one-minute Coinbase candle to close.
+ *  Same card and spinner as `Settling`. */
+export function WaitingClose() {
+  return (
+    <div className={`${s.stamp} ${s.settling}`} role="status" aria-live="polite">
+      <p className={`${s.stampTitle} ${s.settlingTitle}`}>
+        <span className={s.spinner} aria-hidden="true" />
+        Waiting for the closing price
+      </p>
+      <p className={s.stampBody}>Settlement uses the match&apos;s last one-minute Coinbase candle, final about a minute after the end. Until then the payouts above are at live prices.</p>
     </div>
   );
 }
