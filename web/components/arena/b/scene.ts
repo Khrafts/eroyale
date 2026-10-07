@@ -8,7 +8,7 @@ import type { MatchState } from "@/lib/useMatch";
 import type { AvatarCfg } from "@/lib/island/avatar";
 import { GAME, ISLAND, MEANING, coral, coralText, ink, ink2, line as hair, mint, muted, paper, seaDeep, seaFoam, seaMid, seaShallow, sun, violet } from "@/lib/theme";
 import { Type, clamp, commas, easeIn, easeOut, easeOutBack, hash, lerp, mmss, rgba, rng, shortHash, smooth, spring, stamp } from "./draw";
-import { Confetti, H, HUD_Y, LW, PODIUM, Sky, W, botTag, botW, box, countChip, head, headSprite, panel, potChip, step, wordmark } from "./toon";
+import { Confetti, H, HUD_Y, LW, PODIUM, Sky, W, axisChip, botTag, botW, box, countChip, head, headSprite, panel, potChip, settlingChip, step, wordmark } from "./toon";
 
 const PEAK_L = 170;
 const PEAK_R = 1470;
@@ -319,19 +319,27 @@ export class Scene {
   private drawGrid(ctx: CanvasRenderingContext2D, step: number, labels: boolean) {
     const T = this.T;
     const from = Math.ceil(this.lo / step) * step;
+    if (labels) {
+      // each value on its own paper chip (legible over sky, land and sea); the start chip first, then every other
+      // value that keeps a clear gap from the chips already placed
+      const taken: { top: number; bottom: number }[] = [];
+      const sy = this.Y(START_BALANCE);
+      if (sy >= this.top - 60 && sy <= H) taken.push(axisChip(ctx, T, 102, sy, commas(START_BALANCE.toFixed(0)), true, "start"));
+      for (let v = from; v <= this.hi; v += step) {
+        if (Math.abs(v - START_BALANCE) < 1e-6) continue;
+        const y = this.Y(v);
+        if (y < this.top - 60 || y > H - 16) continue;
+        if (taken.some((b) => y + 17 > b.top - 4 && y - 15 < b.bottom + 4)) continue;
+        taken.push(axisChip(ctx, T, 102, y, commas(v.toFixed(0))));
+      }
+      return;
+    }
     ctx.save();
     ctx.setLineDash([3, 9]);
     for (let v = from; v <= this.hi; v += step) {
       const y = this.Y(v);
       if (y < this.top - 60) continue;
       const isStart = Math.abs(v - START_BALANCE) < 1e-6;
-      if (labels) {
-        const nearStart = !isStart && v < START_BALANCE && this.Y(START_BALANCE) + 50 > y - 10 && this.Y(START_BALANCE) < y;
-        if (nearStart) continue;
-        T.text(ctx, commas(v.toFixed(0)), 100, y + 7, T.font("x", isStart ? 800 : 600, 20), ink, "right", paper);
-        if (isStart) T.text(ctx, "start", 100, y + 30, T.font("c", 600, 20), ink, "right", paper);
-        continue;
-      }
       ctx.strokeStyle = rgba(ink, isStart ? 0.4 : 0.14);
       ctx.lineWidth = isStart ? 2 : 1.5;
       ctx.beginPath();
@@ -1251,6 +1259,9 @@ export class Scene {
     T.text(ctx, `Book ${shortHash(fin.bookHash)}`, 960, 190, T.font("x", 600, 18), muted, "center");
     ctx.restore();
 
+    // between final and settled: the report is on its way; it cross-fades out as the seal lands in its place
+    const pend = !settled ? 1 : settledDt >= 0 ? 1 - settledDt / (reduced ? 0.4 : 0.25) : 1;
+    if (!s.cancelled) settlingChip(ctx, T, 1888, 366, finalDt, this.real, reduced, pend * hA, "Payouts are provisional until it lands");
     if (settled && settledDt >= 0) stamp(ctx, T, settled.txHash, settled.mode, settledDt, reduced, 1700, 420);
   }
 }

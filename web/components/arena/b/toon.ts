@@ -451,3 +451,73 @@ export function countChip(ctx: CanvasRenderingContext2D, T: Type, x: number, key
   T.roll(ctx, key, n, x + 18, 132, af, 26, ink, "left", real, reduced);
   T.text(ctx, caption, x + 18 + aw + 10, 130, lf, ink2);
 }
+
+// ---------- axis and settlement chips ----------
+/** One axis value on its own paper chip with an ink outline, right-aligned at `xr`, centred on `y`: legible over sky, land and sea alike.
+ *  Returns the chip's vertical extent so the caller can skip a neighbour that would overlap it. */
+export function axisChip(ctx: CanvasRenderingContext2D, T: Type, xr: number, y: number, s: string, strong = false, sub?: string) {
+  const f = T.font("x", strong ? 800 : 700, 20);
+  const sf = T.font("c", 700, 16);
+  const w = Math.max(T.widthOf(ctx, f, s), sub ? T.w(ctx, sf, sub) : 0) + 18;
+  const h = sub ? 48 : 30;
+  const top = y - 15;
+  box(ctx, xr - w, top, w, h, { r: 10, shadow: 2, line: 2, fill: paper });
+  T.text(ctx, s, xr - 9, y + 7, f, ink, "right");
+  if (sub) T.text(ctx, sub, xr - 9, y + 27, sf, ink2, "right");
+  return { top, bottom: top + h + 2 };
+}
+
+/** What a payout carries between `final` and `settled`: the report is on its way through Chainlink CRE.
+ *  A mint arc turns round an ink ring (a still mint disc under reduced motion); `wait` is the seconds since `final`;
+ *  `fade` (0..1) cross-fades it out as the settled seal lands. Right-aligned at `xr`, top at `y`. */
+export function settlingChip(
+  ctx: CanvasRenderingContext2D,
+  T: Type,
+  xr: number,
+  y: number,
+  wait: number,
+  real: number,
+  reduced: boolean,
+  fade: number,
+  detail: string,
+) {
+  if (fade <= 0) return;
+  const title = "Settling on Base Sepolia";
+  const line2 = `Chainlink CRE report · ${Math.floor(Math.max(0, wait))} s`;
+  const tf = T.font("d", 700, 19);
+  const lf = T.font("c", 600, 19);
+  const df = T.font("c", 600, 17);
+  const R = 20;
+  const pad = 18;
+  const tw = Math.max(T.w(ctx, tf, title), T.w(ctx, lf, line2), T.w(ctx, df, detail));
+  const w = pad + R * 2 + 14 + tw + pad;
+  const h = 106;
+  const x = xr - w;
+  ctx.save();
+  ctx.globalAlpha *= clamp(fade);
+  box(ctx, x, y, w, h, { r: 24, shadow: 4, fill: paper });
+  const cx = x + pad + R;
+  const cy = y + h / 2;
+  ctx.fillStyle = reduced ? mint : paper;
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = LW;
+  ctx.strokeStyle = ink;
+  ctx.stroke();
+  if (!reduced) {
+    const a0 = (real * 4.2) % (Math.PI * 2);
+    ctx.lineWidth = 7;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = mint;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R - 7, a0, a0 + Math.PI * 1.1);
+    ctx.stroke();
+    ctx.lineCap = "butt";
+  }
+  const tx = cx + R + 14;
+  T.text(ctx, title, tx, y + 34, tf, ink);
+  T.text(ctx, line2, tx, y + 63, lf, ink2);
+  T.text(ctx, detail, tx, y + 89, df, ink2);
+  ctx.restore();
+}

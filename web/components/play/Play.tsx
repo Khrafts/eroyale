@@ -16,7 +16,7 @@ import { useUrlState } from "@/lib/useUrlState";
 import { useRolling } from "@/lib/useRolling";
 import { MEANING } from "@/lib/theme";
 import { AvatarHead, PlayerHead, useMyAvatar } from "./Avatar";
-import { Head, Pennant, figs } from "./parts";
+import { Head, Pennant, figs, Settling } from "./parts";
 import { EmptyShell, Shell } from "./Bar";
 import s from "./play.module.css";
 import PredictPhone from "./Predict";
@@ -813,7 +813,7 @@ function Result({ match, me }: { match: Match; me: string | null }) {
             </div>
           )
         ) : (
-          <p className={s.fine}>Payouts are provisional until the Chainlink report settles the pot.</p>
+          <Settling />
         )}
         <RoyaleActions match={match} />
       </div>

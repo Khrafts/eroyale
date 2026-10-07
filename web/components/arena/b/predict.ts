@@ -9,7 +9,7 @@ import type { MatchState } from "@/lib/useMatch";
 import type { AvatarCfg } from "@/lib/island/avatar";
 import { GAME, MEANING, ink, ink2, muted, paper, seaDeep, seaFoam, seaMid, seaShallow, sun } from "@/lib/theme";
 import { Type, clamp, commas, easeOut, easeOutBack, hash, lerp, mmss, rgba, shortHash, spring, stamp } from "./draw";
-import { Confetti, H, HUD_Y, LW, Sky, W, botTag, botW, box, countChip, head, headSprite, panel, potChip, wordmark } from "./toon";
+import { Confetti, H, HUD_Y, LW, Sky, W, axisChip, botTag, botW, box, countChip, head, headSprite, panel, potChip, settlingChip, wordmark } from "./toon";
 
 const PREDICT = GAMES.find((g) => g.id === "predict")!; // "Price Prediction", "PP", as on the island
 const PL = 150; // plot left
@@ -203,7 +203,7 @@ export class PredictScene {
     ctx.save();
     ctx.translate(0, HUD_Y);
     this.drawTitle(ctx, s, reduced);
-    this.drawMarket(ctx, s, headP, reduced);
+    this.drawMarket(ctx, s, headP, reduced, fDt, settledDt);
     this.drawCenter(ctx, s, now, reduced, fDt);
     if (s.settled && settledDt >= 0) {
       ctx.save();
@@ -246,9 +246,14 @@ export class PredictScene {
       ctx.moveTo(PL - 20, y);
       ctx.lineTo(PR, y);
       ctx.stroke();
-      T.text(ctx, commas(v.toFixed(dec)), PL - 28, y + 7, T.font("x", 600, 20), rgba(ink, 0.75), "right");
     }
     ctx.restore();
+    // each price on its own paper chip, the island's chip style, so it reads from across the room
+    for (let v = from; v <= this.hi; v += step) {
+      const y = this.Y(v);
+      if (y < PT - 40 || y > H - 10) continue;
+      axisChip(ctx, T, PL - 24, y, commas(v.toFixed(dec)));
+    }
   }
 
   /** The stretch before the lock: calls were sealed, so it sits under a paper veil. */
@@ -629,23 +634,16 @@ export class PredictScene {
     ctx.restore();
   }
 
-  private drawMarket(ctx: CanvasRenderingContext2D, s: MatchState, p: number | null, reduced: boolean) {
+  private drawMarket(ctx: CanvasRenderingContext2D, s: MatchState, p: number | null, reduced: boolean, fDt: number, settledDt: number) {
     const T = this.T;
     const m = s.round!.params.market;
     const fin = s.pfinal;
     const R0 = 1888;
     if (fin) {
-      if (!s.settled) {
-        const lines = ["Settlement report", "on its way to the chain"];
-        const f = T.font("c", 600, 20);
-        const bf = T.font("x", 600, 18);
-        const bk = `Book ${shortHash(fin.bookHash)}`;
-        const w = Math.max(...lines.map((x) => T.w(ctx, f, x)), T.widthOf(ctx, bf, bk)) + 40;
-        box(ctx, R0 - w, 24, w, 110, { r: 24, shadow: 4, fill: paper });
-        T.text(ctx, lines[0], R0 - 20, 56, T.font("d", 700, 17), ink, "right");
-        T.text(ctx, lines[1], R0 - 20, 86, f, ink2, "right");
-        T.text(ctx, bk, R0 - 20, 116, bf, muted, "right");
-      }
+      // between final and settled: the report is on its way; it cross-fades out as the seal lands in its place
+      const pend = !s.settled ? 1 : settledDt >= 0 ? 1 - settledDt / (reduced ? 0.4 : 0.25) : 1;
+      const a = reduced ? clamp(fDt / 0.5) : clamp(fDt / 0.6);
+      if (!s.cancelled) settlingChip(ctx, T, R0, 24, fDt, this.real, reduced, pend * a, `Book ${shortHash(fin.bookHash)}, payouts provisional`);
       return;
     }
     const w = 330;
