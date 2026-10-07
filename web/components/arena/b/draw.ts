@@ -204,6 +204,7 @@ export class Type {
     now: number,
     reduced: boolean,
     dir = 1,
+    dur = 0.32,
   ) {
     let st = this.rolls.get(key);
     if (!st) {
@@ -214,7 +215,7 @@ export class Type {
       st.cur = s;
       st.at = now;
     }
-    const p = clamp((now - st.at) / 0.32);
+    const p = clamp((now - st.at) / dur);
     const e = easeOut(p);
     const total = this.widthOf(ctx, font, s);
     let cx = align === "left" ? x : align === "right" ? x - total : x - total / 2;

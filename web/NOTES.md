@@ -117,8 +117,7 @@ look-arena restyle /play and /arena on it.
   (variable latin woff2, OFL texts, URLs in `app/fonts/SOURCES.txt`). Each face keeps its real family name
   (`declarations`), so canvas code and `document.fonts.check('16px "Unbounded"')` work; layout.tsx puts
   `--font-display`, `--font-body`, `--font-mono` on `<html>`. The island no longer loads fonts.googleapis.com.
-  Sofia Sans is gone (look-arena). `components/arena/b/fonts.ts` is only a shim that re-exports app/fonts.ts's body
-  and mono faces as `condensed` and `extra` for /play's old imports; delete it once look-play no longer imports it.
+  Sofia Sans is gone, and so is `components/arena/b/fonts.ts`: the arena draws with `canvasFont` from lib/theme.ts.
 - The island reads the shared tokens: `.isle` keeps only its extras, places.ts `COLORS` and world `C` are built from
   theme.ts, water/sky/terrain/common import it, canvas text uses `canvasFont`. No visible change (checked by pixel diff
   against feat/island with `motion=reduce` shots).

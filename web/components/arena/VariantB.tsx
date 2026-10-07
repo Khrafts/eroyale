@@ -3,8 +3,8 @@
 // as the island's sea. Prediction lobbies draw the same world as a price chart (b/predict.ts) on the same canvas.
 import { useEffect, useRef } from "react";
 import type { ArenaProps } from "./types";
-import { FONT, RADIUS, SHADOW, ink, ink2, paper, skyTop } from "@/lib/theme";
-import { loadAvatar } from "@/lib/island/avatar";
+import { FONT, RADIUS, SHADOW, canvasFont, ink, ink2, paper, skyTop } from "@/lib/theme";
+import { cfgFor, loadAvatar } from "@/lib/island/avatar";
 import { rgba } from "./b/draw";
 import { Scene } from "./b/scene";
 import type { PredictScene } from "./b/predict";
@@ -25,31 +25,49 @@ export default function VariantB({ match }: ArenaProps) {
     // The prediction scene loads in its own chunk, so the royale arena's first load stays small.
     let pscene: PredictScene | null = null;
     let alive = true;
-    void import("./b/predict").then((m) => {
-      if (!alive) return;
-      pscene = new m.PredictScene();
-      pscene.me = scene.me;
-    });
+    // A failed chunk load (a flaky network at the venue) retries with backoff; until then the sky is drawn.
+    const loadPredict = (tries: number) => {
+      import("./b/predict")
+        .then((m) => {
+          if (!alive) return;
+          pscene = new m.PredictScene();
+          pscene.me = scene.me;
+        })
+        .catch(() => {
+          if (alive) setTimeout(() => loadPredict(tries + 1), Math.min(30000, 1000 * 2 ** tries));
+        });
+    };
+    loadPredict(0);
     const clear = () => {
       scene.T.cache.clear();
       pscene?.T.cache.clear();
     };
-    const fonts = [`800 40px ${FONT.display}`, `600 20px ${FONT.body}`, `800 40px ${FONT.mono}`, `600 20px ${FONT.mono}`];
+    const fonts = [canvasFont("display", 800, 40), canvasFont("body", 600, 20), canvasFont("mono", 800, 40), canvasFont("mono", 600, 20)];
     Promise.all(fonts.map((f) => document.fonts.load(f)))
       .catch(() => undefined)
       .then(clear);
     document.fonts.addEventListener("loadingdone", clear);
 
-    // Your own avatar, when this browser already has a burner key (the phone's); the arena never creates one.
+    // Your own avatar, when this browser already has a well-formed burner key (the phone's). burner() would create
+    // or replace the key otherwise, so the arena only calls it when the stored key already has burner()'s format.
+    // Same rule as /play: your saved look if you saved one, else the address-derived look everyone else sees.
     try {
-      if (localStorage.getItem("royale.burner")) {
-        void import("@/lib/engine").then((e) => {
-          if (!alive) return;
-          const address = e.burner().address.toLowerCase();
-          const me = { address, cfg: loadAvatar(address) };
-          scene.me = me;
-          if (pscene) pscene.me = me;
-        });
+      if (/^0x[0-9a-f]{64}$/i.test(localStorage.getItem("royale.burner") ?? "")) {
+        void import("@/lib/engine")
+          .then((e) => {
+            if (!alive) return;
+            const address = e.burner().address.toLowerCase();
+            let saved = false;
+            try {
+              saved = localStorage.getItem(`royale.avatar.${address}`) !== null;
+            } catch {
+              /* storage blocked */
+            }
+            const me = { address, cfg: saved ? loadAvatar(address) : cfgFor(address, "") };
+            scene.me = me;
+            if (pscene) pscene.me = me;
+          })
+          .catch(() => undefined);
       }
     } catch {
       /* storage blocked: everyone gets the address-derived look */

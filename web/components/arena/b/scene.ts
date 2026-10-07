@@ -21,7 +21,9 @@ const RX = 1512; // right-edge labels: cut line and flood
 const HR = 20; // head radius on a summit
 const POLE = 30; // pennant pole above the head
 const LABEL_GAP = 2 * HR + POLE + 16; // summit to the bottom of the label chip's tip
-const CHIP_H = 62;
+const CHIP_H = 78;
+const NAME_PX = 20; // names and figures on the summits, readable from five metres at 1920x1080
+const EQ_PX = 24;
 const SCORE_BAND = 236 + HUD_Y; // labels never climb into the HUD
 
 type Peak = {
@@ -271,9 +273,11 @@ export class Scene {
     const step0 = niceStep((this.hi - this.lo) / 16);
     this.drawGrid(ctx, step0, false);
     this.drawTerrain(ctx, shown, now, flood);
-    this.drawGrid(ctx, step0, true);
     this.drawShards(ctx, cpEvents, liqEvents, now, flood, reduced);
     this.drawSea(ctx, flood, base, s, now, warn, reduced, cpEvents.length > 0 && flood > base + 1, cpEvents, shown);
+    // confetti flies over land and sea but under every head, chip and the podium, so no payout is ever covered
+    this.confetti.draw(ctx, reduced ? 0 : dt);
+    this.drawGrid(ctx, step0, true); // the axis reads over land and sea alike
     this.drawCutLine(ctx, s);
     this.drawPeaks(ctx, s, shown, now, flood);
     this.drawGusts(ctx, reduced);
@@ -302,7 +306,6 @@ export class Scene {
     }
     if (!s.final) this.burstFinal = false;
     if (!s.settled) this.burstSettled = false;
-    this.confetti.draw(ctx, reduced ? 0 : dt);
     this.first = false;
   }
 
@@ -323,10 +326,10 @@ export class Scene {
       if (y < this.top - 60) continue;
       const isStart = Math.abs(v - START_BALANCE) < 1e-6;
       if (labels) {
-        const nearStart = !isStart && v < START_BALANCE && this.Y(START_BALANCE) + 36 > y - 10 && this.Y(START_BALANCE) < y;
+        const nearStart = !isStart && v < START_BALANCE && this.Y(START_BALANCE) + 50 > y - 10 && this.Y(START_BALANCE) < y;
         if (nearStart) continue;
-        T.text(ctx, commas(v.toFixed(0)), 100, y + 7, T.font("x", isStart ? 800 : 600, 20), rgba(ink, isStart ? 1 : 0.7), "right");
-        if (isStart) T.text(ctx, "start", 100, y + 30, T.font("c", 600, 20), ink, "right");
+        T.text(ctx, commas(v.toFixed(0)), 100, y + 7, T.font("x", isStart ? 800 : 600, 20), ink, "right", paper);
+        if (isStart) T.text(ctx, "start", 100, y + 30, T.font("c", 600, 20), ink, "right", paper);
         continue;
       }
       ctx.strokeStyle = rgba(ink, isStart ? 0.4 : 0.14);
@@ -678,48 +681,48 @@ export class Scene {
           ctx.lineTo(lx, tipY);
           ctx.stroke();
         }
-        this.chip(ctx, p, lx, tipY, lobby ? null : p.eq, fin ? this.payoutOf(s, p.id) : null);
+        this.chip(ctx, p, lx, tipY, lobby ? null : p.eq, fin ? this.payoutOf(s, p.id) : null, payNote(s));
         ctx.restore();
       });
     }
     for (const f of labels) f();
   }
 
-  /** The island label chip: name and bot tag, equity as a sun (profit) or coral (loss) pill, its tip at (x, tipY). */
-  private chip(ctx: CanvasRenderingContext2D, p: Peak, x: number, tipY: number, eq: number | null, payout: string | null) {
+  /** The island label chip: name and bot tag, equity as a sun (profit) or coral (loss) pill, its tip at (x, tipY).
+   *  A finalist's chip adds the payout and its status (provisional, paid, or offline). */
+  private chip(ctx: CanvasRenderingContext2D, p: Peak, x: number, tipY: number, eq: number | null, payout: string | null, note = "") {
     const T = this.T;
     const { w, h } = this.chipSize(ctx, p, payout);
     const top = tipY - 10 - 4 - h;
     const l = x - w / 2;
-    box(ctx, l, top, w, h, { r: 18, shadow: 4, pointer: true, fill: paper });
-    const nf = T.font("d", 700, 17);
+    box(ctx, l, top, w, h, { r: 20, shadow: 4, pointer: true, fill: paper });
+    const nf = T.font("d", 700, NAME_PX);
     const nw = T.w(ctx, nf, p.callsign);
     const bw = p.bot ? botW(ctx, this.T) + 6 : 0;
     const nx = x - (nw + bw) / 2;
-    T.text(ctx, p.callsign, nx, top + 25, nf, ink);
-    if (p.bot) botTag(ctx, this.T, nx + nw + 6, top + 10);
+    T.text(ctx, p.callsign, nx, top + 30, nf, ink);
+    if (p.bot) botTag(ctx, this.T, nx + nw + 6, top + 11);
     const v = eq ?? START_BALANCE;
-    const ef = T.font("x", 700, 20);
+    const ef = T.font("x", 700, EQ_PX);
     const ew = T.widthOf(ctx, ef, commas(box2(v)));
-    const pw = ew + 16;
-    let py = top + 33;
+    const pw = ew + 18;
+    let py = top + 40;
     const fill = eq === null ? hair : v >= START_BALANCE ? MEANING.profit.fill : MEANING.loss.fill;
-    box(ctx, x - pw / 2, py, pw, 24, { fill, r: 12, shadow: 0, line: 2 });
-    T.odo(ctx, v, x, py + 19, ef, 20, ink, "center");
+    box(ctx, x - pw / 2, py, pw, 30, { fill, r: 15, shadow: 0, line: LW });
+    T.odo(ctx, v, x, py + 23, ef, EQ_PX, ink, "center");
     if (payout) {
-      py += 30;
-      const amt = "$" + payout;
-      const af = T.font("x", 800, 24);
-      T.text(ctx, amt, x, py + 21, af, ink, "center");
+      py += 36;
+      T.text(ctx, "$" + payout, x, py + 26, T.font("x", 800, 28), ink, "center");
+      T.text(ctx, note, x, py + 48, T.font("c", 600, 17), ink2, "center");
     }
   }
 
   private chipSize(ctx: CanvasRenderingContext2D, p: Peak, payout: string | null) {
     const T = this.T;
-    const nw = T.w(ctx, T.font("d", 700, 17), p.callsign) + (p.bot ? botW(ctx, this.T) + 6 : 0);
-    const ew = T.widthOf(ctx, T.font("x", 700, 20), "10,000.00") + 16;
-    const aw = payout ? T.widthOf(ctx, T.font("x", 800, 24), "$" + payout) : 0;
-    return { w: Math.max(nw, ew, aw) + 24, h: CHIP_H + (payout ? 30 : 0) };
+    const nw = T.w(ctx, T.font("d", 700, NAME_PX), p.callsign) + (p.bot ? botW(ctx, this.T) + 6 : 0);
+    const ew = T.widthOf(ctx, T.font("x", 700, EQ_PX), "10,000.00") + 18;
+    const aw = payout ? Math.max(T.widthOf(ctx, T.font("x", 800, 28), "$" + payout), T.w(ctx, T.font("c", 600, 17), "offline, nothing paid")) : 0;
+    return { w: Math.max(nw, ew, aw) + 26, h: CHIP_H + (payout ? 58 : 0) };
   }
 
   /** A sun flag on an empty summit, numbered with the podium place its player took. */
@@ -790,21 +793,21 @@ export class Scene {
         ctx.lineTo(p.x, labelY - 22);
         ctx.stroke();
       }
-      const nf = T.font("d", 700, 16);
-      const w = this.tagWidth(ctx, p) + 22;
-      box(ctx, p.x - w / 2, labelY - 22, w, 30, { r: 15, shadow: 3, fill: paper, line: 2 });
+      const nf = T.font("d", 700, 19);
+      const w = this.tagWidth(ctx, p) + 24;
+      box(ctx, p.x - w / 2, labelY - 26, w, 36, { r: 18, shadow: 3, fill: paper, line: LW });
       const nw = T.w(ctx, nf, p.callsign);
       const bw = p.bot ? botW(ctx, this.T) + 6 : 0;
       const nx = p.x - (nw + bw) / 2;
       T.text(ctx, p.callsign, nx, labelY - 1, nf, coralText);
-      if (p.bot) botTag(ctx, this.T, nx + nw + 6, labelY - 16);
+      if (p.bot) botTag(ctx, this.T, nx + nw + 6, labelY - 19);
     }
     ctx.restore();
   }
 
   private tagWidth(ctx: CanvasRenderingContext2D, p: Peak) {
     const T = this.T;
-    return T.w(ctx, T.font("d", 700, 16), p.callsign) + (p.bot ? botW(ctx, this.T) + 6 : 0);
+    return T.w(ctx, T.font("d", 700, 19), p.callsign) + (p.bot ? botW(ctx, this.T) + 6 : 0);
   }
 
   /** Living labels: kept above the wave crest, the highest summits keep their spot, lower ones climb clear. */
@@ -878,7 +881,7 @@ export class Scene {
     for (const p of dead) {
       const y = this.Y(this.alt(p, now));
       const w = this.tagWidth(ctx, p) + 30;
-      const h = 34;
+      const h = 38;
       const first = surfY + 30;
       const rows = Math.max(1, Math.floor((H - 4 - first) / (h + 4)));
       const k0 = clamp(Math.floor((y + 8 - first) / (h + 4)), 0, rows - 1);
@@ -1026,7 +1029,8 @@ export class Scene {
       }
       const v = commas(marks[m]);
       const d = prev && !s.final ? num(marks[m]) - num(prev[m]) : 0;
-      T.roll(ctx, "m" + m, v, R0 - 44, y + 34, T.font("x", 700, 26), 26, ink, "right", this.real, reduced, d < 0 ? -1 : 1);
+      // marks update at 4 Hz: a short roll, so the cents settle between updates
+      T.roll(ctx, "m" + m, v, R0 - 44, y + 34, T.font("x", 700, 26), 26, ink, "right", this.real, reduced, d < 0 ? -1 : 1, 0.12);
       // the tick arrow
       const ax = R0 - 26;
       const ay = y + 25;
@@ -1138,13 +1142,15 @@ export class Scene {
       return fin.finalists.find((x) => x.player === id)?.provisionalPayoutUnits ?? "0";
     };
     const maxU = Math.max(1, ...ranked.map((f) => Number(units(f.player))));
-    const potX = 200;
-    const potY = 123 + HUD_Y;
+    // the stream leaves from just under the pot chip, so it never crosses the HUD chips
+    const potX = 130;
+    const potY = 166 + HUD_Y;
     const places = podiumPlaces(ranked.length);
 
     // the pot streams to the finalists
-    if (!reduced && finalDt > 0.8) {
-      const fade = clamp((finalDt - 0.8) / 0.8) * (settled ? 1 - 0.6 * smooth(settledDt / 4) : 1);
+    if (!reduced && finalDt > 0.8 && finalDt < 5.6) {
+      // about four seconds of coins, then it stops
+      const fade = clamp((finalDt - 0.8) / 0.8) * clamp((5.6 - finalDt) / 0.8);
       ranked.forEach((f, fi) => {
         const p = this.peaks.get(f.player);
         if (!p) return;
@@ -1213,7 +1219,7 @@ export class Scene {
       const ay = ct + 72;
       box(ctx, pl.x - aw / 2, ay, aw, i === 0 ? 46 : 40, { fill: sun, r: 16, shadow: 0, line: 2 });
       T.roll(ctx, "pay" + f.player, amt, pl.x, ay + (i === 0 ? 35 : 30), af, i === 0 ? 34 : 28, ink, "center", this.real, reduced);
-      T.text(ctx, settled ? "paid" : "provisional", pl.x, ct + h - 10, T.font("c", 600, 16), ink2, "center");
+      T.text(ctx, payNote(s), pl.x, ct + h - 10, T.font("c", 600, 16), ink2, "center");
       ctx.restore();
     });
 
@@ -1251,6 +1257,12 @@ function bandFor(l: number, r: number, final: boolean) {
   if (l < 480) return 168 + HUD_Y;
   if (r > 1570) return 214 + HUD_Y;
   return 150 + HUD_Y;
+}
+
+/** The status under a payout: provisional until settled, then paid, or the offline wording for a no-chain settlement. */
+function payNote(s: MatchState) {
+  if (!s.settled) return "provisional";
+  return isTxHash(s.settled.txHash) ? "paid" : "offline, nothing paid";
 }
 
 /** Finalists by equity, highest first (the podium order). */

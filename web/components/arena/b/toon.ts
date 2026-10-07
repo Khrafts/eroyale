@@ -70,7 +70,8 @@ export class Sky {
       this.clouds.push({ img, x: r() * (W + 400) - 200, y: band[0] + r() * (band[1] - band[0]), w: img.width / 2, h: img.height / 2, sp: 6 + r() * 8 });
     }
   }
-  draw(ctx: CanvasRenderingContext2D, real: number, reduced: boolean) {
+  /** `maxX`: clouds are clipped to the left of it (keeps them out from behind a label column). */
+  draw(ctx: CanvasRenderingContext2D, real: number, reduced: boolean, maxX = W) {
     if (!skyGrad || skyGrad.ctx !== ctx) {
       const g = ctx.createLinearGradient(0, 0, 0, H);
       g.addColorStop(0, skyTop);
@@ -80,10 +81,17 @@ export class Sky {
     }
     ctx.fillStyle = skyGrad.g;
     ctx.fillRect(0, 0, W, H);
+    if (maxX < W) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, maxX, H);
+      ctx.clip();
+    }
     for (const c of this.clouds) {
       const x = reduced ? c.x : ((c.x + real * c.sp + 200) % (W + 400)) - 200;
       ctx.drawImage(c.img, x - c.w / 2, c.y - c.h / 2, c.w, c.h);
     }
+    if (maxX < W) ctx.restore();
   }
 }
 
@@ -391,19 +399,19 @@ export function panel(ctx: CanvasRenderingContext2D, T: Type, cx: number, w: num
 }
 
 export function botW(ctx: CanvasRenderingContext2D, T: Type) {
-  return T.w(ctx, T.font("x", 600, 12), "bot") + 10;
+  return T.w(ctx, T.font("x", 600, 15), "bot") + 12;
 }
-/** The island's bot tag: a small outlined mono pill, its top left at (x, y). */
+/** The island's bot tag: a small outlined mono pill (22 high), its top left at (x, y). */
 export function botTag(ctx: CanvasRenderingContext2D, T: Type, x: number, y: number) {
-  box(ctx, x, y, botW(ctx, T), 18, { fill: paper, r: 6, shadow: 0, line: 1.5 });
-  T.text(ctx, "bot", x + 5, y + 13.5, T.font("x", 600, 12), muted);
+  box(ctx, x, y, botW(ctx, T), 22, { fill: paper, r: 7, shadow: 0, line: LW });
+  T.text(ctx, "bot", x + 6, y + 16, T.font("x", 600, 15), muted);
 }
 
-/** The wordmark chip at the top left: the game's badge, "Trading Royale" and a caption. Returns its right edge. */
-export function wordmark(ctx: CanvasRenderingContext2D, T: Type, caption: string, game: string) {
+/** The wordmark chip at the top left: the game's badge, its name and a caption. Returns its right edge. */
+export function wordmark(ctx: CanvasRenderingContext2D, T: Type, caption: string, game: string, name = "Trading Royale", badge = "TR") {
   const wf = T.font("d", 800, 28);
   const lf = T.font("c", 600, 20);
-  const ww = T.w(ctx, wf, "Trading Royale");
+  const ww = T.w(ctx, wf, name);
   const w = 22 + 34 + 12 + ww + (caption ? 14 + T.w(ctx, lf, caption) : 0) + 22;
   box(ctx, 32, 24, w, 60, { r: 30, shadow: 4, fill: paper });
   ctx.fillStyle = game;
@@ -411,10 +419,10 @@ export function wordmark(ctx: CanvasRenderingContext2D, T: Type, caption: string
   ctx.arc(71, 54, 17, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = ink;
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = LW;
   ctx.stroke();
-  T.text(ctx, "TR", 71, 60, T.font("d", 800, 14), paper, "center");
-  T.text(ctx, "Trading Royale", 100, 65, wf, ink);
+  T.text(ctx, badge, 71, 60, T.font("d", 800, 14), paper, "center");
+  T.text(ctx, name, 100, 65, wf, ink);
   if (caption) T.text(ctx, caption, 100 + ww + 14, 63, lf, ink2);
   return 32 + w;
 }

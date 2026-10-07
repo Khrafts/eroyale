@@ -3,21 +3,23 @@
 // lock the sea closes in from above and below, leaving one sun band: the prices the current winners span. At the
 // resolve the settlement price lands, the sea slams shut on the winners' band, their payouts roll in and confetti
 // flies. Same kit, type and motion as the royale arena; the sea tokens are only the zone (outside the band).
-import { num, unitsToUsd } from "@/lib/events";
+import { isTxHash, num, unitsToUsd } from "@/lib/events";
+import { GAMES } from "@/lib/island/places";
 import type { MatchState } from "@/lib/useMatch";
 import type { AvatarCfg } from "@/lib/island/avatar";
 import { GAME, MEANING, ink, ink2, muted, paper, seaDeep, seaFoam, seaMid, seaShallow, sun } from "@/lib/theme";
 import { Type, clamp, commas, easeOut, easeOutBack, hash, lerp, mmss, rgba, shortHash, spring, stamp } from "./draw";
 import { Confetti, H, HUD_Y, LW, Sky, W, botTag, botW, box, countChip, head, headSprite, panel, potChip, wordmark } from "./toon";
 
+const PREDICT = GAMES.find((g) => g.id === "predict")!; // "Price Prediction", "PP", as on the island
 const PL = 150; // plot left
 const PR = 1440; // the resolve post
 const PT = 320; // plot top
 const PB = 990; // plot bottom
 const LX = 1500; // label column
 const RX = 1888; // right edge of the label column
-const ROW = 32;
-const HR = 12; // head radius in a label chip
+const ROW = 38; // rows and type sized for five metres at 1920x1080
+const HR = 14; // head radius in a label chip
 
 type Line = {
   id: string;
@@ -78,10 +80,10 @@ export class PredictScene {
       this.reset();
     }
     const T = this.T;
-    this.sky.draw(ctx, this.real, reduced);
+    this.sky.draw(ctx, this.real, reduced, LX - 30); // no cloud behind the label column
     const round = s.round;
     if (!round) {
-      wordmark(ctx, T, "Predict", GAME.predict);
+      wordmark(ctx, T, "", GAME.predict, PREDICT.name, PREDICT.short);
       if (!s.error) {
         const msg = "Waiting for the next prediction round";
         const f = T.font("d", 700, 36);
@@ -183,7 +185,7 @@ export class PredictScene {
     // the chart itself is clipped below the HUD, so a zoom never draws over the headline
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, PT - 60, W, H - PT + 60);
+    ctx.rect(PL, PT - 40, PR - PL + 14, PB - PT + 40); // the plot box: trace, calls and sea never leave it
     ctx.clip();
     this.drawSealed(ctx, lockX);
     const surge = fin && !reduced ? Math.exp(-Math.max(0, fDt - 0.25) * 1.6) : 0;
@@ -272,7 +274,7 @@ export class PredictScene {
     const tag = (x: number, text: string, fill: string) => {
       const f = T.font("d", 700, 15);
       const w = T.w(ctx, f, text) + 26;
-      box(ctx, x - w / 2, PT - 62, w, 32, { r: 16, shadow: 3, fill, line: 2.5 });
+      box(ctx, x - w / 2, PT - 62, w, 32, { r: 16, shadow: 3, fill, line: LW });
       T.text(ctx, text, x, PT - 40, f, ink, "center");
     };
     tag(lockX, locked ? "Locked" : "Lock", paper);
@@ -363,7 +365,7 @@ export class PredictScene {
     // the band: sun, laid on paper so the sky does not muddy it
     ctx.fillStyle = paper;
     ctx.fillRect(x0, top, x1 - x0, Math.max(0, bot - top));
-    ctx.fillStyle = rgba(sun, 0.55);
+    ctx.fillStyle = rgba(sun, 0.8);
     ctx.fillRect(x0, top, x1 - x0, Math.max(0, bot - top));
     const edge = (y0: number, ph: number, dir: 1 | -1) => {
       // the water body, from the edge away from the band
@@ -471,17 +473,18 @@ export class PredictScene {
 
   // ---------- the label column ----------
   /** A head chip: the player's head, name and bot tag; returns the width used by the name part. */
-  private headChip(ctx: CanvasRenderingContext2D, id: string, name: string, bot: boolean, x: number, y: number, w: number, h: number, fill: string, big: boolean) {
+  private headChip(ctx: CanvasRenderingContext2D, id: string, name: string, bot: boolean, x: number, y: number, w: number, h: number, fill: string, big: boolean, limit = x + w) {
     const T = this.T;
-    box(ctx, x, y, w, h, { r: h / 2, shadow: 3, fill, line: 2.5 });
-    const r = big ? 15 : HR;
+    box(ctx, x, y, w, h, { r: h / 2, shadow: 3, fill, line: LW });
+    const r = big ? 17 : HR;
     head(ctx, this.sprite(id, r), x + 4 + r + 2, y + h / 2, r);
-    const nf = T.font("d", 700, big ? 17 : 14);
+    const nf = T.font("d", 700, big ? 20 : 17);
     const nx = x + 4 + 2 * r + 12;
-    T.text(ctx, name, nx, y + h / 2 + (big ? 6 : 5), nf, ink);
+    T.text(ctx, name, nx, y + h / 2 + (big ? 7 : 6), nf, ink);
     let used = nx - x + T.w(ctx, nf, name);
-    if (bot) {
-      botTag(ctx, T, x + used + 6, y + h / 2 - 9);
+    // the bot tag goes where it fits before `limit` (a payout pill on the right)
+    if (bot && x + used + 6 + botW(ctx, T) <= limit) {
+      botTag(ctx, T, x + used + 6, y + h / 2 - 11);
       used += botW(ctx, T) + 6;
     }
     return used;
@@ -527,8 +530,8 @@ export class PredictScene {
     const paid = new Map<string, string>();
     if (s.settled) s.settled.winners.forEach((w, i) => paid.set(w, s.settled!.amounts[i]));
     const rows = [...this.lines.values()].sort((a, b) => b.price - a.price || a.join - b.join);
-    const gap = fin ? 50 : ROW;
-    const h = fin ? 42 : ROW - 4;
+    const gap = fin ? 58 : ROW;
+    const h = fin ? 50 : ROW - 4;
     const visible = rows.filter((l) => !fin || leaders.has(l.id) || clamp((fDt - 0.4) / 1.2) < 1);
     // spread labels around their line, keeping order and a minimum gap
     const want = visible.map((l) => this.Y(l.price) - h / 2);
@@ -562,15 +565,16 @@ export class PredictScene {
       // rank badge for the current winners
       let x = LX;
       if (lead !== undefined) {
-        const rf = T.font("x", 800, fin ? 20 : 16);
+        const rf = T.font("x", 800, fin ? 24 : 19);
         const d = h;
-        box(ctx, LX - 4, y, d, d, { r: d / 2, shadow: 3, fill: sun, line: 2.5 });
-        T.roll(ctx, "rk" + l.id, String(lead), LX - 4 + d / 2, y + d / 2 + (fin ? 7 : 6), rf, fin ? 20 : 16, ink, "center", this.real, reduced);
+        box(ctx, LX - 4, y, d, d, { r: d / 2, shadow: 3, fill: sun, line: LW });
+        T.roll(ctx, "rk" + l.id, String(lead), LX - 4 + d / 2, y + d / 2 + (fin ? 8 : 7), rf, fin ? 24 : 19, ink, "center", this.real, reduced);
         x = LX + d + 2;
       }
       const w = RX - x;
       const fill = lead !== undefined ? MEANING.profit.fill : paper;
-      const used = this.headChip(ctx, l.id, l.callsign, l.bot, x, y, w, h, fill, !!fin);
+      const payW = fin && lead !== undefined ? T.widthOf(ctx, T.font("x", 800, 26), "$" + commas(unitsToUsd(fin.winners.find((q) => q.player === l.id)?.provisionalPayoutUnits ?? "0"))) + 20 : 0;
+      const used = this.headChip(ctx, l.id, l.callsign, l.bot, x, y, w, h, fill, !!fin, payW ? RX - payW - 12 : RX - 124);
       if (fin && lead !== undefined) {
         const win = fin.winners.find((q) => q.player === l.id)!;
         const units = s.settled ? (paid.get(l.id) ?? win.provisionalPayoutUnits) : win.provisionalPayoutUnits;
@@ -578,28 +582,29 @@ export class PredictScene {
         if (reveal > 0) {
           ctx.globalAlpha = reveal;
           const amt = "$" + commas(unitsToUsd(units));
-          const af = T.font("x", 800, 22);
+          const af = T.font("x", 800, 26);
           const aw = T.widthOf(ctx, af, amt) + 20;
           box(ctx, RX - aw - 6, y + 6, aw, h - 12, { r: (h - 12) / 2, shadow: 0, fill: paper, line: 2 });
-          T.roll(ctx, "pay" + l.id, amt, RX - 16, y + h / 2 + 8, af, 22, ink, "right", this.real, reduced);
+          T.roll(ctx, "pay" + l.id, amt, RX - 16, y + h / 2 + 9, af, 26, ink, "right", this.real, reduced);
           const off = `off ${commas(win.distance)}`;
-          const of = T.font("x", 600, 15);
+          const of = T.font("x", 600, 17);
           const ox = RX - aw - 14;
-          if (ox - T.widthOf(ctx, of, off) > x + used + 8) T.text(ctx, off, ox, y + h / 2 + 5, of, ink2, "right");
+          if (ox - T.widthOf(ctx, of, off) > x + used + 8) T.text(ctx, off, ox, y + h / 2 + 6, of, ink2, "right");
           ctx.globalAlpha = 1 - gone;
         }
       } else {
-        const pf = T.font("x", lead !== undefined ? 800 : 600, 16);
-        T.text(ctx, commas(l.priceStr), RX - 14, y + h / 2 + 6, pf, ink, "right");
+        const pf = T.font("x", lead !== undefined ? 800 : 600, 19);
+        T.text(ctx, commas(l.priceStr), RX - 14, y + h / 2 + 7, pf, ink, "right");
       }
       ctx.restore();
     });
-    const caption = fin ? (s.settled ? "Paid" : "Provisional payouts") : `Closest ${s.ptick?.leaders.length ?? 0} win`;
-    const cf = T.font("d", 700, 16);
+    const offline = !!s.settled && !isTxHash(s.settled.txHash);
+    const caption = fin ? (s.settled ? (offline ? "Settled offline, nothing paid" : "Paid") : "Provisional payouts") : `Closest ${s.ptick?.leaders.length ?? 0} win`;
+    const cf = T.font("d", 700, 17);
     const cy = fin ? Math.max(196, Math.min(PT - 64, (ys[0] ?? PT) - 52)) : PT - 62;
     const cw = T.w(ctx, cf, caption) + 28;
-    box(ctx, LX, cy, cw, 34, { r: 17, shadow: 3, fill: fin ? paper : sun, line: 2.5 });
-    T.text(ctx, caption, LX + 14, cy + 23, cf, ink);
+    box(ctx, LX, cy, cw, 36, { r: 18, shadow: 3, fill: fin ? paper : sun, line: LW });
+    T.text(ctx, caption, LX + 14, cy + 24, cf, ink);
   }
 
   // ---------- HUD ----------
@@ -608,7 +613,7 @@ export class PredictScene {
     const r = s.round!;
     const creator = r.params.creator ? s.players.find((p) => p.player === r.params.creator)?.callsign : null;
     const who = r.protocol ? "protocol round" : creator ? `${creator}'s round` : "player round";
-    wordmark(ctx, T, "", GAME.predict);
+    wordmark(ctx, T, "", GAME.predict, PREDICT.name, PREDICT.short);
     // the round's name on its own chip, so the centre panel keeps its width
     const cap = `Predict ${r.params.market}, ${who} ${r.lobbyId}`;
     const cf = T.font("d", 700, 18);
@@ -653,7 +658,7 @@ export class PredictScene {
     }
     const prev = s.prevPtick ? num(s.prevPtick.mark) : null;
     const d = prev !== null ? num(str) - prev : 0;
-    T.roll(ctx, "mark", commas(str), R0 - 22, 126, T.font("x", 800, 50), 50, ink, "right", this.real, reduced, d < 0 ? -1 : 1);
+    T.roll(ctx, "mark", commas(str), R0 - 22, 126, T.font("x", 800, 50), 50, ink, "right", this.real, reduced, d < 0 ? -1 : 1, 0.12);
   }
 
   private drawCenter(ctx: CanvasRenderingContext2D, s: MatchState, now: number, reduced: boolean, fDt: number) {
@@ -672,7 +677,9 @@ export class PredictScene {
       const fees = `. $${commas(unitsToUsd((treasuryU < 0n ? 0n : treasuryU).toString()))} to the treasury` + (creatorU > 0n ? `, $${commas(unitsToUsd(creatorU.toString()))} to the creator.` : ".");
       const n = fin.winners.length;
       const sub = w
-        ? (s.settled
+        ? (s.settled && !isTxHash(s.settled.txHash)
+            ? `${n} ${n === 1 ? "winner splits" : "winners split"} $${commas(unitsToUsd(total.toString()))}. Settled offline (no chain), nothing paid`
+            : s.settled
             ? `${n} ${n === 1 ? "winner was" : "winners were"} paid $${commas(unitsToUsd(total.toString()))} on chain`
             : `${n} ${n === 1 ? "winner splits" : "winners split"} $${commas(unitsToUsd(total.toString()))}, provisional until settlement`) + fees
         : "";
