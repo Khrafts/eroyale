@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 12 nav-play: /play app bar + shell (components/play/Bar.tsx), action blocks, predict history on useUrlState, useMatch follow policy (hold/next/pinned/followNext), titles.
-- Last check: typecheck clean; nav-ui parts appbar(/play)/terminal/predictback/titles(play) ok on a local build; full gate runs pending.
-- Next: run ui, predict-ui, look-ui, nav-ui; measure first-load; push nav-play. Blockers: none.
+- Step: Phase 12 nav-play done: /play app bar + shell (components/play/Bar.tsx), action blocks, predict history on useUrlState, useMatch follow policy (hold/next/pinned/followNext), screen titles.
+- Last check: typecheck clean; GATE PASS ui, predict-ui, look-ui; nav-ui parts appbar(/play), terminal, predictback, titles, names, bundle, notfound, practice ok (island/arena parts wait for nav-island/nav-arena); /play 169047, /arena 134446 gzip B (limit 173810 / 140993).
+- Next: lead merges nav-play into feat/nav and runs the live-engine walk (12e). Blockers: none.
 
 ## Running
 
