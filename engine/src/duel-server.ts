@@ -472,6 +472,16 @@ export function mountDuels(d: DuelDeps) {
       if (!t) { send(res, 404, { error: "no such ticket" }); return true; }
       t.lastPoll = Date.now();
       if (req.method === "GET" && parts.length === 3) { send(res, 200, ticketView(t)); return true; }
+      // Leave the queue. Pairing runs synchronously when a ticket is queued (tryPair marks both tickets "pairing" before
+      // any await), so a ticket deleted here can never be paired afterwards; one already paired answers 409.
+      if (req.method === "DELETE" && parts.length === 3) {
+        if (t.status === "waiting") {
+          tickets.delete(t.ticket);
+          log(`[duel] ${t.callsign} left the queue`);
+          send(res, 200, { ticket: t.ticket, status: "left" });
+        } else send(res, 409, ticketView(t));
+        return true;
+      }
       if (req.method === "POST" && parts[3] === "bot" && parts.length === 4) {
         if (t.status === "matched") { send(res, 200, ticketView(t)); return true; } // already in a duel (or this bot fight)
         if (t.status !== "waiting") { send(res, 409, { error: "already paired with a player" }); return true; }
