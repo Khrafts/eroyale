@@ -33,7 +33,7 @@ export function buildWheel(ctx: Ctx) {
     P(hang, new THREE.ConeGeometry(1.35, 0.7, 14), "#FFFAF2", [0, -0.85, 0], [0, 0, 0], { ol: 0.04 });
     gondolas.push(hang);
   }
-  const white = new THREE.Color("#ffffff");
+  const white = new THREE.Color(C.white);
   const tmpC = new THREE.Color();
   const wb = new THREE.InstancedMesh(Sph(0.22, 8, 6), new THREE.MeshBasicMaterial(), 48);
   for (let i = 0; i < 48; i++) {

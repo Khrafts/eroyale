@@ -2,10 +2,10 @@
 // geometry, instancing and canvas textures. A port of the prototype's helpers onto three r186.
 import * as THREE from "three";
 import { mergeGeometries, mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { ISLAND, coral, ink, mint, paper, sun, tang, violet } from "@/lib/theme";
+import { ISLAND, coral, ink, ink2, mint, paper, sun, tang, violet } from "@/lib/theme";
 
 /** The shared tokens (lib/theme.ts) under the short names the world uses. */
-export const C = { coral, violet, tang, mint, sky: ISLAND.sky, sun, ink, paper, wave: ISLAND.wave };
+export const C = { coral, violet, tang, mint, sky: ISLAND.sky, sun, ink, ink2, paper, wave: ISLAND.wave, white: ISLAND.white, silver: ISLAND.silver, bronze: ISLAND.bronze };
 
 export function rng(seed: number) {
   return () => {
