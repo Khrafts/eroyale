@@ -210,7 +210,7 @@ async function join(m: Match, player: string, callsign: string, botIndex: number
   if (!String(callsign ?? "").trim()) return { error: "callsign required" };
   m.pendingJoins.add(player);
   try {
-    const txHash = await chain.joinFor(l.id, player);
+    const txHash = await chain.joinFor(l.id, player, l.startsAt !== null ? l.startsAt * 1000 - JOIN_CLOSE_MS : undefined);
     const r = l.join(player, callsign, bot);
     if (!r.ok) return { error: r.error };
     record(m, { in: "join", player, callsign, bot, botIndex });
@@ -561,7 +561,7 @@ async function joinRound(m: RoundMatch, player: string, callsign: string, botInd
   if (!String(callsign ?? "").trim()) return { error: "callsign required" };
   m.pendingJoins.add(player);
   try {
-    const txHash = await chain.joinFor(r.id, player);
+    const txHash = await chain.joinFor(r.id, player, r.lockTime * 1000 - JOIN_CLOSE_MS);
     const j = r.join(player, callsign, botIndex !== null);
     if (!j.ok) {
       // Paid on chain but the round moved on: the on-chain pot is what final and the report use; say so loudly.
