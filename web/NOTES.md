@@ -1,8 +1,8 @@
 ## Status
-- Step: look-theme done (tokens lib/theme.ts + app/theme.css, fonts app/fonts.ts, island on shared tokens, components/kit/).
-- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; island shots vs feat/island within run-to-run noise.
-- look-ui: tokens, Google Fonts, font files, fonts loaded, :root tokens, island body font pass; play/arena colours, Sofia, play background/brand link, arena sky/sea are look-play/look-arena work.
-- Next: look-play and look-arena build on the kit. Blockers: none.
+- Step: duel-ui 8.3 steps 1-5 built against a stub of shared/duel.ts (practice, ranked queue/fight/result, /arena?duel=, Dojo panel, shots).
+- Last check: typecheck clean; build ok; island bundle check ok (/arena +1.1%, /play +1.0%); five duel shots written.
+- Next: merge feat/duel (shared/duel.ts landed), delete the stub, run ui, predict-ui, island-ui, duel-ui gates.
+- Blockers: duel-engine routes not landed (ranked PvP untested live); gates.next-duel/duel-ui.sh not written yet.
 
 ## Running
 

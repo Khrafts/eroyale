@@ -16,6 +16,8 @@ import { TopBar } from "./TopBar";
 import { Feed } from "./Feed";
 import { Panel } from "./Panel";
 import { ListView } from "./ListView";
+import { mockDuels } from "../../duel/mock";
+import { setDojoMock, startDojoPoll } from "../../duel/dojo";
 
 /** A pickable's panel: jets open their game, your avatar opens the studio. */
 const ROUTE: Record<string, string> = { "jet:royale": "arena", "jet:predict": "observatory", "jet:duel": "dojo", "jet:create": "create", me: "studio" };
@@ -100,6 +102,12 @@ export default function Island() {
     addEventListener("storage", onStorage);
     return () => removeEventListener("storage", onStorage);
   }, [mock, moment]);
+
+  // the Dojo: GET /duels, or the mock
+  useEffect(() => {
+    if (!mock) return startDojoPoll();
+    setDojoMock(mockDuels());
+  }, [mock]);
 
   // the world: only with WebGL, loaded in its own chunk
   useEffect(() => {
@@ -188,6 +196,7 @@ export default function Island() {
         emit({ kind: "celebrate" });
       }
       if (moment === "studio") select("me");
+      if (moment === "dojo") select("dojo");
       if (moment === "victory") emit({ kind: "victory", amountUnits: "48400000", game: "Prediction #41" });
     };
     go();
