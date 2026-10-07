@@ -1,7 +1,7 @@
 <!-- status -->
-Step: prediction rounds done and merged; escrow redeployed on Base Sepolia (0xf4D071E6713C60200C7deDD905be46c31aFa9394)
-Last checks: contracts, workflow, predict-contracts, predict-workflow pass
-Next: none
+Step: Phase 11 duel-contracts: spec-check fixes (zero forwarder refused, DeployDuel opt-in approve/write, one-player cancel test)
+Last checks: contracts, workflow, predict-contracts, predict-workflow, duel-contracts (gates.next-duel) all PASS
+Next: lead adds the DeployDuel env names to .env.example, deploys DuelEscrow (11d), fills duelEscrowAddress
 Blockers: none
 <!-- /status -->
 
@@ -91,6 +91,29 @@ Rounds: `cast send "$ESCROW_ADDRESS" "createRound(uint32,uint96,uint16,address,u
 - `getLobby(uint256)` returns `(uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps)`. viem: `"function getLobby(uint256 id) view returns ((uint8 status, uint16 maxPlayers, uint32 duration, uint64 startTime, uint64 endTime, uint96 entry, uint32 playerCount, uint256 pot, bytes32 bookHash, address creator, uint16 creatorFeeBps))"`.
 - Every `buildReport` call must pass the on-chain lobby: `{creator: l.creator, creatorFeeBps: Number(l.creatorFeeBps), entry: BigInt(l.entry), playerCount: Number(l.playerCount)}`. `engine/src/server.ts` on main calls it with 5 arguments; that call throws after this branch merges, so the engine change must land with or before it.
 - Create creator-less rounds with an entry that is a multiple of 20 (the protocol's 5_000000 is).
+
+## Stickman Duel: DuelEscrow
+
+- `contracts/src/DuelEscrow.sol` (`is IDuelEscrow, ReceiverTemplate`), constructor `(forwarder, token, chainSelector, treasury, relayer)`. `RoyaleEscrow` is untouched.
+- `getDuel(id)` returns `(status, stake, playerA, playerB, pot, bookHash, winner)`; status 0 None, 1 Open, 2 Live, 3 Settled, 4 Cancelled. playerA is the first `joinFor` (side 0), playerB the second.
+- `createDuel(stake)` onlyOwner, ids from 1. `joinFor` relayer only, pulls the stake from the relayer, exactly two players (`DuelFull` on a third, `AlreadyJoined` on a repeat). `start` onlyOwner needs both (`NotEnoughPlayers`). `cancel` (Open or Live) refunds the whole pot to the relayer, which paid every stake. No end time: a duel settles as soon as it is Live.
+- `_settle` (shared by `onReport` and `settleFallback`): chain selector; Live; winner zero or one of the two players; status Settled, bookHash and winner stored, pot zeroed; win: winner gets `pot - floor(pot * 500 / 10000)`, treasury the fee; draw (winner 0): each player (not the relayer) gets their stake; `Settled(id, bookHash, winner)`.
+- Report: `abi.encode(uint64 chainSelector, uint256 duelId, bytes32 bookHash, address winner)`.
+- Deploy (lead, 11d; not broadcast by this track): `cd contracts && forge script script/DeployDuel.s.sol --rpc-url $RPC_URL --broadcast`. It reads token, treasury, forwarder, relayer and chain selector from `deployments/<CHAIN>.json` and refuses if the chain id differs. Env names (not in `.env.example`, which is outside this track; the lead adds them there):
+  - `CHAIN` (required).
+  - `PRIVATE_KEY_DUEL_DEPLOYER` (optional broadcaster, default `PRIVATE_KEY_DEPLOYER`).
+  - `PRIVATE_KEY_DEPLOYER`: its address is the final owner unless `ENGINE_OWNER_ADDRESS` is set (the engine signs owner calls with it); so a fresh duel deployer key hands ownership to the engine's deployer.
+  - `ENGINE_OWNER_ADDRESS` (optional final owner).
+  - `APPROVE_FROM_RELAYER=1` (optional): also approve DuelEscrow from the relayer, needs `PRIVATE_KEY_RELAYER` and refuses if it is not the deployment's relayer. Off by default: the hosted engine owns the relayer nonce and approves DuelEscrow lazily itself.
+  - `WRITE_DEPLOYMENT=1` (optional): add `duelEscrow` to `deployments/<CHAIN>.json`. Off by default so a dry run never records an undeployed address; set it only with `--broadcast`.
+  Checked on a local anvil after Deploy.s.sol: default run with a fresh duel key and no relayer key deploys, owner ends on the deployer address, JSON untouched; with both flags the JSON gains `duelEscrow` and the relayer allowance is max. Then set `DUEL_ESCROW_ADDRESS` in `.env` and `duelEscrowAddress` in `workflow/config.*.json` (zero until then; the duel handler refuses a zero address).
+- `setForwarderAddress(address(0))` reverts `ZeroForwarder()` on DuelEscrow (the template allows it, which would let anyone call `onReport` and pick a Live duel's winner). The vendored template's function became `public virtual` for this; RoyaleEscrow behaves as before.
+
+## Workflow: duel books
+
+- `buildDuelReport(rawBook, chainSelector, onchain)` in `workflow/src/report.ts` (a separate export so `buildReport`'s return type, used by the engine, does not change; `buildReport` on a duel book throws). It refuses unless each `inputs[i]` has exactly `book.ticks` characters, replays both with `replay()` from `shared/duel.ts`, refuses unless `replay().ticks == book.ticks`, refuses a book `feeBps` other than 500, maps the winner index to `book.players[i]` (zero address for a draw), and encodes the duel report. With `onchain` (from `getDuel`) it also refuses unless the book's players (as a set) and `stakeUnits` equal the duel's. Returns `{duelId, winner, winnerIndex, rounds, ticks, payoutUnits, feeUnits, bookHash, report}`.
+- `scripts/score-fixture.ts` keeps its five arguments; for a `mode: "duel"` book prices, potUnits and feeBps are ignored and it prints `{duelId, winner, winnerIndex, rounds, ticks, payoutUnits, feeUnits, bookHash, report}`.
+- Handler: HTTP trigger `{"duelId": N}` reads `getDuel` from `duelEscrowAddress`, needs Live, each node GETs `/duels/N/final` and runs `buildDuelReport`, consensus on `{duelId, bookHash, winner, report}`, logs `report 0x…` (for `SETTLE_MODE=simulated`: owner calls `DuelEscrow.settleFallback` with those bytes), then `writeReport` to DuelEscrow. `{"lobbyId": N}` is unchanged. `cre-compile src/main.ts` builds the WASM.
 
 ## Operating rules
 
