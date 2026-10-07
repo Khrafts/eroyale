@@ -166,15 +166,23 @@ export class Lobby {
     });
   }
 
-  /** The zone at tick k. Relative mode takes the alive equities' sum and count at this tick (computed once in step). */
-  private zoneAt(k: number, aliveSum = 0n, aliveN = 0): bigint {
+  /**
+   * The zone at tick k. Relative mode takes this tick's alive equities sorted descending (computed once in step):
+   * target = median * (10000 - gap) / 10000, no ratchet (it falls with the field), capped at the 3rd-ranked equity
+   * (or the lowest minus 1 cent with fewer than 3 alive) so at least min(3, n) are always above it.
+   */
+  private zoneAt(k: number, aliveDesc: bigint[] = []): bigint {
     const z = this.zoneCfg;
     if (z.mode === "relative") {
-      if (aliveN === 0) return this.zone;
+      const n = aliveDesc.length;
+      if (n === 0) return this.zone;
+      if (k === 0) return ZONE_START_CENTS;
       const lastK = this.preset.checkpoints[this.preset.checkpoints.length - 1] * TICKS_PER_SEC;
       const gap = k >= lastK ? z.endBps : z.startBps + ((z.endBps - z.startBps) * BigInt(k)) / BigInt(lastK);
-      const target = ((aliveSum / BigInt(aliveN)) * (10000n - gap)) / 10000n;
-      return target > this.zone ? target : this.zone;
+      const median = n % 2 === 1 ? aliveDesc[(n - 1) / 2] : (aliveDesc[n / 2 - 1] + aliveDesc[n / 2]) / 2n;
+      const target = (median * (10000n - gap)) / 10000n;
+      const cap = n >= 3 ? aliveDesc[2] : aliveDesc[n - 1] - 1n;
+      return target > cap ? cap : target;
     }
     const cps = this.preset.checkpoints.map((s) => s * TICKS_PER_SEC);
     let k0 = 0, z0 = ZONE_START_CENTS;
@@ -228,11 +236,11 @@ export class Lobby {
 
     // Liquidation (and, for the relative zone, the sum of the surviving equities)
     const liq: PlayerState[] = [];
-    let aliveSum = 0n, aliveN = 0;
+    const aliveEq: bigint[] = [];
     for (const p of this.players) {
       if (!p.alive) continue;
       const eq = equityCents(this.finalist(p), marks);
-      if (eq > 0n) { aliveSum += eq; aliveN++; continue; }
+      if (eq > 0n) { aliveEq.push(eq); continue; }
       for (const m of MARKETS) {
         const x = p.positions.get(m);
         if (!x) continue;
@@ -245,7 +253,8 @@ export class Lobby {
     if (liq.length) {
       this.emit({ type: "eliminated", t, checkpoint: null, players: this.eliminate(liq.map((p) => ({ p, reason: "liquidated" as const }))) });
     }
-    this.zone = this.zoneAt(k, aliveSum, aliveN);
+    if (this.zoneCfg.mode === "relative") aliveEq.sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
+    this.zone = this.zoneAt(k, aliveEq);
 
     this.emit({ type: "tick", t, marks, zone: fromCents(this.zone), nextCheckpoint: this.nextCheckpoint(t) });
     const warnIdx = this.preset.checkpoints.findIndex((c) => c - 10 === t);
