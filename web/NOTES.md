@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 14 duel-feel done: ranked "Coming soon" (menu, Dojo, no duel in /arena picker or Big screen, jet fixed low), practice Sparring/Fighter/Master/Dummy in ?level= (?guard=block), Block button, BLOCK spark and tips hint, crossing drawn with a smoothed facing turn.
-- Last check: on the merge with feat/duel2 (rules v2): ui, look-ui, nav-ui, gates.next-duel2 duel-ui GATE PASS; typecheck clean; a forward jump over the dummy crosses and turns with no snap.
-- Next: feel check (11.3). Blockers: none.
+- Step: Phase 14 duel-polish (feel-check fixes): phone camera stops 1100 past the posts and BLOCK stays in view; the camera rises with a jump at once with extra headroom; Ranked "Coming soon" chip; practice end hides the canvas banner and combo; pad/Block/A/B hidden without a coarse pointer; hint copy right after a cross-up.
+- Last check: ui, look-ui, nav-ui, gates.next-duel2 duel-ui (see commit); typecheck clean; screenshots of wall block, jump peak and practice end checked.
+- Next: lead review of fix/duel-polish. Blockers: none.
 
 ## Running
 
