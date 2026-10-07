@@ -460,6 +460,23 @@ const rounds = new Map<number, RoundMatch>();
 let protocolRound: RoundMatch | null = null;
 let protocolCount = 0; // markets rotate BTC, ETH, SOL
 const PRECREATE_MS = 20_000; // create the next protocol round's on-chain lobby this long before the current lock
+// A protocol round that can only open more than this long after the previous lock (the engine fell behind: a stalled
+// tx queue, a slow createLobby, a paused process) opens at now instead, with its full lockAfter. Never backdated.
+const PROTOCOL_LATE_MS = 2_000;
+// The lock waits at most this long past the lock time for joins still in flight; then it goes ahead without them
+// (a join that lands later makes the escrow disagree with the book, and finishRound refunds the round).
+const LOCK_HOLD_MAX_MS = 15_000;
+// The one protocol-round createLobby in flight (the early one for the next round, or the one at the lock). Protocol
+// lobbies are interchangeable on chain (same duration, entry and max), so whoever asks next shares it.
+let protocolCreate: Promise<number | null> | null = null;
+function createProtocolLobby(): Promise<number | null> {
+  if (!protocolCreate) {
+    const spec = protocolSpec(MARKETS[0]);
+    protocolCreate = chain.createLobby(spec.resolveAfter, spec.entryUnits, spec.maxPlayers).finally(() => { protocolCreate = null; });
+  }
+  return protocolCreate;
+}
+let openingProtocol = false; // openProtocolRound is running
 const MAX_USER_ROUNDS = 5; // open user rounds at once, globally
 const creating = new Set<string>(); // creators whose createRound is in flight
 // CreateRound nonces, persisted so a signed create cannot be replayed after a restart.
@@ -520,7 +537,7 @@ function openRound(id: number, spec: RoundSpec, protocol: boolean, openTime: num
   };
   m.bots = new PredictBots(seed, (player, price) => void submitPrediction(m, player, price));
   m.driver = new PredictDriver(round, realClock, prices, m.bots);
-  m.driver.holdLock = () => m.pendingJoins.size > 0;
+  m.driver.holdLock = () => m.pendingJoins.size > 0 && Date.now() < m.round.lockTime * 1000 + LOCK_HOLD_MAX_MS;
   m.driver.onTick = (k, mark) => record(m, { in: "tick", k, mark });
   if (existsSync(m.logFile)) renameSync(m.logFile, m.logFile.replace(/\.jsonl$/, `.${Date.now()}.jsonl.old`));
   if (books.has(id) || existsSync(bookFile(id))) {
@@ -592,26 +609,37 @@ function submitPrediction(m: RoundMatch, player: string, price: string): { ok: t
   return out;
 }
 
-/** The next protocol round opens when the current one locks (or at boot); markets rotate. */
+/**
+ * The next protocol round opens when the current one locks (or at boot); markets rotate. Back to back it opens at the
+ * previous lock time, so it locks one lockAfter later on a minute boundary. If it cannot open within PROTOCOL_LATE_MS
+ * of that (the engine fell behind), it opens at now with its full join window: one fresh round, never a chain of
+ * backdated catch-up rounds that lock (and cancel) as soon as they open. One call at a time; one createLobby at a time.
+ */
 async function openProtocolRound(openAt: number | null, pre: Promise<number | null> | null = null) {
-  const market = MARKETS[protocolCount++ % MARKETS.length];
-  const spec = protocolSpec(market);
-  for (;;) {
-    try {
-      const preId = pre ? await pre : null;
-      pre = null;
-      const chainId = preId ?? (await chain.createLobby(spec.resolveAfter, spec.entryUnits, spec.maxPlayers));
-      const id = chainId ?? ++localId;
-      // Back to back: open at the previous lock time, so this round locks one lockAfter later on a minute boundary.
-      const openTime = openAt ?? Math.floor(Date.now() / 1000);
-      protocolRound = openRound(id, spec, true, openTime, chain.on ? Math.min(PREDICT_BOTS, MAX_CHAIN_PROTOCOL_BOTS) : PREDICT_BOTS, null);
-      return;
-    } catch (e) {
-      log(`[chain] protocol round createLobby failed, retrying in 10 s: ${failReason(e)}`);
-      openAt = null;
-      await sleep(10_000);
+  if (openingProtocol) return log("[round] a protocol round is already being opened");
+  openingProtocol = true;
+  try {
+    const market = MARKETS[protocolCount++ % MARKETS.length];
+    const spec = protocolSpec(market);
+    for (;;) {
+      try {
+        const preId = pre ? await pre : null;
+        pre = null;
+        const chainId = preId ?? (await createProtocolLobby());
+        const id = chainId ?? ++localId;
+        const now = Date.now();
+        let openTime = Math.floor(now / 1000);
+        if (openAt !== null && now <= openAt * 1000 + PROTOCOL_LATE_MS) openTime = openAt;
+        else if (openAt !== null) log(`[round ${id}] the previous protocol round locked ${Math.round((now - openAt * 1000) / 1000)} s ago; opening at now with the full join window`);
+        protocolRound = openRound(id, spec, true, openTime, chain.on ? Math.min(PREDICT_BOTS, MAX_CHAIN_PROTOCOL_BOTS) : PREDICT_BOTS, null);
+        return;
+      } catch (e) {
+        log(`[chain] protocol round createLobby failed, retrying in 10 s: ${failReason(e)}`);
+        openAt = null;
+        await sleep(10_000);
+      }
     }
-  }
+  } finally { openingProtocol = false; }
 }
 
 /**
@@ -711,9 +739,8 @@ function roundsLoop() {
         m.startSent = true;
         if (r.players.length + m.pendingJoins.size >= 4) m.starting = startRoundOnChain(m);
       }
-      if (chain.on && PREDICT_ON && m === protocolRound && !m.nextLobby && moreProtocolRounds() && Date.now() >= r.lockTime * 1000 - PRECREATE_MS) {
-        const next = protocolSpec(MARKETS[protocolCount % MARKETS.length]);
-        m.nextLobby = chain.createLobby(next.resolveAfter, next.entryUnits, next.maxPlayers).catch((e) => {
+      if (chain.on && PREDICT_ON && m === protocolRound && !m.nextLobby && !protocolCreate && moreProtocolRounds() && Date.now() >= r.lockTime * 1000 - PRECREATE_MS) {
+        m.nextLobby = createProtocolLobby().catch((e) => {
           log(`[chain] early createLobby for the next protocol round failed: ${failReason(e)}`);
           return null;
         });
