@@ -1,6 +1,7 @@
 // Live engine: real clock, exchange prices, HTTP + WebSocket, bots, relayer, append-only log per lobby.
 // npm run dev -- --bots 20 --preset stage [--port 8787] [--open 15] [--countdown 10] [--seed S] [--loop] [--resume]
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs, parseEnv } from "node:util";
@@ -750,7 +751,41 @@ async function finishRound(m: RoundMatch) {
   }
 }
 
+// Finished rounds kept in memory (each holds its whole event log for logHash and catch-up). Older ones are dropped and
+// served from their log file by GET /lobbies/:id; the protocol loop opens about 1,440 rounds a day.
+const KEEP_FINISHED_ROUNDS = 40;
+function pruneRounds() {
+  const finished = [...rounds.values()].filter((m) => m !== protocolRound && (m.round.status === "settled" || m.round.status === "cancelled"));
+  if (finished.length <= KEEP_FINISHED_ROUNDS) return;
+  finished.sort((a, b) => a.round.endTime - b.round.endTime || a.round.id - b.round.id);
+  for (const m of finished.slice(0, finished.length - KEEP_FINISHED_ROUNDS)) {
+    for (const c of m.clients) c.close();
+    rounds.delete(m.round.id);
+  }
+}
+
+/** GET /lobbies/:id for a lobby or round no longer in memory (pruned, or from before a restart): rebuilt from its log. */
+async function archivedSnapshot(id: number): Promise<unknown | null> {
+  for (const [file, mode] of [[`round-${id}.jsonl`, "predict"], [`lobby-${id}.jsonl`, "royale"]] as const) {
+    const text = await readFile(resolve(DATA, file), "utf8").catch(() => null);
+    if (text === null) continue;
+    const ev: Record<string, any> = {};
+    for (const line of text.split("\n")) {
+      if (!line.startsWith('{"type"')) continue; // events only; input lines start with {"in"
+      try { const e = JSON.parse(line); ev[e.type] = e; } catch { /* a torn last line */ }
+    }
+    const lobby = ev.lobby ?? {};
+    const status = ev.settled ? "settled" : ev.cancelled ? "cancelled" : lobby.status ?? "unknown";
+    return {
+      ...lobby, lobbyId: id, mode, archived: true, status, protocol: ev.round?.protocol, params: ev.round?.params,
+      cancelReason: ev.cancelled?.reason ?? null, locked: ev.locked ?? null, final: ev.final ?? null, settled: ev.settled ?? null, now: Date.now(),
+    };
+  }
+  return null;
+}
+
 function roundsLoop() {
+  pruneRounds();
   for (const m of rounds.values()) {
     const r = m.round;
     let done = false;
@@ -949,7 +984,10 @@ const server = createServer(async (req, res) => {
         return send(res, 404, { error: "not found" });
       }
       const m = matches.get(id);
-      if (!m) return send(res, 404, { error: "no such lobby" });
+      if (!m) {
+        const old = req.method === "GET" && parts.length === 2 && Number.isSafeInteger(id) && id > 0 ? await archivedSnapshot(id) : null;
+        return old ? send(res, 200, old) : send(res, 404, { error: "no such lobby" });
+      }
       if (req.method === "GET" && parts.length === 2) {
         return send(res, 200, { ...m.lobby.snapshot(), now: Date.now(), pricesStale: prices.ageMs(Date.now()) > STALE_MS, chainError: m.chainError, startTx: m.startTx });
       }
