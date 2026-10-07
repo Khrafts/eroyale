@@ -68,6 +68,11 @@ export async function queue(acct: PrivateKeyAccount, callsign: string): Promise<
   if (!d?.ticket) throw new Error("The engine did not return a queue ticket.");
   return String(d.ticket);
 }
+/** GET /duels/queue/:ticket with its status: 404 means the engine no longer holds the ticket (left, or restarted). */
+export async function ticketStatus(ticket: string): Promise<{ status: number; ticket: QueueTicket | null }> {
+  const r = await fetch(`${engineHttp()}/duels/queue/${encodeURIComponent(ticket)}`, { cache: "no-store" });
+  return { status: r.status, ticket: r.ok ? ticketOf((await r.json()) as Record<string, unknown>) : null };
+}
 export const pollTicket = async (ticket: string) => ticketOf(await call(`/duels/queue/${encodeURIComponent(ticket)}`));
 export const botFight = async (ticket: string) => ticketOf(await call(`/duels/queue/${encodeURIComponent(ticket)}/bot`, {}));
 export const getDuelFinal = (id: number) => fetch(`${engineHttp()}/duels/${id}/final`, { cache: "no-store" }).then((r) => (r.ok ? r.text() : null));
@@ -78,8 +83,8 @@ export async function getDuel(id: number): Promise<{ status: number; body: Recor
 }
 
 /** DELETE /duels/queue/:ticket. 200 {status: "left"}; 409 with the ticket view when already matched; 404 unknown. */
-export async function leaveQueue(ticket: string): Promise<{ status: number; ticket: QueueTicket | null }> {
-  const r = await fetch(`${engineHttp()}/duels/queue/${encodeURIComponent(ticket)}`, { method: "DELETE" });
+export async function leaveQueue(ticket: string, keepalive = false): Promise<{ status: number; ticket: QueueTicket | null }> {
+  const r = await fetch(`${engineHttp()}/duels/queue/${encodeURIComponent(ticket)}`, { method: "DELETE", keepalive });
   let body: Record<string, unknown> | null = null;
   try {
     body = (await r.json()) as Record<string, unknown>;
