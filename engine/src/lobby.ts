@@ -83,7 +83,7 @@ export class Lobby {
 
   emitLobby() {
     this.emit({
-      type: "lobby", lobbyId: this.id, preset: this.preset.name, status: this.status,
+      type: "lobby", lobbyId: this.id, preset: this.preset.name, zoneMode: this.zoneCfg.mode, status: this.status,
       players: this.players.map((p) => ({ player: p.player, callsign: p.callsign, bot: p.bot })),
       startsAt: this.startsAt, endTime: this.endTime, potUnits: this.potUnits.toString(),
     });
@@ -362,7 +362,7 @@ export class Lobby {
   /** Full state for reloads. */
   snapshot() {
     return {
-      lobbyId: this.id, preset: this.preset.name, status: this.status, startsAt: this.startsAt, endTime: this.endTime,
+      lobbyId: this.id, preset: this.preset.name, zoneMode: this.zoneCfg.mode, status: this.status, startsAt: this.startsAt, endTime: this.endTime,
       potUnits: this.potUnits.toString(), maxPlayers: this.maxPlayers, t: this.k >= 0 ? this.lastT : null,
       checkpoints: this.preset.checkpoints, zoneLines: this.preset.zoneCents.map(fromCents),
       players: this.players.map((p) => ({
