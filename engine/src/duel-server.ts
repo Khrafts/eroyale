@@ -12,6 +12,7 @@ import type { WebSocket, WebSocketServer } from "ws";
 import { DUEL_CANCELLED, DUEL_LIVE, DUEL_OPEN, DUEL_SETTLED, failReason, type Chain, type DuelChain } from "./chain.ts";
 import { DUEL_STAKE_UNITS, DuelMatch, type DuelPlayer } from "./duel.ts";
 import { verifyDuelQueue } from "./orders.ts";
+import { buildDuelReport } from "../../workflow/src/report.ts";
 import type { Stats } from "./stats.ts";
 import type { EngineEvent, SettleVia } from "./types.ts";
 
@@ -276,13 +277,9 @@ export function mountDuels(d: DuelDeps) {
     else duel.markSettled("offline", "simulated", "offline", [], [], { refunds: { players: duel.players.map((p) => p.player), amounts: duel.players.map(() => duel.stakeUnits.toString()) } });
   }
 
-  async function duelReport(book: string, on: { playerA: string; playerB: string; stake: bigint }) {
-    // workflow/src/report.ts buildDuelReport (duel-contracts track); resolved at call time so the engine runs before it lands.
-    const mod = (await import("../../workflow/src/report.ts")) as Record<string, unknown>;
-    const build = mod.buildDuelReport as undefined | ((raw: Uint8Array, sel: bigint, onchain: unknown) => { winner: string; winnerIndex: 0 | 1 | null; payoutUnits: bigint; bookHash: string; report: Hex });
-    if (typeof build !== "function") throw new Error("workflow/src/report.ts has no buildDuelReport yet");
-    return build(new TextEncoder().encode(book), BigInt(d.chainSelector), on);
-  }
+  /** workflow's buildDuelReport (the same code the CRE workflow runs) over the exact book bytes and the escrow's duel. */
+  const duelReport = (book: string, on: { playerA: string; playerB: string; stake: bigint }) =>
+    buildDuelReport(new TextEncoder().encode(book), BigInt(d.chainSelector), on);
 
   /**
    * Ranked duel on DuelEscrow, by SETTLE_MODE: simulated and cre: the owner's settleFallback with buildDuelReport's bytes
@@ -292,7 +289,7 @@ export function mountDuels(d: DuelDeps) {
     const duel = r.duel;
     const id = duel.id;
     const on = await dc.getDuel(id);
-    const rep = await duelReport(books.get(id)!, on);
+    const rep = duelReport(books.get(id)!, on);
     const winners = rep.winnerIndex === null ? [] : [rep.winner.toLowerCase()];
     const amounts = rep.winnerIndex === null ? [] : [rep.payoutUnits.toString()];
     const extra = rep.winnerIndex === null ? { refunds: { players: duel.players.map((p) => p.player), amounts: duel.players.map(() => on.stake.toString()) } } : {};
