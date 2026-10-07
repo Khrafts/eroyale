@@ -46,7 +46,18 @@
 
 .bot{display:inline-block;margin-left:6px;padding:1px 5px;border:1.5px solid var(--line);border-radius:6px;font:500 9.5px/1.3 var(--mono);color:var(--muted);vertical-align:1px}
 
-/* phones: brand, one chip and the wallet fit in 390 px */
+/* ---- app bar shell (bar.tsx); the switcher, you chip and action block are in nav.module.css ---- */
+/* the bar is a size container: the switcher fits the bar's width (a phone column on a desktop is still a phone) */
+.top{position:relative;z-index:20;container:appbar / inline-size}
+.back{width:38px;height:38px;justify-content:center;padding:0;cursor:pointer;color:var(--ink);flex:none}
+.back:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}
+.icon{width:16px;height:16px;display:block;flex:none}
+.nav{display:flex;align-items:center;gap:8px;min-width:0}
+/* mid widths: mark-only brand */
+/* mark-only brand where the segmented switcher needs the room, and on a phone bar with a back control */
+@container appbar (min-width: 640px) and (max-width: 1080px){.word{display:none}.brand{padding:5px}}
+@container appbar (max-width: 460px){.back ~ .brand .word{display:none}.back ~ .brand{padding:5px}}
+/* phones: back, brand, menu and you chip fit in 390 px */
 @media (max-width: 420px){.top{gap:6px;padding-left:12px;padding-right:12px}.top .right{gap:6px}}
 
 @media (prefers-reduced-motion: reduce){.chip,.brand,.btn,.ghost,.seg button{transition:none}}
