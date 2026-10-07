@@ -1,15 +1,15 @@
 "use client";
 // The /arena overlay's content, loaded lazily by Overlay.tsx: the kit app bar as a floating chip cluster (brand,
-// game switcher) plus a picker of what to watch (GET /lobbies, GET /rounds, GET /duels), and, when a pinned lobby,
-// round or duel is over, the offer to move on (CLAUDE.md "Navigation" rules 6 and 8).
+// game switcher) plus a picker of what to watch (GET /lobbies, GET /rounds), and, when a pinned lobby, round or duel
+// is over, the offer to move on (CLAUDE.md "Navigation" rules 6 and 8). Duels are not listed while ranked is "Coming
+// soon" (CLAUDE.md "Duel tuning"); a pinned ?duel= still renders.
 import { useEffect, useState } from "react";
 import { TopBar, kit } from "@/components/kit";
 import Link from "@/components/kit/link";
 import { usePopover } from "@/components/kit/popover";
 import { engineHttp } from "@/lib/engineUrl";
-import { island, watchDuel, watchLobby, watchRound } from "@/lib/nav";
+import { island, watchLobby, watchRound } from "@/lib/nav";
 import { coral, tang, violet } from "@/lib/theme";
-import { parseDuels, type DuelsLive } from "@/components/duel/types";
 import n from "./nav.module.css";
 
 export type ArenaGame = "royale" | "predict" | "duel";
@@ -27,8 +27,8 @@ export type ArenaNavProps = {
 
 type Lobby = { lobbyId: number; status: string; players: number };
 type Round = { lobbyId: number; protocol: boolean; players: number; params?: { market?: string } };
-type Lists = { lobbies: Lobby[]; current: number | null; rounds: Round[]; duels: DuelsLive[]; loaded: boolean };
-const EMPTY: Lists = { lobbies: [], current: null, rounds: [], duels: [], loaded: false };
+type Lists = { lobbies: Lobby[]; current: number | null; rounds: Round[]; loaded: boolean };
+const EMPTY: Lists = { lobbies: [], current: null, rounds: [], loaded: false };
 const DONE = new Set(["settled", "cancelled"]);
 const hasEngine = () => !!(process.env.NEXT_PUBLIC_ENGINE_WS || process.env.NEXT_PUBLIC_ENGINE_HTTP);
 
@@ -51,7 +51,7 @@ function useLists(on: boolean): Lists {
     const poll = async () => {
       if (stop) return;
       if (!document.hidden) {
-        const [l, r, d] = await Promise.all([get("/lobbies"), get("/rounds"), get("/duels")]);
+        const [l, r] = await Promise.all([get("/lobbies"), get("/rounds")]);
         if (stop) return;
         const lb = (l ?? {}) as { current?: number | null; lobbies?: Lobby[] };
         const rb = (r ?? {}) as { rounds?: Round[] };
@@ -60,7 +60,6 @@ function useLists(on: boolean): Lists {
           // the royale lobbies (rounds are listed below with their market); open and running ones only
           lobbies: (lb.lobbies ?? []).filter((x) => !DONE.has(x.status) && !(rb.rounds ?? []).some((y) => y.lobbyId === x.lobbyId)),
           rounds: rb.rounds ?? [],
-          duels: d ? parseDuels(d).live : [],
           loaded: true,
         });
       }
@@ -75,8 +74,6 @@ function useLists(on: boolean): Lists {
   return lists;
 }
 
-const vs = (d: DuelsLive) => d.players.map((p) => p.callsign || `${p.player.slice(0, 6)}…`).join(" vs ") || "two fighters";
-
 export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavProps) {
   const lists = useLists(!mock && hasEngine());
   const pop = usePopover();
@@ -89,7 +86,6 @@ export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavPro
     { href: watchRound(), label: "Follow Price Prediction", sub: "the protocol round", color: violet, on: game === "predict" && !lobby },
     ...lists.lobbies.map((x) => ({ href: watchLobby(x.lobbyId), label: `Lobby #${x.lobbyId}`, sub: `${x.status}, ${x.players} ${x.players === 1 ? "player" : "players"}`, color: coral, on: game === "royale" && lobby === x.lobbyId })),
     ...lists.rounds.map((x) => ({ href: watchRound(x.lobbyId), label: `Round #${x.lobbyId}${x.params?.market ? ` · ${x.params.market}` : ""}`, sub: `${x.protocol ? "protocol round" : "player round"}, ${x.players} ${x.players === 1 ? "player" : "players"}`, color: violet, on: game === "predict" && lobby === x.lobbyId })),
-    ...lists.duels.map((x) => ({ href: watchDuel(x.duelId), label: `Duel #${x.duelId}`, sub: `${vs(x)}, round ${x.round}`, color: tang, on: game === "duel" && duel === x.duelId })),
   ];
   return (
     <>
@@ -125,12 +121,9 @@ export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavPro
 
 /** The move-on offer for a pinned screen whose lobby, round or duel is over (rule 8): never a surprise, one press. */
 function Next({ game, lobby, duel, lists }: { game: ArenaGame; lobby: number | null; duel: number | null; lists: Lists }) {
-  const nextDuel = lists.duels.find((d) => d.duelId !== duel);
   const offer =
     game === "duel"
-      ? nextDuel
-        ? { title: `Duel #${duel} is over`, line: `${vs(nextDuel)} are fighting now.`, href: watchDuel(nextDuel.duelId), label: "Watch the next duel", color: tang }
-        : { title: `Duel #${duel} is over`, line: lists.loaded ? "No other duel is live right now. The Dojo lists the next one." : "Looking for the next duel…", href: island("dojo"), label: "Back to the Dojo", color: tang }
+      ? { title: `Duel #${duel} is over`, line: "Practice against the dojo bot while ranked duels are coming soon.", href: island("dojo"), label: "Back to the Dojo", color: tang }
       : game === "predict"
         ? { title: `Round #${lobby} is over`, line: "The protocol round keeps running: follow it and the screen moves on by itself.", href: watchRound(), label: "Follow the protocol round", color: violet }
         : { title: `Lobby #${lobby} is over`, line: lists.current && lists.current !== lobby ? `Lobby #${lists.current} is the current one.` : "Follow the current lobby and the screen moves on by itself.", href: "/arena?mode=royale", label: "Go to the current lobby", color: coral };

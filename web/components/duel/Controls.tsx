@@ -1,6 +1,7 @@
 "use client";
 // Touch controls: an eight-way pad at bottom left, A and B at bottom right (both at once is a throw; the small A+B
-// button does the same with one thumb). Pointer events, so several fingers work at once.
+// button does the same with one thumb), and Block between them: held, it sends "back" away from the opponent (down on
+// the pad with it is a crouching block). Pointer events, so several fingers work at once.
 import { useRef, useState, type PointerEvent } from "react";
 import { A, B, D, L, R, U, type InputSource } from "./input";
 import s from "./duel.module.css";
@@ -53,6 +54,11 @@ export function Controls({ input }: { input: InputSource }) {
       {label}
     </button>
   );
+  const [guard, setGuard] = useState(false);
+  const blockOn = (on: boolean) => {
+    input.setBlock(on);
+    setGuard(on);
+  };
   const arrow = (bit: number) => (dir & bit ? s.on : "");
   return (
     <div className={s.controls}>
@@ -76,6 +82,24 @@ export function Controls({ input }: { input: InputSource }) {
         <span className={`${s.arr} ${s.right} ${arrow(R)}`} />
         <span className={s.nub} style={{ transform: `translate(${dir & R ? 14 : dir & L ? -14 : 0}px, ${dir & D ? 14 : dir & U ? -14 : 0}px)` }} />
       </div>
+      <button
+        type="button"
+        className={s.block}
+        aria-label="Block"
+        aria-pressed={guard}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          blockOn(true);
+        }}
+        onPointerUp={() => blockOn(false)}
+        onPointerCancel={() => blockOn(false)}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <svg viewBox="0 0 24 28" aria-hidden="true">
+          <path d="M12 2 L21 5.5 V13 C21 19 17 23.5 12 26 C7 23.5 3 19 3 13 V5.5 Z" />
+        </svg>
+        Block
+      </button>
       <div className={s.buttons}>
         {btn(A | B, "A+B", s.throw, "Throw (A and B)")}
         {btn(A, "A", s.a, "A: jab, air attack")}

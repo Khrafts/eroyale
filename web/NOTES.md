@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 12 feat/nav: nav-kit, nav-island, nav-play, nav-arena all merged (app bar, switcher, you chip on every page; /arena overlay; URL state; end-state action blocks).
-- Last check: per track: ui, predict-ui, island-ui, look-ui, duel-ui GATE PASS; nav-ui parts passed on each track; full set reruns on the merged tree.
-- Next: full gate run, judge pass (12d), live walk (12e), PR (12f). Blockers: none.
+- Step: Phase 14 duel-feel done: ranked "Coming soon" (menu, Dojo, no duel in /arena picker or Big screen, jet fixed low), practice Sparring/Fighter/Master/Dummy in ?level= (?guard=block), Block button, BLOCK spark and tips hint, crossing drawn with a smoothed facing turn.
+- Last check: on the merge with feat/duel2 (rules v2): ui, look-ui, nav-ui, gates.next-duel2 duel-ui GATE PASS; typecheck clean; a forward jump over the dummy crosses and turns with no snap.
+- Next: feel check (11.3). Blockers: none.
 
 ## Running
 
