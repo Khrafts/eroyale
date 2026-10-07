@@ -1106,7 +1106,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
-const wss = new WebSocketServer({ noServer: true });
+// Clients only send small duel inputs; anything larger is refused by ws (connection closed).
+const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
 // Stickman Duel: queue, 60 Hz matches, books, settlement (src/duel-server.ts), on the same chain client and data dir.
 const duels = mountDuels({ chain, dataDir: DATA, log, stats, sigOff: SIG_OFF, settleMode: SETTLE_MODE, chainSelector: CHAIN_SELECTOR, send, readJson, wss });
 const markClients = new Set<WebSocket>();

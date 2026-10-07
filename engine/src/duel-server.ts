@@ -24,6 +24,8 @@ const JOIN_WINDOW_MS = 120_000; // a ranked duel's on-chain joins must land with
 const KEEP_FINISHED = 100; // finished duels kept in memory; older ones are served from their log
 const DEPLOYED_SETTLE_WAIT_MS = 15 * 60_000;
 const HOUSE_BOT_LEVEL = 2;
+const REARM_MS = 60_000; // pending on-chain settlements are retried on this timer
+const MAX_INPUTS_PER_S = 120; // per socket; inputs beyond this in one second are dropped
 export const HOUSE_BOT = ("0x" + keccak256(toBytes("royale-duel-house-bot")).slice(-40)).toLowerCase();
 
 type Ticket = {
@@ -34,6 +36,8 @@ type Run = {
   duel: DuelMatch; logFile: string; clients: Set<WebSocket>; tokens: [string | null, string | null]; lastSeq: [number, number];
   holder: [WebSocket | null, WebSocket | null]; chainOn: boolean; chainError: string | null; createTx: string | null; startTx: string | null;
   liveAt: number; stepped: number; finishing: boolean; endedAt: number | null;
+  createBlock: bigint | null; // the createDuel receipt's block: where a Settled(id) search starts
+  settlingNow: boolean; // a settlement attempt is running (the re-arm timer skips it)
 };
 export type DuelDeps = {
   chain: Chain; dataDir: string; log: (m: string) => void; stats: Stats; sigOff: boolean; settleMode: string; chainSelector: string;
@@ -105,11 +109,11 @@ export function mountDuels(d: DuelDeps) {
   const token = () => randomBytes(24).toString("hex");
   const finished = (s: string) => s === "settled" || s === "cancelled";
 
-  function newRun(id: number, ranked: boolean, chainOn: boolean, players: [DuelPlayer, DuelPlayer], botSide: boolean, createTx: string | null): Run {
+  function newRun(id: number, ranked: boolean, chainOn: boolean, players: [DuelPlayer, DuelPlayer], botSide: boolean, createTx: string | null, createBlock: bigint | null = null): Run {
     const duel = new DuelMatch({ id, ranked, stakeUnits: ranked ? DUEL_STAKE_UNITS : 0n, players, botLevel: botSide ? [null, HOUSE_BOT_LEVEL] : [null, null] });
     const r: Run = {
       duel, logFile: logOf(id), clients: new Set(), tokens: [null, null], lastSeq: [-1, -1], holder: [null, null], chainOn,
-      chainError: null, createTx, startTx: null, liveAt: 0, stepped: 0, finishing: false, endedAt: null,
+      chainError: null, createTx, startTx: null, liveAt: 0, stepped: 0, finishing: false, endedAt: null, createBlock, settlingNow: false,
     };
     if (existsSync(r.logFile)) renameSync(r.logFile, r.logFile.replace(/\.jsonl$/, `.${Date.now()}.jsonl.old`));
     if (books.has(id) || existsSync(bookOf(id))) {
@@ -118,7 +122,7 @@ export function mountDuels(d: DuelDeps) {
       log(`[duel ${id}] moved a stored book for this id aside`);
     }
     runs.set(id, r);
-    record(r, { in: "create", id, ranked, chain: chainOn, stakeUnits: duel.stakeUnits.toString(), players, createTx });
+    record(r, { in: "create", id, ranked, chain: chainOn, stakeUnits: duel.stakeUnits.toString(), players, createTx, createBlock: createBlock?.toString() ?? null });
     duel.onEvent((e, line) => {
       appendFileSync(r.logFile, line + "\n");
       for (const c of r.clients) if (c.readyState === c.OPEN) c.send(line);
@@ -157,7 +161,7 @@ export function mountDuels(d: DuelDeps) {
   async function pair(a: Ticket, b: Ticket) {
     a.status = b.status = "pairing";
     const players: [DuelPlayer, DuelPlayer] = [{ player: a.player, callsign: a.callsign, bot: false }, { player: b.player, callsign: b.callsign, bot: false }];
-    let made: { id: number; txHash: string } | null = null;
+    let made: { id: number; txHash: string; block: bigint } | null = null;
     if (duelChain) {
       try { made = await duelChain.createDuel(DUEL_STAKE_UNITS); } catch (e) {
         log(`[duel] createDuel failed for ${a.callsign} vs ${b.callsign}, both back in the queue: ${failReason(e)}`);
@@ -166,7 +170,7 @@ export function mountDuels(d: DuelDeps) {
         return;
       }
     }
-    const r = newRun(made?.id ?? ++localId, true, !!duelChain, players, false, made?.txHash ?? null);
+    const r = newRun(made?.id ?? ++localId, true, !!duelChain, players, false, made?.txHash ?? null, made?.block ?? null);
     matchTicket(a, r, 0);
     matchTicket(b, r, 1);
     if (!duelChain) return beginCountdown(r);
@@ -201,9 +205,9 @@ export function mountDuels(d: DuelDeps) {
         const on = await duelChain.getDuel(r.duel.id);
         if (on.status === DUEL_CANCELLED) { r.chainError = `${why}; cancelled on chain`; break; }
         if (on.status !== DUEL_OPEN && on.status !== DUEL_LIVE) { r.chainError = `${why}; escrow status ${on.status}, not cancellable`; break; }
-        if (on.status === DUEL_OPEN && on.pot === 0n) { r.chainError = `${why}; no stakes on chain, nothing to refund`; break; }
         const tx = await duelChain.cancel(r.duel.id);
-        r.chainError = `${why}; cancelled on chain, stakes refunded (${tx})`;
+        // Also an Open duel with no stake yet: cancelling it makes a join still in flight revert instead of stranding a stake.
+        r.chainError = `${why}; cancelled on chain, any stakes refunded (${tx})`;
         break;
       } catch (e) {
         if (n >= 12) { r.chainError = `${why}; cancel failed ${n} times: ${failReason(e)}`.slice(0, 500); break; }
@@ -265,7 +269,7 @@ export function mountDuels(d: DuelDeps) {
     }
     record(r, { in: "final", potUnits: pot.toString() });
     const fin = duel.emitFinal(pot);
-    if (r.chainOn && duelChain) await settleOnChain(r, duelChain).catch((e) => { r.chainError = `settle: ${failReason(e)}`.slice(0, 500); log(`[duel ${duel.id}] ${r.chainError}`); });
+    if (r.chainOn && duelChain) { toSettle.add(r); await attemptSettle(r, duelChain); }
     else settleOffline(duel, fin);
     r.endedAt = Date.now();
   }
@@ -281,61 +285,87 @@ export function mountDuels(d: DuelDeps) {
   const duelReport = (book: string, on: { playerA: string; playerB: string; stake: bigint }) =>
     buildDuelReport(new TextEncoder().encode(book), BigInt(d.chainSelector), on);
 
+  /** Retry a read until the RPC answers, with backoff (3 s doubling to 60 s), like the pot read. */
+  async function retryRead<T>(id: number, what: string, f: () => Promise<T>): Promise<T> {
+    for (let n = 1; ; n++) {
+      try { return await f(); } catch (e) {
+        log(`[duel ${id}] ${what} failed (attempt ${n}), retrying: ${failReason(e)}`);
+        await sleep(Math.min(60_000, 3000 * 2 ** (n - 1)));
+      }
+    }
+  }
+
+  // Ranked on-chain duels past dfinal and not settled: tried at dfinal, at boot, and every REARM_MS until settled.
+  const toSettle = new Set<Run>();
+  async function attemptSettle(r: Run, dc: DuelChain) {
+    if (r.settlingNow || r.duel.status === "settled") return;
+    r.settlingNow = true;
+    try { await settleOnChain(r, dc); } catch (e) {
+      r.chainError = `settle: ${failReason(e)}`.slice(0, 500);
+      log(`[duel ${r.duel.id}] ${r.chainError}; retried in ${REARM_MS / 1000} s`);
+    } finally { r.settlingNow = false; }
+    if ((r.duel.status as string) === "settled") toSettle.delete(r);
+  }
+  function rearm() {
+    if (!duelChain) return;
+    for (const r of toSettle) {
+      if (r.duel.status === "settled") { toSettle.delete(r); continue; }
+      void attemptSettle(r, duelChain);
+    }
+  }
+
   /**
    * Ranked duel on DuelEscrow, by SETTLE_MODE: simulated and cre: the owner's settleFallback with buildDuelReport's bytes
-   * (the CRE settler does not take duels); deployed: watch for the escrow's Settled(id) (the deployed workflow), 15 min.
+   * (the CRE settler does not take duels); deployed: watch for the escrow's Settled(id) (the deployed workflow) for
+   * 15 min per attempt. Reads retry with backoff; a failed settleFallback is retried with backoff (up to 60 s) for
+   * 10 attempts, then the re-arm timer starts a new attempt.
    */
   async function settleOnChain(r: Run, dc: DuelChain) {
     const duel = r.duel;
     const id = duel.id;
-    const on = await dc.getDuel(id);
+    const on = await retryRead(id, "getDuel", () => dc.getDuel(id));
     const rep = duelReport(books.get(id)!, on);
     const winners = rep.winnerIndex === null ? [] : [rep.winner.toLowerCase()];
     const amounts = rep.winnerIndex === null ? [] : [rep.payoutUnits.toString()];
     const extra = rep.winnerIndex === null ? { refunds: { players: duel.players.map((p) => p.player), amounts: duel.players.map(() => on.stake.toString()) } } : {};
-    const fromBlock = (await chain.blockNumber()) - 600n;
+    // Settled(id) cannot be older than the duel's createDuel block; without it (an old log), a wide window back.
+    const head = await retryRead(id, "blockNumber", () => chain.blockNumber());
+    const fromBlock = r.createBlock ?? (head > 50_000n ? head - 50_000n : 0n);
     const done = (hash: string, via: SettleVia) => {
       r.chainError = null;
       duel.markSettled(hash, d.settleMode === "deployed" ? "deployed" : "simulated", via, winners, amounts, extra);
     };
-    if (on.status === DUEL_SETTLED) {
-      const hash = await dc.findSettled(id, fromBlock > 0n ? fromBlock : 0n);
-      if (!hash) throw new Error("escrow says settled but no Settled log found");
-      return done(hash, "owner-fallback");
-    }
+    const pickUp = async (via: SettleVia) => {
+      const hash = await retryRead(id, "Settled log search", () => dc.findSettled(id, fromBlock));
+      if (!hash) throw new Error(`escrow says settled but no Settled log since block ${fromBlock}`);
+      done(hash, via);
+    };
+    if (on.status === DUEL_SETTLED) return pickUp("owner-fallback");
+    if (on.status !== DUEL_LIVE) throw new Error(`escrow status ${on.status}, not Live; cannot settle`);
     if (d.settleMode === "deployed") {
       const until = Date.now() + DEPLOYED_SETTLE_WAIT_MS;
       while (Date.now() < until) {
         await sleep(10_000);
         const now = await dc.getDuel(id).catch(() => null);
-        if (now?.status === DUEL_SETTLED) {
-          const hash = await dc.findSettled(id, fromBlock > 0n ? fromBlock : 0n).catch(() => null);
-          if (hash) return done(hash, "cre-don");
-        }
+        if (now?.status === DUEL_SETTLED) return pickUp("cre-don");
       }
-      r.chainError = `no Settled log within ${DEPLOYED_SETTLE_WAIT_MS / 60_000} min; settle by hand`;
-      return;
+      throw new Error(`no Settled log within ${DEPLOYED_SETTLE_WAIT_MS / 60_000} min`);
     }
-    let last = "";
     for (let attempt = 1; attempt <= 10; attempt++) {
       try { return done(await dc.settleFallback(rep.report), "owner-fallback"); } catch (e) {
         const now = await dc.getDuel(id).catch(() => null);
-        if (now?.status === DUEL_SETTLED) {
-          const hash = await dc.findSettled(id, fromBlock > 0n ? fromBlock : 0n).catch(() => null);
-          if (hash) return done(hash, "owner-fallback");
-        }
-        const why = failReason(e);
-        r.chainError = `settleFallback attempt ${attempt} failed: ${why}`.slice(0, 500);
+        if (now?.status === DUEL_SETTLED) return pickUp("owner-fallback");
+        r.chainError = `settleFallback attempt ${attempt} failed: ${failReason(e)}`.slice(0, 500);
         log(`[duel ${id}] ${r.chainError}`);
-        if (why === last) return;
-        last = why;
-        await sleep(5000);
+        await sleep(Math.min(60_000, 5000 * 2 ** (attempt - 1)));
       }
     }
+    throw new Error(r.chainError ?? "settleFallback failed");
   }
 
   // ---------- restart: duels are not replayed
   async function recover() {
+    const work: Promise<unknown>[] = [];
     for (const f of readdirSync(DIR).filter((x) => /^duel-\d+\.jsonl$/.test(x))) {
       const id = Number(/\d+/.exec(f)![0]);
       const file = resolve(DIR, f);
@@ -343,37 +373,45 @@ export function mountDuels(d: DuelDeps) {
       if (lines.some((x) => x.type === "settled")) continue;
       const create = lines.find((x) => x.in === "create");
       const chainOn = !!create?.chain && !!duelChain;
-      if (lines.some((x) => x.type === "cancelled")) continue;
+      const createBlock = create?.createBlock ? BigInt(create.createBlock) : null;
+      const blank = (duel: DuelMatch): Run => ({
+        duel, logFile: file, clients: new Set(), tokens: [null, null], lastSeq: [-1, -1], holder: [null, null], chainOn, chainError: null,
+        createTx: null, startTx: null, liveAt: 0, stepped: 0, finishing: true, endedAt: Date.now(), createBlock, settlingNow: false,
+      });
+      if (lines.some((x) => x.type === "cancelled")) {
+        // Cancelled here, but the on-chain cancel never confirmed (gave up, or the engine stopped first): try again.
+        if (chainOn && create?.ranked && !lines.some((x) => x.in === "cancel-done")) {
+          const reason = lines.find((x) => x.type === "cancelled")?.reason ?? "cancelled";
+          work.push(cancelRun(blank({ id, cancel: () => {} } as unknown as DuelMatch), reason));
+        }
+        continue;
+      }
       const fin = lines.find((x) => x.type === "dfinal");
       if (fin && books.has(id) && create?.ranked) {
         log(`[duel ${id}] restart: reached dfinal before the restart; settling from the stored book`);
         const players: DuelPlayer[] = create.players;
-        const r: Run = {
-          duel: null as unknown as DuelMatch, logFile: file, clients: new Set(), tokens: [null, null], lastSeq: [-1, -1], holder: [null, null],
-          chainOn, chainError: null, createTx: null, startTx: null, liveAt: 0, stepped: 0, finishing: true, endedAt: Date.now(),
-        };
         const sink = {
-          id, players, stakeUnits: BigInt(create.stakeUnits),
-          markSettled: (txHash: string, mode: string, via: SettleVia, winners: string[], amounts: string[], extra: Record<string, unknown> = {}) => {
+          id, players, stakeUnits: BigInt(create.stakeUnits), status: "settling",
+          markSettled(txHash: string, mode: string, via: SettleVia, winners: string[], amounts: string[], extra: Record<string, unknown> = {}) {
+            if (this.status === "settled") return;
+            this.status = "settled";
             appendFileSync(file, JSON.stringify({ type: "settled", duelId: id, txHash, mode, via, winners, amounts, ...extra }) + "\n");
             const at = Date.now();
             appendFileSync(file, JSON.stringify({ in: "settled", at }) + "\n");
             stats.record("duel", id, fin.bookHash ?? null, { txHash, winners, amounts }, new Map(players.map((p) => [p.player, { callsign: p.callsign, bot: p.bot }])), at);
           },
         };
-        r.duel = sink as unknown as DuelMatch;
-        if (chainOn && duelChain) await settleOnChain(r, duelChain).catch((e) => log(`[duel ${id}] restart settle failed: ${failReason(e)}`));
+        const r = blank(sink as unknown as DuelMatch);
+        if (chainOn && duelChain) { toSettle.add(r); work.push(attemptSettle(r, duelChain)); }
         else settleOffline(sink as unknown as DuelMatch, fin);
         continue;
       }
       const reason = "engine restarted mid-duel";
       appendFileSync(file, JSON.stringify({ type: "cancelled", duelId: id, reason }) + "\n");
       log(`[duel ${id}] restart: cancelled (${reason})`);
-      if (chainOn && duelChain && create?.ranked) {
-        const r = { duel: { id, cancel: () => {} }, chainOn, chainError: null, logFile: file, endedAt: null } as unknown as Run;
-        await cancelRun(r, reason);
-      }
+      if (chainOn && duelChain && create?.ranked) work.push(cancelRun(blank({ id, cancel: () => {} } as unknown as DuelMatch), reason));
     }
+    await Promise.all(work);
   }
 
   // ---------- HTTP
@@ -480,6 +518,7 @@ export function mountDuels(d: DuelDeps) {
     if (!r) return void socket.destroy();
     d.wss.handleUpgrade(req, socket, head, (ws) => {
       r.clients.add(ws);
+      const rate = { at: 0, n: 0 }; // this socket's inputs in the current second
       for (const e of r.duel.catchUp()) ws.send(JSON.stringify(e));
       ws.on("message", (data) => {
         let m: any;
@@ -487,6 +526,11 @@ export function mountDuels(d: DuelDeps) {
         if (m?.type !== "input" || typeof m.sessionToken !== "string") return;
         const side = r.tokens[0] === m.sessionToken ? 0 : r.tokens[1] === m.sessionToken ? 1 : null;
         if (side === null || !Number.isInteger(m.seq) || !Number.isInteger(m.bits) || m.bits < 0 || m.bits > 63) return;
+        const now = Date.now();
+        if (now - rate.at >= 1000) { rate.at = now; rate.n = 0; }
+        if (++rate.n > MAX_INPUTS_PER_S) return;
+        // A reloaded phone (a new socket with the side's token) starts its seq again; it takes the side over.
+        if (r.holder[side] !== ws) r.lastSeq[side] = -1;
         if (m.seq <= r.lastSeq[side]) return;
         r.lastSeq[side] = m.seq;
         r.holder[side] = ws;
@@ -506,5 +550,6 @@ export function mountDuels(d: DuelDeps) {
       .flatMap((r) => r.duel.players.filter((p) => !p.bot).map((p) => p.player));
   }
 
+  if (duelChain) setInterval(rearm, REARM_MS).unref();
   return { loop, handle, upgrade, recover, playing };
 }

@@ -44,7 +44,8 @@ export interface Chain {
 export type OnchainDuel = { status: number; stake: bigint; playerA: string; playerB: string; pot: bigint; bookHash: string; winner: string };
 export interface DuelChain {
   readonly address: string;
-  createDuel(stake: bigint): Promise<{ id: number; txHash: string }>;
+  /** The id comes from the DuelCreated event in the mined receipt (never from a simulation, which a lagging node can answer stale). */
+  createDuel(stake: bigint): Promise<{ id: number; txHash: string; block: bigint }>;
   /** `until` (unix ms): as for royale joinFor, a join still queued then is not sent. */
   joinFor(id: number, player: string, until?: number): Promise<string | null>;
   start(id: number): Promise<string>;
@@ -151,6 +152,7 @@ const DUEL_ABI = parseAbi([
   "error NotEnoughPlayers(uint256 id)", "error NotRelayer(address caller)", "error WrongChainSelector(uint64 expected, uint64 actual)",
   "error NotPlayer(uint256 id, address winner)", "error TransferFailed()", "error OwnableUnauthorizedAccount(address account)",
 ]);
+const DUEL_CREATED_EVENT = parseAbiItem("event DuelCreated(uint256 indexed id, uint96 stake)");
 const DUEL_SETTLED_EVENT = parseAbiItem("event Settled(uint256 indexed id, bytes32 bookHash, address winner)");
 export const DUEL_OPEN = 1, DUEL_LIVE = 2, DUEL_SETTLED = 3, DUEL_CANCELLED = 4; // IDuelEscrow.Status
 const SETTLED_EVENT = parseAbiItem("event Settled(uint256 indexed id, bytes32 bookHash)");
@@ -443,16 +445,18 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       const rc = await receipt(wallet, hash);
       if (rc.status !== "success") throw new Error(`duel ${fn} reverted: ${hash}`);
       log(`[chain] duel ${fn}(${fn === "settleFallback" ? "report" : args.join(", ")}) ${hash}`);
-      return { hash, result: sim.result };
+      return { hash, result: sim.result, rc };
     }
     const LOGS_SPAN = BigInt(env.LOGS_BLOCK_SPAN ?? 10);
     return {
       address: addr.toLowerCase(),
       createDuel: (stake) => serial(async () => {
-        const { hash, result } = await dsend(owner, "createDuel", [stake]);
-        const id = Number(result as bigint);
+        const { hash, rc } = await dsend(owner, "createDuel", [stake]);
+        const ev = parseEventLogs({ abi: [DUEL_CREATED_EVENT], logs: rc.logs }).filter((l) => l.address.toLowerCase() === addr.toLowerCase());
+        if (ev.length !== 1) throw new Error(`createDuel ${hash}: expected one DuelCreated in the receipt, found ${ev.length}`);
+        const id = Number(ev[0].args.id);
         await confirmRead(`duel ${id} Open`, async () => (await readDuel(id)).status === DUEL_OPEN);
-        return { id, txHash: hash };
+        return { id, txHash: hash, block: rc.blockNumber };
       }),
       joinFor: (id, player, until) => serial(async () => {
         const closed = () => until !== undefined && Date.now() > until;
