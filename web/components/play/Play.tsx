@@ -763,14 +763,16 @@ function Result({ match, me }: { match: Match; me: string | null }) {
     return i >= 0 ? settled.amounts[i] : "0";
   };
   const myUnits = mine ? (paid(mine.player) ?? mine.provisionalPayoutUnits) : null;
-  const place = mine && fin ? fin.finalists.indexOf(mine) + 1 : 0;
+  // finalists arrive sorted by address; rank them by final equity for the headline and the list
+  const ranked = fin ? [...fin.finalists].sort((a, b) => num(b.equity) - num(a.equity)) : [];
+  const place = mine ? ranked.indexOf(mine) + 1 : 0;
   if (!fin) return <p className={s.waiting}>The flood has stopped. Counting the summits.</p>;
   return (
     <section className={s.out}>
       <Head
         game="royale"
         eyebrow={mine ? `${ordinal(place)} of ${fin.finalists.length} finalists` : "Final"}
-        title={mine ? (place === 1 ? "You hold the high ground" : "You made it to the end") : `${fin.finalists[0]?.callsign} holds the high ground`}
+        title={mine ? (place === 1 ? "You hold the high ground" : "You made it to the end") : `${ranked[0]?.callsign} holds the high ground`}
       >
         {mine && (
           <div className={s.headMe}>
@@ -790,7 +792,7 @@ function Result({ match, me }: { match: Match; me: string | null }) {
           </>
         )}
         <ul className={`${s.standing} ${s.resultList}`}>
-          {fin.finalists.map((f) => (
+          {ranked.map((f) => (
             <li key={f.player} className={f.player === me ? s.meRow : ""}>
               <Who match={match} player={f.player} callsign={f.callsign} me={me} />
               <span className={s.fig}>${unitsToUsd(paid(f.player) ?? f.provisionalPayoutUnits)}</span>
