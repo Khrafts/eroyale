@@ -50,7 +50,7 @@ const DUEL_ESCROW_ABI = parseAbi([
 ]);
 
 const STATUS_LIVE = 2;
-const CANDLE_FINAL_DELAY = 120;
+const CANDLE_FINAL_DELAY = 70; // 10 s after the match ends; Coinbase publishes the minute within seconds
 const MAX_END_SKEW = 60n;
 
 const fetchPrices = (sendRequester: HTTPSendRequester, template: string, start: number): Prices => {
@@ -96,7 +96,7 @@ const scoreOnNode = (sendRequester: HTTPSendRequester, a: NodeArgs): string => {
   if (skew > MAX_END_SKEW || skew < -MAX_END_SKEW) {
     throw new Error(`book endTime ${book.endTime} vs onchain endTime ${a.lobbyEnd}`);
   }
-  // Settlement prices: close of the candle starting at S, fetched no earlier than S + 120 s.
+  // Settlement prices: close of the candle starting at S, fetched no earlier than S + 70 s.
   const start = candleStart(book.endTime);
   if (a.now < start + CANDLE_FINAL_DELAY) throw new Error(`candle ${start} not final until ${start + CANDLE_FINAL_DELAY}`);
   const prices = fetchPrices(sendRequester, a.priceTemplate, start);
