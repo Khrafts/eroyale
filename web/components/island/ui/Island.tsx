@@ -3,6 +3,8 @@
 // floating tags, feed, panels, avatar studio and the list view. React never re-renders per frame; the world reads
 // the store snapshot itself.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useUrlState } from "@/lib/useUrlState";
 import "./island.css";
 import { emit, getSnapshot, onBus, setSnap, useIsland } from "@/lib/island/store";
 import { IslandLive, feed } from "@/lib/island/live";
@@ -22,6 +24,20 @@ import { setDojoMock, startDojoPoll } from "../../duel/dojo";
 /** A pickable's panel: jets open their game, your avatar opens the studio. */
 const ROUTE: Record<string, string> = { "jet:royale": "arena", "jet:predict": "observatory", "jet:duel": "dojo", "jet:create": "create", me: "studio" };
 export const routeOf = (id: string) => ROUTE[id] ?? id;
+/** The pickable the camera frames for a panel. */
+const focusOf = (route: string) => (route === "studio" ? "me" : route);
+
+// The island was already shown in this document (an in-app page came back to it): no intro swoop the second time.
+let shownBefore = false;
+function arrivedInApp(): boolean {
+  if (shownBefore) return true;
+  try {
+    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    return !!nav && new URL(nav.name).pathname !== "/";
+  } catch {
+    return false;
+  }
+}
 
 export type IslandApi = {
   select: (id: string) => void;
@@ -29,6 +45,8 @@ export type IslandApi = {
   toast: (t: string) => void;
   world: World | null;
   setList: (b: boolean) => void;
+  /** The brand chip on the island: close the panel, leave the list, reset the camera. */
+  home: () => void;
 };
 
 export default function Island() {
@@ -36,6 +54,12 @@ export default function Island() {
   const mock = params.get("mock") === "island";
   const moment = (ISLAND_MOMENTS as readonly string[]).includes(params.get("at") ?? "") ? (params.get("at") as IslandMoment) : "overview";
   const reduceMotion = params.get("motion") === "reduce" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // the URL holds the open panel (?place=) and the list view (?view=list); Back closes a panel (CLAUDE.md "Navigation")
+  const search = useSearchParams();
+  const place = search.get("place");
+  const view = search.get("view");
+  const url = useUrlState();
+  const [skipIntro] = useState(() => !!params.get("place") || arrivedInApp());
   const [panel, setPanel] = useState<string | null>(null);
   const [list, setListState] = useState(params.get("view") === "list");
   const [hint, setHint] = useState(true);
@@ -56,11 +80,21 @@ export default function Island() {
     return () => clearTimeout(id);
   }, [toastMsg]);
 
-  const close = useCallback(() => {
+  useEffect(() => {
+    shownBefore = true;
+  }, []);
+
+  const closeLocal = useCallback(() => {
     panelState.current = null;
     setPanel(null);
     worldRef.current?.setPanel(null, null);
   }, []);
+  const { push, replace, back } = url;
+  /** Close the panel: back to the island entry it was opened from (or drop ?place= from a deep link). */
+  const close = useCallback(() => {
+    closeLocal();
+    if (new URLSearchParams(location.search).get("place")) back({ place: null });
+  }, [closeLocal, back]);
   const setList = useCallback(
     (b: boolean) => {
       if (!b && !worldRef.current) {
@@ -68,11 +102,12 @@ export default function Island() {
         return;
       }
       setListState(b);
+      replace({ view: b ? "list" : null });
     },
-    [toast],
+    [toast, replace],
   );
-  const select = useCallback((id: string) => {
-    const route = routeOf(id);
+  /** Open a panel without touching the URL (a deep link, Back, a mock moment). */
+  const openLocal = useCallback((route: string, id: string = route) => {
     panelState.current = route;
     setPanel(route);
     const w = worldRef.current;
@@ -80,6 +115,41 @@ export default function Island() {
     w.setPanel(route, panelRef.current);
     w.focus(route === "studio" ? "me" : w.has(route) ? route : w.has(id) ? id : "fountain");
   }, []);
+  /** Open a panel from a click: pushed onto history from the bare island, replaced when one is already open. */
+  const select = useCallback(
+    (id: string) => {
+      const route = routeOf(id);
+      openLocal(route, id);
+      if (new URLSearchParams(location.search).get("place")) replace({ place: route });
+      else push({ place: route });
+    },
+    [openLocal, push, replace],
+  );
+  const home = useCallback(() => {
+    close();
+    if (worldRef.current) {
+      setListState(false);
+      replace({ view: null });
+      worldRef.current.resetView();
+    }
+  }, [close, replace]);
+
+  // ?place= changed (deep link on mount, Back/Forward, a link such as the you chip's "My avatar"): follow it
+  const lastPlace = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = lastPlace.current;
+    lastPlace.current = place;
+    if (place) {
+      if (place !== panelState.current) openLocal(place, focusOf(place));
+    } else if (prev && panelState.current) closeLocal();
+  }, [place, openLocal, closeLocal]);
+  const lastView = useRef(view);
+  useEffect(() => {
+    if (lastView.current === view) return;
+    lastView.current = view;
+    if ((view === "list") !== list && (view === "list" || worldRef.current)) setListState(view === "list");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   // data: the mock moment, or the live engine (IslandLive below)
   useEffect(() => {
@@ -126,7 +196,7 @@ export default function Island() {
         onPick: (id) => select(id),
         onEmpty: () => close(),
         onUserMoved: () => setHint(false),
-      }, reduceMotion);
+      }, reduceMotion, skipIntro);
       if (!w) {
         setGlOk(false);
         setListState(true);
@@ -134,14 +204,17 @@ export default function Island() {
       }
       worldRef.current = w;
       setWorld(w);
-      if (panelState.current) w.setPanel(panelState.current, panelRef.current);
+      if (panelState.current) {
+        w.setPanel(panelState.current, panelRef.current);
+        w.focus(focusOf(panelState.current));
+      }
     });
     return () => {
       dead = true;
       w?.dispose();
       worldRef.current = null;
     };
-  }, [select, close, toast, reduceMotion]);
+  }, [select, close, toast, reduceMotion, skipIntro]);
 
   useEffect(() => {
     world?.setPaused(list);
@@ -195,15 +268,15 @@ export default function Island() {
         feed("win", ` won ${usdc(s.amounts[top])} in Trading Royale #1 (and ${s.winners.length - 1} more)`, m.callsigns[s.winners[top]]);
         emit({ kind: "celebrate" });
       }
-      if (moment === "studio") select("me");
-      if (moment === "dojo") select("dojo");
+      if (moment === "studio") openLocal("studio", "me");
+      if (moment === "dojo") openLocal("dojo");
       if (moment === "victory") emit({ kind: "victory", amountUnits: "48400000", game: "Prediction #41" });
     };
     go();
     return () => {
       stop = true;
     };
-  }, [mock, moment, world, select, reduceMotion]);
+  }, [mock, moment, world, openLocal, reduceMotion]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -213,7 +286,7 @@ export default function Island() {
     return () => removeEventListener("keydown", k);
   }, [close]);
 
-  const api: IslandApi = { select, close, toast, world, setList };
+  const api: IslandApi = { select, close, toast, world, setList, home };
   return (
     <div className={`isle${panel ? " has-panel" : ""}${list ? " is-list" : ""}`}>
       <canvas ref={canvasRef} className="scene" aria-label="Royale Isle, a 3D island. Drag to orbit, scroll to zoom, click a building to open it." />

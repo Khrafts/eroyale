@@ -34,7 +34,16 @@
 .isle .right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .isle .seg{display:flex;background:var(--glass);backdrop-filter:blur(10px);border:2px solid var(--ink);border-radius:999px;padding:3px;box-shadow:0 3px 0 var(--ink)}
 .isle .seg button{border:0;background:transparent;padding:6px 14px;border-radius:999px;font-weight:600;font-size:13px;color:var(--ink2);cursor:pointer;transition:background .2s,color .2s}
-.isle .seg button[aria-selected="true"]{background:var(--ink);color:var(--paper)}
+.isle .seg button[aria-selected="true"], .isle .seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.isle .seg button:focus-visible, .isle .brand:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* the app bar: a size container, so the kit's game switcher (segmented, or a menu under 640 px) fits its width */
+.isle .top{container:appbar / inline-size}
+.isle .brand{text-decoration:none;color:var(--ink)}
+.isle .panel h2:focus{outline:none}
+@container appbar (max-width: 1240px){.isle .hide-md{display:none !important}}
+@container appbar (max-width: 1500px){.isle .brand .word{display:none}.isle .brand{padding:5px}}
+@container appbar (max-width: 480px){.isle .you-slot [aria-controls="you-menu"] > span:last-child{display:none}.isle .you-slot [aria-controls="you-menu"]{padding:3px}.isle .right{gap:6px}}
+@media (max-width: 480px){.isle .top{gap:6px;padding-left:12px;padding-right:12px}}
 .isle .hint{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:999px;font-size:12.5px;white-space:nowrap;transition:opacity .6s, translate .6s;pointer-events:none}
 .isle .hint.gone{opacity:0;translate:0 10px}
 .isle .corner{position:absolute;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);display:flex;align-items:center;gap:8px}

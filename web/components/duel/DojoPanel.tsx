@@ -2,6 +2,8 @@
 // The island's Dojo panel body (inside components/island/ui/Panel.tsx, in the island's panel classes): queue size,
 // live duels with Watch, recent results, Practice and Fight for 5 USDC. Live from GET /duels through dojo.ts.
 import { unitsToUsd } from "@/lib/events";
+import Link from "@/components/kit/link";
+import { duel, watchDuel } from "@/lib/nav";
 import { useDojo } from "./dojo";
 import { useIsland } from "@/lib/island/store";
 import type { DuelPlayer } from "./types";
@@ -38,12 +40,12 @@ export function DojoBody() {
           <b>Replay-verified</b>
         </div>
       </div>
-      <a className="cta" href="/duel">
+      <Link className="cta" href={duel()}>
         Fight for {unitsToUsd(info?.stakeUnits ?? "5000000").replace(/\.00$/, "")} USDC
-      </a>
-      <a className="ghost" href="/duel?mode=practice" style={{ color: "var(--ink)", textDecoration: "none" }}>
+      </Link>
+      <Link className="ghost" href={duel("practice")} style={{ color: "var(--ink)", textDecoration: "none" }}>
         Practice for free
-      </a>
+      </Link>
       {d.state === "none" && <p className="empty">No engine is configured, so ranked fights are off. Practice runs in your browser.</p>}
       {d.state === "missing" && <p className="empty">This engine does not run duels yet. Practice runs in your browser.</p>}
       {d.state === "down" && !info && <p className="empty">The engine did not answer. Practice still works offline.</p>}
@@ -65,9 +67,9 @@ export function DojoBody() {
                     </span>
                   </div>
                   <div className="rt">
-                    <a href={`/arena?duel=${x.duelId}`} style={{ color: "inherit", fontWeight: 700 }}>
+                    <Link href={watchDuel(x.duelId)} style={{ color: "inherit", fontWeight: 700 }} aria-label={`Watch duel #${x.duelId}`}>
                       Watch
-                    </a>
+                    </Link>
                     <span>#{x.duelId}</span>
                   </div>
                 </li>
