@@ -130,20 +130,23 @@
 //     heavy (heavy one cycle in four) in the window, hops back (a backward jump, never "back",
 //     so it never blocks) if still close, then waits. Never cancels, never air attacks. Longest
 //     string 1 attack (28 ticks), gap >= 90 - 12 - 28 = 50.
-//   Level 2 Fighter: P 64, W 8. Reacts to a move from its frame 5: holds away (crouching against
-//     a sweep), so it blocks heavy, sweep and late air attacks but not a fresh jab (active on
-//     4). In the window: meets a walk-in with a heavy, punishes a move in recovery, otherwise
-//     jabs in range and cancels into heavy or sweep on hit or block. Longest string jab into a
-//     cancel (35 ticks), gap >= 64 - 8 - 35 = 21.
-//   Level 3 Master: P 56, W 12, reacts from frame 2, so it also blocks a fresh jab; a jab cannot
-//     be beaten by a throw started on its frame 2 (the throw is active 4 ticks later, after the
-//     jab), so Master "breaks" a fresh jab by blocking it and throwing the jabber point blank in
-//     the next window. Punishes a blocked or whiffed move in recovery in range, outside the
-//     window too (a reaction to the opponent's attack, never seen against an idle or walking
-//     opponent). Window mix-ups: jab into heavy or sweep, throw, sweep, and a forward jump from
-//     700 to 1100 (a cross-up) with a late air attack, then the jab and its cancel if the air
-//     attack combos. Jumps start only in even cycles, so a jump string (up to 81 ticks) ends
-//     before the next even window and the odd window passes while it is still going. Gap >= 8.
+//   Level 2 Fighter: P 64, W 8. Reacts to a move from its frame 5: crouch-blocks a ground move
+//     (no retreat), stands against an air attack holding away from the attacker, so it blocks
+//     heavy, sweep and late air attacks but not a fresh jab (active on 4); in blockstun it keeps
+//     the same guard. In the window: meets a walk-in with a heavy, punishes a move in recovery,
+//     otherwise jabs in range and cancels into heavy or sweep on hit or block. Longest string jab
+//     into a cancel (35 ticks), gap >= 64 - 8 - 35 = 21.
+//   Level 3 Master: P 56, W 12, reacts from frame 2, so it also blocks a fresh jab. A throw
+//     started on a jab's frame 2 is active after the jab, so "throw breaks a fresh jab" works on
+//     the jab's end instead: Master blocks the jab, closes in to throw range (780), and throws on
+//     the tick the jabber gets free (a throw is active on 3, a new jab on 4). Punishes any move in
+//     recovery the same way, or with a jab if there is time; punishes run outside the window (a
+//     reaction to the opponent's attack, never seen against an idle or walking opponent). It
+//     cancels a jab only if it hit. Window mix-ups inside 780: throw (two cycles in four), sweep
+//     or jab; in even cycles a forward jump from 700 to 1100 (a cross-up) with a late air attack,
+//     then the jab and its cancel if the air attack combos. Jumps start only in even cycles, so a
+//     jump string (up to 81 ticks) ends before the next even window and the odd window passes
+//     while it is still going. Gap >= 8.
 // Every level KOs an idle opponent; level 1 takes more than 1200 round ticks to do it.
 
 export type Bits = number; // per tick: 1 left, 2 right, 4 up, 8 down, 16 A, 32 B
@@ -432,9 +435,12 @@ export function botInput(s: DuelState, side: 0 | 1, level: 1 | 2 | 3): Bits {
   if (me.act === "jump") return level === 3 && me.vy < 0 && me.y <= 1300 && dist <= 900 ? BA : 0;
   if (me.act === "air") return 0;
   // The jab cancel (levels 2 and 3).
-  if (me.act === "jab" && me.hit) return level === 1 ? 0 : (r2 & 1) ? BB | DOWN : BB;
+  if (me.act === "jab" && me.hit) {
+    if (level === 1 || (level === 3 && op.act !== "hitstun")) return 0; // Master cancels only a jab that hit
+    return (r2 & 1) ? BB | DOWN : BB;
+  }
   // Keep guarding: crouching against ground moves (it does not retreat), standing against air.
-  if (me.act === "blockstun") return away | (op.act === "air" || op.act === "jump" ? 0 : DOWN);
+  if (me.act === "blockstun" && me.frame > 1) return away | (op.act === "air" || op.act === "jump" ? 0 : DOWN);
 
   // Can the bot act on the next step?
   const grounded = me.y === 0 && me.vy <= 0;
@@ -475,13 +481,15 @@ export function botInput(s: DuelState, side: 0 | 1, level: 1 | 2 | 3): Bits {
   }
   if (op.act === "knockdown") return dist > 1000 ? toward : 0; // wait to meet the wake-up
   if (op.act === "jump" || op.act === "air") return 0;
+  if (level === 3) {
+    if (open) {
+      if (r === 3 && (cyc & 1) === 0 && dist >= 700 && dist <= 1100) return UP | toward; // cross-up
+      if (dist <= 780) return r === 2 ? DOWN | BB : r === 3 ? BA : BA | BB; // throw, sweep or jab
+    }
+    return dist > 780 ? toward : 0; // close in to throw range
+  }
   if (open) {
     if (op.act === "walk" && dist >= 1100 && dist <= 1250) return BB; // heavy meets the walk-in
-    if (level === 3) {
-      if (r === 1 && dist <= 780) return BA | BB;
-      if (r === 2 && dist <= 1250) return DOWN | BB;
-      if (r === 3 && (cyc & 1) === 0 && dist >= 700 && dist <= 1100) return UP | toward;
-    }
     if (dist <= 1000) return BA;
     return toward;
   }
