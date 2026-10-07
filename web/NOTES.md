@@ -1,8 +1,8 @@
 ## Status
-- Step: look-theme done (tokens lib/theme.ts + app/theme.css, fonts app/fonts.ts, island on shared tokens, components/kit/).
-- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; island shots vs feat/island within run-to-run noise.
-- look-ui: tokens, Google Fonts, font files, fonts loaded, :root tokens, island body font pass; play/arena colours, Sofia, play background/brand link, arena sky/sea are look-play/look-arena work.
-- Next: look-play and look-arena build on the kit. Blockers: none.
+- Step: look-play 7.2 plus the lead's review: feat/island merged in; toast fixed under the top bar; ink leverage fill; readable lock caption chip; disabled buttons ink2 on faded colour; every figure in copy in JetBrains Mono (figs() in components/play/parts.tsx).
+- Last check: GATE PASS ui, predict-ui, island-ui (/play 165164 B, +4.4% vs main); typecheck clean; look-ui: every /play part passes, arena and Sofia parts are look-arena's.
+- Live run (CHAIN=off ORDER_SIG=off engine on :8871): island Arena panel to /play, join, long and short, final and offline settle, brand chip back to the island; Observatory to a round, call, lock, create a round. All worked.
+- Next: merge into feat/island after look-arena. Blockers: none.
 
 ## Running
 
