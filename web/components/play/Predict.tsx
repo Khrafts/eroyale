@@ -1003,9 +1003,10 @@ function Who({ player, callsign, bot, me }: { player: string; callsign: string; 
   );
 }
 
-/** A vertical slice of the arena map: every call as a tick, the storm outside the winners' band, the live price. */
+/** The price as a line chart since the round opened, every call as a level, the storm outside the winners' band. */
 function Strip({ match, me }: { match: Match; me: string | null }) {
   const st = match.state;
+  const r = st.round!;
   const lk = st.locked!;
   const band = st.ptick?.band;
   const mark = liveMark(match);
@@ -1013,18 +1014,31 @@ function Strip({ match, me }: { match: Match; me: string | null }) {
   const H = 260;
   const vals = lk.predictions.map((x) => Number(x.price));
   if (mark !== null) vals.push(Number(mark) / 100);
+  const u0 = st.tOrigin ?? st.path[0]?.u ?? r.lockTime - 60;
+  const u1 = r.endTime;
+  const pts = st.path.filter((q) => q.u >= u0 && q.u <= u1);
+  for (const q of pts) vals.push(q.p);
   let lo = Math.min(...vals);
   let hi = Math.max(...vals);
   const pad = Math.max((hi - lo) * 0.08, hi * 0.0002);
   lo -= pad;
   hi += pad;
   const y = (v: number) => H - ((v - lo) / (hi - lo)) * H;
+  const x = (u: number) => ((u - u0) / Math.max(1, u1 - u0)) * W;
+  const stride = Math.max(1, Math.ceil(pts.length / 240));
+  let d = "";
+  pts.forEach((q, i) => {
+    if (i % stride && i !== pts.length - 1) return;
+    d += `${d ? "L" : "M"}${x(q.u).toFixed(1)} ${y(q.p).toFixed(1)}`;
+  });
+  const lastX = pts.length ? x(pts[pts.length - 1].u) : W - 10;
+  const lockX = x(r.lockTime);
   const leaders = new Set(st.ptick?.leaders.map((l) => l.player) ?? []);
   const bTop = band ? y(Number(band.high)) - 6 : 0;
   const bBot = band ? y(Number(band.low)) + 6 : H;
   const my = lk.predictions.find((x) => x.player === me);
   return (
-    <svg className={p.strip} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Every call against the live price; the storm covers the calls that are losing right now">
+    <svg className={p.strip} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="The price since the round opened against every call; the storm covers the calls that are losing right now">
       {band && (
         <>
           <rect x={0} y={0} width={W} height={Math.max(0, bTop)} className={p.storm} />
@@ -1038,7 +1052,7 @@ function Strip({ match, me }: { match: Match; me: string | null }) {
       {lk.predictions.map((x) => (
         <line
           key={x.player}
-          x1={x.player === me ? 0 : 150}
+          x1={0}
           x2={W}
           y1={y(Number(x.price))}
           y2={y(Number(x.price))}
@@ -1053,12 +1067,12 @@ function Strip({ match, me }: { match: Match; me: string | null }) {
           </text>
         </>
       )}
-      {mark !== null && (
-        <>
-          <line x1={0} x2={W} y1={y(Number(mark) / 100)} y2={y(Number(mark) / 100)} className={p.markLine} />
-          <circle cx={W - 10} cy={y(Number(mark) / 100)} r={6} className={p.markDot} />
-        </>
-      )}
+      <line x1={lockX} x2={lockX} y1={0} y2={H} className={p.sketchPost} />
+      <text x={lockX + 6} y={16} className={p.sketchLabel}>
+        lock
+      </text>
+      {d && <path d={d} className={p.sketchTrace} />}
+      {mark !== null && <circle cx={lastX} cy={y(Number(mark) / 100)} r={6} className={p.markDot} />}
     </svg>
   );
 }
