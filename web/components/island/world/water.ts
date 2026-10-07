@@ -1,5 +1,6 @@
 // Ocean: a vertex-waved plane coloured by distance to the nearest shore, with shore foam and rings.
 import * as THREE from "three";
+import { seaDeep, seaFoam, seaMid, seaShallow } from "@/lib/theme";
 import { DECOR, ISLET, ISLET_PH, LH, SUN_DIR, type Ctx } from "./common";
 
 export function buildWater(ctx: Ctx) {
@@ -9,10 +10,10 @@ export function buildWater(ctx: Ctx) {
       THREE.UniformsLib.fog,
       {
         uTime: { value: 0 },
-        uShallow: { value: new THREE.Color("#86F7E6") },
-        uMid: { value: new THREE.Color("#2CC3E0") },
-        uDeep: { value: new THREE.Color("#3A6FE0") },
-        uFoam: { value: new THREE.Color("#FFFFFF") },
+        uShallow: { value: new THREE.Color(seaShallow) },
+        uMid: { value: new THREE.Color(seaMid) },
+        uDeep: { value: new THREE.Color(seaDeep) },
+        uFoam: { value: new THREE.Color(seaFoam) },
         uSun: { value: SUN_DIR.clone() },
         uIsles: {
           value: [

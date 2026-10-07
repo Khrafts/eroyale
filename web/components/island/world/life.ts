@@ -1,6 +1,7 @@
 // Sky and sea life: clouds, the blimp (its banner shows the open player round with the largest pot), hot-air
 // balloons, sailing boats, fireflies, and the confetti burst for payouts.
 import * as THREE from "three";
+import { canvasFont } from "@/lib/theme";
 import { C, Box, Cyl, Ico, Sph } from "./materials";
 import { G, type Ctx } from "./common";
 import type { IslandSnap } from "@/lib/island/store";
@@ -35,16 +36,16 @@ export function buildLife(ctx: Ctx, snap0: IslandSnap) {
   P(blimp, Box(3, 1.2, 1.4), C.ink, [0, -3.6, 0], [0, 0, 0], { ol: false });
   const banner = cTex(1024, 256, (cx, w, h) => {
     const u = promoted(snap)[0];
-    cx.fillStyle = "#FFFBF5";
+    cx.fillStyle = C.paper;
     cx.fillRect(0, 0, w, h);
     cx.fillStyle = C.coral;
     cx.fillRect(0, 0, 26, h);
     cx.fillRect(w - 26, 0, 26, h);
     cx.fillStyle = C.ink;
-    cx.font = "800 70px Unbounded, system-ui";
+    cx.font = canvasFont("display", 800, 70);
     cx.textBaseline = "middle";
     cx.fillText(u ? `${u.market} ROUND #${u.lobbyId}` : "CREATE A ROUND", 60, 100);
-    cx.font = '500 34px "JetBrains Mono", monospace';
+    cx.font = canvasFont("mono", 500, 34);
     cx.fillStyle = C.violet;
     cx.fillText(u ? `POT ${usdcShort(u.potUnits)} USDC · JOIN AT THE FOUNTAIN` : "AT THE FOUNTAIN · YOUR MARKET, YOUR RULES", 62, 186);
   });

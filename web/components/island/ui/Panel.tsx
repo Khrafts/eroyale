@@ -25,6 +25,7 @@ import { unitsToUsd } from "@/lib/events";
 import { ADS, GAMES, SPONSOR, promoFoot, promoHead, promoted } from "@/lib/island/places";
 import { AvatarStudio } from "./AvatarStudio";
 import type { IslandApi } from "./Island";
+import { coral, mint, tang, violet } from "@/lib/theme";
 
 /** Re-render once a second for countdowns. */
 export function useNow() {
@@ -176,7 +177,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
       const joinable = r && (r.status === "open" || r.status === "countdown");
       return {
         eyebrow: "Hall · The Arena",
-        c: "#FF5E7E",
+        c: coral,
         title: "Trading Royale",
         body: (
           <>
@@ -224,7 +225,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
     case "observatory":
       return {
         eyebrow: "Hall · The Observatory",
-        c: "#8B5CFF",
+        c: violet,
         title: "Price Prediction",
         body: (
           <>
@@ -260,7 +261,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
     case "dojo":
       return {
         eyebrow: "Islet · The Dojo",
-        c: "#FF8A3D",
+        c: tang,
         title: "Stickman Duel",
         body: (
           <>
@@ -273,7 +274,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
     case "park":
       return {
         eyebrow: "Leaderboard Park",
-        c: "#14C98E",
+        c: mint,
         title: "Top earners",
         body: (
           <>
@@ -286,7 +287,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
     case "create":
       return {
         eyebrow: "Fountain · Create",
-        c: "#14C98E",
+        c: mint,
         title: "Create a prediction round",
         body: (
           <>
@@ -420,7 +421,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
     };
   return {
     eyebrow: "Billboard · Open slot",
-    c: "#FF5E7E",
+    c: coral,
     title: "Promote your round here",
     body: (
       <>

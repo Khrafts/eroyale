@@ -1,6 +1,7 @@
 // Four beach billboards with chasing bulbs. Two show the open player-created rounds with the largest pots (not paid
 // ads), one is a static fictional sponsor, one is the open slot (bidding is coming, nothing to submit).
 import * as THREE from "three";
+import { canvasFont } from "@/lib/theme";
 import { C, Box, Cyl, Sph, rr, wrapText } from "../materials";
 import { SAND_Y, f, type Ctx } from "../common";
 import type { IslandSnap } from "@/lib/island/store";
@@ -27,28 +28,28 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
         cx.arc(w - 220, h + 40, 140, 0, Math.PI * 2);
         cx.fill();
         const eyebrow = `PREDICTION · ROUND #${u.lobbyId}`;
-        cx.font = '500 26px "JetBrains Mono", monospace';
+        cx.font = canvasFont("mono", 500, 26);
         const ew = cx.measureText(eyebrow).width;
         cx.fillStyle = C.ink;
         rr(cx, 44, 44, ew + 36, 50, 25);
         cx.fill();
         cx.fillStyle = "#fff";
         cx.fillText(eyebrow, 62, 78);
-        cx.font = "800 68px Unbounded, system-ui, sans-serif";
+        cx.font = canvasFont("display", 800, 68);
         cx.fillStyle = C.ink;
         wrapText(cx, promoHead(u), 52, 196, w - 110, 82);
         cx.fillStyle = "#fff";
         wrapText(cx, promoHead(u), 48, 190, w - 110, 82);
-        cx.font = '600 30px "Instrument Sans", system-ui, sans-serif';
+        cx.font = canvasFont("body", 600, 30);
         cx.fillText(promoFoot(u), 50, h - 52);
-        cx.font = '500 20px "JetBrains Mono", monospace';
+        cx.font = canvasFont("mono", 500, 20);
         cx.fillStyle = "rgba(255,255,255,.85)";
         cx.textAlign = "right";
         cx.fillText("PLAYER ROUND", w - 40, 78);
       } else if (ad.kind === "sponsor") {
         cx.lineWidth = 6;
         for (let k = 0; k < 7; k++) {
-          cx.strokeStyle = ["#7FF5E4", "#4CC9F0", "#8B5CFF"][k % 3];
+          cx.strokeStyle = [C.wave, C.sky, C.violet][k % 3];
           cx.globalAlpha = 0.45;
           cx.beginPath();
           for (let x = 0; x <= w; x += 12) {
@@ -59,13 +60,13 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
           cx.stroke();
         }
         cx.globalAlpha = 1;
-        cx.fillStyle = "#7FF5E4";
-        cx.font = "800 124px Unbounded, system-ui, sans-serif";
+        cx.fillStyle = C.wave;
+        cx.font = canvasFont("display", 800, 124);
         cx.fillText(SPONSOR.brand, 48, 190);
-        cx.fillStyle = "#FFFBF5";
-        cx.font = '500 38px "Instrument Sans", system-ui, sans-serif';
+        cx.fillStyle = C.paper;
+        cx.font = canvasFont("body", 500, 38);
         cx.fillText(SPONSOR.tag, 52, 260);
-        cx.font = '500 20px "JetBrains Mono", monospace';
+        cx.font = canvasFont("mono", 500, 20);
         cx.fillStyle = "rgba(255,251,245,.65)";
         cx.textAlign = "right";
         cx.fillText("SPONSORED · FICTIONAL BRAND", w - 40, 60);
@@ -78,15 +79,15 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
         cx.strokeRect(30, 30, w - 60, h - 60);
         cx.setLineDash([]);
         cx.fillStyle = empty ? ad.bg : C.coral;
-        cx.font = "800 80px Unbounded, system-ui, sans-serif";
+        cx.font = canvasFont("display", 800, 80);
         cx.fillText(empty ? "NO ROUNDS" : "YOUR ROUND", 64, 176);
         cx.fillStyle = C.ink;
         cx.fillText(empty ? "YET" : "HERE", 64, 264);
-        cx.font = '500 32px "Instrument Sans", system-ui, sans-serif';
+        cx.font = canvasFont("body", 500, 32);
         cx.fillStyle = "#4A3D73";
         cx.fillText(empty ? "Player rounds with the biggest pots show here" : "Promote a round you created · 24 h slot", 66, 344);
         cx.fillStyle = C.violet;
-        cx.font = '500 30px "JetBrains Mono", monospace';
+        cx.font = canvasFont("mono", 500, 30);
         cx.fillText(empty ? "Create one at the fountain" : "Bidding opens later", 66, 414);
       }
     };
@@ -147,7 +148,7 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
     }
     const step = Math.floor(t * 5);
     bulbItems.forEach((b, i) =>
-      bulbs.setColorAt(i, tmpC.set((b.k + step) % 3 === 0 ? "#FFFFFF" : "#FFC93C").multiplyScalar((b.k + step) % 3 === 0 ? 1 : 0.75)),
+      bulbs.setColorAt(i, tmpC.set((b.k + step) % 3 === 0 ? "#FFFFFF" : C.sun).multiplyScalar((b.k + step) % 3 === 0 ? 1 : 0.75)),
     );
     bulbs.instanceColor!.needsUpdate = true;
   });

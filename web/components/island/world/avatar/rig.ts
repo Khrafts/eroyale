@@ -81,7 +81,7 @@ export function makeAvatar(kit: Kit, cfg: AvatarCfg): Rig {
       eye(0.16, "arc");
     } else {
       P(faceG, Box(0.66, 0.15, 0.08), C.ink, [0, 0.06, 0.4], [0, 0, 0], { ol: false });
-      P(faceG, Box(0.2, 0.05, 0.02), basic("#7FF5E4"), [-0.15, 0.09, 0.45], [0, 0, 0], { ol: false, shadow: false });
+      P(faceG, Box(0.2, 0.05, 0.02), basic(C.wave), [-0.15, 0.09, 0.45], [0, 0, 0], { ol: false, shadow: false });
     }
     const hc = m.hat;
     if (c.hat === "crown") {
@@ -89,7 +89,7 @@ export function makeAvatar(kit: Kit, cfg: AvatarCfg): Rig {
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2;
         P(hatG, new THREE.ConeGeometry(0.07, 0.18, 4), C.sun, [Math.cos(a) * 0.25, 0.68, Math.sin(a) * 0.25], [0, 0, 0], { ol: false });
-        P(hatG, Sph(0.045, 6, 4), basic(i % 2 ? "#FF5E7E" : "#4CC9F0"), [Math.cos(a) * 0.29, 0.48, Math.sin(a) * 0.29], [0, 0, 0], { ol: false, shadow: false });
+        P(hatG, Sph(0.045, 6, 4), basic(i % 2 ? C.coral : C.sky), [Math.cos(a) * 0.29, 0.48, Math.sin(a) * 0.29], [0, 0, 0], { ol: false, shadow: false });
       }
     } else if (c.hat === "cap") {
       P(hatG, Sph(0.47, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), hc, [0, 0.06, 0], [0, 0, 0], { ol: 0.02 });
@@ -102,7 +102,7 @@ export function makeAvatar(kit: Kit, cfg: AvatarCfg): Rig {
     } else if (c.hat === "beanie") {
       P(hatG, Sph(0.47, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), hc, [0, 0.05, 0], [0, 0, 0], { ol: 0.02 }).scale.y = 1.15;
       P(hatG, new THREE.TorusGeometry(0.44, 0.08, 8, 24), hc, [0, 0.08, 0], [Math.PI / 2, 0, 0], { ol: 0.02 });
-      P(hatG, Sph(0.13, 10, 8), "#FFFBF5", [0, 0.62, 0], [0, 0, 0], { ol: 0.02 });
+      P(hatG, Sph(0.13, 10, 8), C.paper, [0, 0.62, 0], [0, 0, 0], { ol: 0.02 });
     } else if (c.hat === "party") {
       const g = new THREE.Group();
       g.position.set(0.08, 0.38, 0);

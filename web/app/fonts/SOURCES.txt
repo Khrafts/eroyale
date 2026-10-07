@@ -12,3 +12,29 @@ SofiaSansCondensed-OFL.txt
   https://raw.githubusercontent.com/google/fonts/main/ofl/sofiasanscondensed/OFL.txt
 SofiaSansExtraCondensed-OFL.txt
   https://raw.githubusercontent.com/google/fonts/main/ofl/sofiasansextracondensed/OFL.txt
+
+One look (Phase 10), fetched 2026-10-07 the same way. Loaded by app/fonts.ts with next/font/local; each face keeps its
+real family name and the faces mirror the island's former Google Fonts stylesheet
+(css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500):
+Unbounded and Instrument Sans are the one variable file css2 returned for each of those weights; JetBrains Mono 500 is
+the static file it returned (declared for 100..500), and the variable file serves 600..800.
+
+Unbounded-latin-wght.woff2 (weight 200..900)
+  file: https://fonts.gstatic.com/s/unbounded/v12/Yq6W-LOTXCb04q32xlpwu8ZfvRIkSQ.woff2
+  css:  https://fonts.googleapis.com/css2?family=Unbounded:wght@200..900&display=swap
+InstrumentSans-latin-wght.woff2 (weight 400..700, width 100%)
+  file: https://fonts.gstatic.com/s/instrumentsans/v4/pxiTypc9vsFDm051Uf6KVwgkfoSxQ0GsQv8ToedPibnr0SZe1ZuWi3g.woff2
+  css:  https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap
+JetBrainsMono-latin-500.woff2 (weight 500, static)
+  file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8-qxTOlOVk6OThhvA.woff2
+  css:  https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap
+JetBrainsMono-latin-wght.woff2 (weight 100..800)
+  file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD7OwGtT0rU.woff2
+  css:  https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap
+
+Unbounded-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/unbounded/OFL.txt
+InstrumentSans-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/instrumentsans/OFL.txt
+JetBrainsMono-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/OFL.txt

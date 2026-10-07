@@ -1,5 +1,6 @@
 // Open plots: a dashed 14 x 14 lot with a spinning hologram plus sign and a pulse ring.
 import * as THREE from "three";
+import { canvasFont } from "@/lib/theme";
 import { C, Box, Cyl, Sph } from "../materials";
 import { LAYOUT, place, type Ctx } from "../common";
 
@@ -17,11 +18,11 @@ export function buildPlots(ctx: Ctx) {
       cx.strokeRect(22, 22, w - 44, h - 44);
       cx.setLineDash([]);
       cx.fillStyle = "rgba(255,255,255,.95)";
-      cx.font = "800 50px Unbounded, system-ui";
+      cx.font = canvasFont("display", 800, 50);
       cx.textAlign = "center";
       cx.textBaseline = "middle";
       cx.fillText("OPEN PLOT", w / 2, h / 2 + 90);
-      cx.font = '500 28px "JetBrains Mono", monospace';
+      cx.font = canvasFont("mono", 500, 28);
       cx.fillText(name + " · 14 × 14", w / 2, h / 2 + 140);
     }).tex;
     P(g, new THREE.PlaneGeometry(14, 14).rotateX(-Math.PI / 2), toon("#ffffff", { map: t }), [0, 0.06, 0], [0, 0, 0], { ol: false, shadow: false });

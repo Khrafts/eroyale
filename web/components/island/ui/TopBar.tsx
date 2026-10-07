@@ -3,6 +3,7 @@
 import { useIsland } from "@/lib/island/store";
 import { short, usdc } from "@/lib/island/format";
 import type { IslandApi } from "./Island";
+import { ISLAND, ink, paper, sun } from "@/lib/theme";
 
 export function TopBar({ api, list }: { api: IslandApi; list: boolean }) {
   const stats = useIsland((s) => s.stats);
@@ -16,10 +17,10 @@ export function TopBar({ api, list }: { api: IslandApi; list: boolean }) {
     <header className="top">
       <div className="chip brand">
         <svg viewBox="0 0 32 32" aria-hidden="true">
-          <circle cx="16" cy="16" r="15" fill="#2B1D52" />
-          <path d="M7 23h18" stroke="#FFFBF5" strokeWidth="2.2" strokeLinecap="round" />
-          <path d="M16 22V13M16 13c-3-4-6.5-3-7.5 1.5M16 13c3-4 6.5-3 7.5 1.5" stroke="#7FF5E4" strokeWidth="2.2" fill="none" strokeLinecap="round" />
-          <circle cx="16" cy="8" r="2.6" fill="#FFC93C" stroke="#FFFBF5" strokeWidth="1" />
+          <circle cx="16" cy="16" r="15" fill={ink} />
+          <path d="M7 23h18" stroke={paper} strokeWidth="2.2" strokeLinecap="round" />
+          <path d="M16 22V13M16 13c-3-4-6.5-3-7.5 1.5M16 13c3-4 6.5-3 7.5 1.5" stroke={ISLAND.wave} strokeWidth="2.2" fill="none" strokeLinecap="round" />
+          <circle cx="16" cy="8" r="2.6" fill={sun} stroke={paper} strokeWidth="1" />
         </svg>
         <span className="word">Royale Isle</span>
       </div>

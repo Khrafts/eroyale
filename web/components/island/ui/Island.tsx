@@ -10,13 +10,12 @@ import { ISLAND_MOMENTS, mockIsland, type IslandMoment } from "@/lib/island/mock
 import { CALLSIGN_KEY, danceName, loadAvatar } from "@/lib/island/avatar";
 import { burner } from "@/lib/engine";
 import { usdc } from "@/lib/island/format";
+import { ink } from "@/lib/theme";
 import type { World } from "../world/scene";
 import { TopBar } from "./TopBar";
 import { Feed } from "./Feed";
 import { Panel } from "./Panel";
 import { ListView } from "./ListView";
-
-const FONTS = "https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap";
 
 /** A pickable's panel: jets open their game, your avatar opens the studio. */
 const ROUTE: Record<string, string> = { "jet:royale": "arena", "jet:predict": "observatory", "jet:duel": "dojo", "jet:create": "create", me: "studio" };
@@ -208,7 +207,6 @@ export default function Island() {
   const api: IslandApi = { select, close, toast, world, setList };
   return (
     <div className={`isle${panel ? " has-panel" : ""}${list ? " is-list" : ""}`}>
-      <link rel="stylesheet" href={FONTS} precedence="default" />
       <canvas ref={canvasRef} className="scene" aria-label="Royale Isle, a 3D island. Drag to orbit, scroll to zoom, click a building to open it." />
       <div ref={labelsRef} className="labels" hidden={list} />
       <TopBar api={api} list={list} />
@@ -228,7 +226,7 @@ export default function Island() {
             world?.resetView();
           }}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="#2B1D52" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <svg viewBox="0 0 24 24" fill="none" stroke={ink} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="9" />
             <path d="M15.5 8.5l-2 5-5 2 2-5z" />
           </svg>

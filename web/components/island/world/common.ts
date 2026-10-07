@@ -1,15 +1,16 @@
 // Shared layout of the island: shoreline shape, heights, districts, and the obstacle book used to place props.
 import * as THREE from "three";
 import type { Kit } from "./materials";
+import { ISLAND } from "@/lib/theme";
 import type { IslandSnap } from "@/lib/island/store";
 
 export const G = 2.3;
 export const SAND_Y = 1.6;
-export const SAND = "#FFCF86";
-export const GRASS = "#5FD36F";
-export const PATH = "#FFEBDA";
-export const PATH_EDGE = "#F7BFA6";
-export const HORIZON = "#FFD1C1";
+export const SAND = ISLAND.sand;
+export const GRASS = ISLAND.grass;
+export const PATH = ISLAND.path;
+export const PATH_EDGE = ISLAND.pathEdge;
+export const HORIZON = ISLAND.horizon;
 export const SUN_DIR = new THREE.Vector3(120, 150, 70).normalize();
 
 /** Shoreline wobble: radius factor at angle `a`. */

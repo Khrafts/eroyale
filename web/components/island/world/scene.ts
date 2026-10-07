@@ -2,6 +2,7 @@
 // everything), pointer picking, camera flights, the panel view offset, and the frame loop. Plain TypeScript; React
 // talks to it through the returned API and it reads the store snapshot every frame.
 import * as THREE from "three";
+import { canvasFont } from "@/lib/theme";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { C, Cyl, makeKit, rng } from "./materials";
 import { G, HORIZON, SAND_Y, SUN_DIR, type Ctx, type Ob } from "./common";
@@ -300,7 +301,7 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
   disposers.push(() => clearInterval(measureId));
   if (document.fonts?.ready) {
     void document.fonts.ready
-      .then(() => Promise.all(['800 40px Unbounded', '500 40px "JetBrains Mono"', '600 30px "Instrument Sans"'].map((s) => document.fonts.load(s).catch(() => []))))
+      .then(() => Promise.all([canvasFont("display", 800, 40), canvasFont("mono", 500, 40), canvasFont("body", 600, 30)].map((s) => document.fonts.load(s).catch(() => []))))
       .then(() => {
         if (disposed) return;
         kit.texRedraws.forEach((fn) => fn());
@@ -334,7 +335,7 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
       const cam = new THREE.PerspectiveCamera(32, 1, 0.1, 50);
       cam.position.set(0, 1.75, 5.9);
       cam.lookAt(0, 1.3, 0);
-      const disc = new THREE.Mesh(Cyl(1.5, 1.6, 0.3, 40), kit.tm("#FFFBF5"));
+      const disc = new THREE.Mesh(Cyl(1.5, 1.6, 0.3, 40), kit.tm(C.paper));
       disc.position.y = -0.15;
       sc.add(disc);
       kit.addOutline(disc, 0.03);
