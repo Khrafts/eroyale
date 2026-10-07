@@ -1,4 +1,5 @@
-// The island's Dojo from GET /duels: queue size, live duels, recent results. A tiny store of its own (the island's
+// The island's Dojo from GET /duels: recent results (queue size and live duels are not shown while ranked is "Coming
+// soon"). A tiny store of its own (the island's
 // IslandSnap stays as it is); the Dojo panel, the list card, the Dojo label and the Duel fountain jet read it.
 // Polled every 3 s while the island is open, paused while the tab is hidden; ?mock=island uses mockDuels().
 import { useSyncExternalStore } from "react";
@@ -21,8 +22,9 @@ export const useDojo = () =>
     () => snap,
   );
 
-/** Players in the dojo right now: the queue plus two per live duel (the Duel jet's height). */
-export const dojoPlayers = (s: DojoSnap = snap) => (s.info ? s.info.queue + s.info.live.reduce((n, d) => n + (d.players.length || 2), 0) : 0);
+/** The Duel fountain jet's player count: fixed at 0 (the jet stays low) while ranked is "Coming soon" (CLAUDE.md
+ *  "Duel tuning"); the queue and live duels are no longer a way in. */
+export const dojoPlayers = (_s: DojoSnap = snap) => 0;
 
 export function startDojoPoll(): () => void {
   if (!process.env.NEXT_PUBLIC_ENGINE_WS && !process.env.NEXT_PUBLIC_ENGINE_HTTP) {
@@ -54,11 +56,6 @@ export function startDojoPoll(): () => void {
   };
 }
 
-export function dojoLine(s: DojoSnap = snap): string {
-  if (s.state === "none" || s.state === "missing") return "Practice free · ranked 5 USDC";
-  if (!s.info) return s.state === "down" ? "Practice free · engine offline" : "Opening the dojo";
-  const live = s.info.live.length;
-  const q = s.info.queue;
-  if (!live && !q) return "Practice free · fight for 5 USDC";
-  return [live ? `${live} live` : null, q ? `${q} in the queue` : null].filter(Boolean).join(" · ");
+export function dojoLine(_s: DojoSnap = snap): string {
+  return "Practice free · ranked coming soon";
 }
