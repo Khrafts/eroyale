@@ -47,6 +47,7 @@ type Peak = {
   vlift: number;
   xoff: number;
   vxoff: number;
+  vis: number; // label opacity: a label with no free spot fades out instead of overlapping
 };
 
 type Gust = { id: string; side: Side; born: number };
@@ -114,6 +115,7 @@ export class Scene {
           vlift: 0,
           xoff: 0,
           vxoff: 0,
+          vis: 1,
         };
         this.peaks.set(lp.player, p);
       }
@@ -127,7 +129,8 @@ export class Scene {
         // a liquidated summit falls from where it stood; loaded straight into the moment, from the waterline
         p.deathEq = d.reason === "liquidated" ? (this.first ? this.floodBase(s, now) : Math.max(p.eq, this.lo)) : target;
       }
-      p.alive = !d;
+      // the board is the truth for who is standing (a missed elimination event must not leave a ghost summit)
+      p.alive = !d && (row ? row.alive : true);
       if (row && p.alive) p.rank = row.rank;
       p.target = target;
     });
@@ -649,8 +652,11 @@ export class Scene {
       head(ctx, this.sprite(p.id, HR), p.x, hy, HR * g);
       ctx.restore();
       // label, drawn after every head
-      const [target, tx] = lifts.get(p.id) ?? [0, 0];
-      if (this.first || this.reducedNow) {
+      const spot = lifts.get(p.id);
+      const shownLabel = spot !== null;
+      const [target, tx] = spot ?? [p.lift, p.xoff];
+      p.vis = this.first || this.reducedNow ? (shownLabel ? 1 : 0) : clamp(p.vis + (shownLabel ? 1 : -1) * this.dtNow * 6);
+      if (this.first || this.reducedNow || (shownLabel && p.vis < 0.2)) {
         p.lift = target;
         p.xoff = tx;
       } else {
@@ -660,9 +666,10 @@ export class Scene {
       const tipY = y - LABEL_GAP - p.lift;
       const lx = p.x + p.xoff;
       const fin = s.final && finalIds.has(p.id) ? s.final.finalists.find((f) => f.player === p.id) : undefined;
+      if (p.vis <= 0.01) continue;
       labels.push(() => {
         ctx.save();
-        ctx.globalAlpha = clamp(p.grow * 1.4);
+        ctx.globalAlpha = clamp(p.grow * 1.4) * p.vis;
         if (p.lift > 4 || Math.abs(p.xoff) > 4) {
           ctx.strokeStyle = rgba(ink, 0.55);
           ctx.lineWidth = 2;
@@ -810,7 +817,7 @@ export class Scene {
     skip: Set<string>,
     obstacles: Box[],
   ) {
-    const out = new Map<string, [number, number]>();
+    const out = new Map<string, [number, number] | null>();
     const boxes: Box[] = [...obstacles];
     const cb = this.cutBox(s);
     if (cb) {
@@ -818,7 +825,11 @@ export class Scene {
       boxes.push({ l: 0, r: W, t: cb.y - 8, b: cb.y + 8 });
     }
     const finalIds = new Set(s.final?.finalists.map((f) => f.player) ?? []);
-    const order = shown.filter((p) => p.alive && !skip.has(p.id)).sort((a, b) => b.eq - a.eq);
+    // who gets a label first: you, the leader, the summits at risk (closest to the line first), then by height
+    const l = this.deathLine(s);
+    const mine = (p: Peak) => !!this.me && this.me.address === p.id.toLowerCase();
+    const prio = (p: Peak) => (mine(p) ? 0 : p.id === this.leader ? 1 : l !== null && p.target < l ? 2 : 3);
+    const order = shown.filter((p) => p.alive && !skip.has(p.id)).sort((a, b) => prio(a) - prio(b) || b.eq - a.eq);
     // every head and pennant is an obstacle too, so a label never covers someone's face
     for (const p of shown) {
       if (!p.alive || skip.has(p.id)) continue;
@@ -832,11 +843,11 @@ export class Scene {
       const w = cw + 6;
       const h = ch + 18;
       const bottom = y - LABEL_GAP + 4;
-      // climb straight up; if the climb runs into the HUD, try a step to either side
+      // climb straight up; if the climb runs into the HUD, try a step to either side; no room at all hides the label
       let best: { b: number; dx: number } | null = null;
       for (const dx of [0, w * 0.6, -w * 0.6, w * 1.1, -w * 1.1]) {
         const x = p.x + dx;
-        if (x - w / 2 < 116 || x + w / 2 > RX - 8) continue;
+        if (x - w / 2 < 116 || x + w / 2 > W - 16) continue;
         let b = Math.min(bottom, crest);
         for (let k = 0; k < 16; k++) {
           const hit = hits(x - w / 2, x + w / 2, b - h, b);
@@ -848,11 +859,13 @@ export class Scene {
           best = { b, dx };
           break;
         }
-        if (!best) best = { b: band, dx: 0 };
       }
-      const pick = best ?? { b: bottom, dx: 0 };
-      out.set(p.id, [Math.max(0, bottom - pick.b), pick.dx]);
-      boxes.push({ l: p.x + pick.dx - w / 2, r: p.x + pick.dx + w / 2, t: pick.b - h, b: pick.b });
+      if (!best) {
+        out.set(p.id, null);
+        continue;
+      }
+      out.set(p.id, [Math.max(0, bottom - best.b), best.dx]);
+      boxes.push({ l: p.x + best.dx - w / 2, r: p.x + best.dx + w / 2, t: best.b - h, b: best.b });
     }
     return out;
   }

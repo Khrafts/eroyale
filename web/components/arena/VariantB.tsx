@@ -7,7 +7,7 @@ import { FONT, RADIUS, SHADOW, ink, ink2, paper, skyTop } from "@/lib/theme";
 import { loadAvatar } from "@/lib/island/avatar";
 import { rgba } from "./b/draw";
 import { Scene } from "./b/scene";
-import { PredictScene } from "./b/predict";
+import type { PredictScene } from "./b/predict";
 
 const DW = 1920;
 const DH = 1080;
@@ -22,10 +22,17 @@ export default function VariantB({ match }: ArenaProps) {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     const scene = new Scene();
-    const pscene = new PredictScene();
+    // The prediction scene loads in its own chunk, so the royale arena's first load stays small.
+    let pscene: PredictScene | null = null;
+    let alive = true;
+    void import("./b/predict").then((m) => {
+      if (!alive) return;
+      pscene = new m.PredictScene();
+      pscene.me = scene.me;
+    });
     const clear = () => {
       scene.T.cache.clear();
-      pscene.T.cache.clear();
+      pscene?.T.cache.clear();
     };
     const fonts = [`800 40px ${FONT.display}`, `600 20px ${FONT.body}`, `800 40px ${FONT.mono}`, `600 20px ${FONT.mono}`];
     Promise.all(fonts.map((f) => document.fonts.load(f)))
@@ -34,7 +41,6 @@ export default function VariantB({ match }: ArenaProps) {
     document.fonts.addEventListener("loadingdone", clear);
 
     // Your own avatar, when this browser already has a burner key (the phone's); the arena never creates one.
-    let alive = true;
     try {
       if (localStorage.getItem("royale.burner")) {
         void import("@/lib/engine").then((e) => {
@@ -42,7 +48,7 @@ export default function VariantB({ match }: ArenaProps) {
           const address = e.burner().address.toLowerCase();
           const me = { address, cfg: loadAvatar(address) };
           scene.me = me;
-          pscene.me = me;
+          if (pscene) pscene.me = me;
         });
       }
     } catch {
@@ -80,8 +86,9 @@ export default function VariantB({ match }: ArenaProps) {
       ctx.rect(0, 0, DW, DH);
       ctx.clip();
       const st = m.ref.current;
-      if (st.mode === "predict") pscene.frame(ctx, st, m.clock(), dt, m.reducedMotion);
-      else scene.frame(ctx, st, m.clock(), dt, m.reducedMotion);
+      if (st.mode !== "predict") scene.frame(ctx, st, m.clock(), dt, m.reducedMotion);
+      else if (pscene) pscene.frame(ctx, st, m.clock(), dt, m.reducedMotion);
+      else scene.sky.draw(ctx, 0, true);
       ctx.restore();
       raf = requestAnimationFrame(loop);
     };
