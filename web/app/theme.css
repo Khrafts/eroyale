@@ -1,0 +1,41 @@
+/* The product's one look as CSS custom properties. web/lib/theme.ts exports the same values as constants for canvas and
+   script code. Change one, change the other to match. Imported once, in app/layout.tsx. */
+:root{
+  /* base tokens */
+  --ink:#2B1D52; --ink2:#4A3D73; --muted:#7A6F9B;
+  --paper:#FFFBF5; --glass:rgba(255,251,245,.86); --line:rgba(43,29,82,.12);
+  --coral:#FF5E7E; --violet:#8B5CFF; --tang:#FF8A3D; --mint:#14C98E; --sun:#FFC93C;
+  --sky-top:#5B7CFA; --sky-bottom:#B3BEFF;
+  --sea-foam:#FFFFFF; --sea-shallow:#86F7E6; --sea-mid:#2CC3E0; --sea-deep:#3A6FE0;
+  /* loss, danger, liquidated as text on paper (4.87:1) */
+  --coral-text:#D12B52;
+  /* a soft ink shade under a figure; the white gloss along a filled bar */
+  --shade:rgba(43,29,82,.18); --gloss:rgba(255,255,255,.45);
+
+  /* game colours */
+  --game-royale:var(--coral); --game-predict:var(--violet); --game-duel:var(--tang); --game-create:var(--mint);
+
+  /* game meaning: fill, and the colour of that meaning as text on paper */
+  --zone-text:var(--sea-deep);
+  --long:var(--mint); --short:var(--violet); --profit:var(--sun);
+  --loss:var(--coral); --loss-text:var(--coral-text);
+
+  /* island colours that are not base tokens */
+  --island-sky:#4CC9F0; --island-backdrop:#A9B8FF;
+  --island-grass:#5FD36F; --island-meadow:#7BE28A; --island-meadow-dark:#4CC765;
+  --island-sand:#FFCF86; --island-path:#FFEBDA; --island-path-edge:#F7BFA6; --island-horizon:#FFD1C1;
+  --island-white:#FFFFFF; --island-silver:#D8D2F5; --island-bronze:#FFB38A; --island-lilac:#EFE9FF; --island-wave:#7FF5E4;
+
+  /* shape */
+  --stroke:2px; --stroke-arena:3px;
+  --radius-card:16px; --radius-panel:24px; --radius-round:999px;
+  --shadow-chip:0 3px 0 var(--ink); --shadow-panel:0 6px 0 var(--ink);
+
+  /* type: --font-display, --font-body and --font-mono are set on <html> by app/fonts.ts */
+  --display:var(--font-display), ui-rounded, system-ui, sans-serif;
+  --body:var(--font-body), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:var(--font-mono), ui-monospace, Menlo, monospace;
+}
+
+/* body text everywhere is the body face; screens set their own colours */
+body{font-family:var(--body)}

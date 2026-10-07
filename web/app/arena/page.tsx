@@ -3,15 +3,25 @@
 // With neither ?lobby= nor a mode, it falls back to prediction mode when the engine runs no royale lobby
 // (GET /lobbies reports current: null twice in a row, 3 s apart, as with --predict-only). Once in prediction mode it
 // stays there; a royale arena keeps checking every 10 s.
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useMatch } from "@/lib/useMatch";
 import { engineHttp } from "@/lib/engineUrl";
 import Storm from "@/components/arena/VariantB";
 
+// ?duel=:id (or ?mock=duel) is the Stickman Duel big screen, in its own lazily loaded chunk (React.lazy: /arena's
+// first-load JS stays as it was).
+const DuelArena = lazy(() => import("@/components/duel/DuelArena"));
+
 export default function ArenaPage() {
   const [predict, setPredict] = useState<boolean | null>(null);
+  const [duel, setDuel] = useState<{ id: number | null; mock: boolean } | null>(null);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
+    if (q.get("duel") || q.get("mock") === "duel") {
+      const id = Number(q.get("duel"));
+      setDuel({ id: Number.isInteger(id) && id > 0 ? id : null, mock: q.get("mock") === "duel" });
+      return;
+    }
     if (q.get("mock") || q.get("lobby") || q.get("mode") || !process.env.NEXT_PUBLIC_ENGINE_WS) {
       setPredict(q.get("mode") === "predict" || q.get("mock") === "predict");
       return;
@@ -40,7 +50,13 @@ export default function ArenaPage() {
       clearInterval(id);
     };
   }, []);
-  if (predict === null) return <main style={{ position: "fixed", inset: 0, background: "#172930" }} />;
+  if (duel)
+    return (
+      <Suspense fallback={<main style={{ position: "fixed", inset: 0, background: "var(--sky-top)" }} />}>
+        <DuelArena duelId={duel.id} mock={duel.mock} />
+      </Suspense>
+    );
+  if (predict === null) return <main style={{ position: "fixed", inset: 0, background: "var(--sky-top)" }} />;
   return <Arena predict={predict} />;
 }
 

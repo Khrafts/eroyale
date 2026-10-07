@@ -36,6 +36,6 @@ export type EngineEvent = { type: string; [k: string]: unknown };
  * How a settlement reached the escrow (extra `settled` field, beyond the spec): `cre-simulator` (SETTLE_MODE=cre: the
  * royale-settle workflow run in the CRE CLI simulator, its report written through Chainlink's MockKeystoneForwarder),
  * `owner-fallback` (the owner's settleFallback with the same report bytes), `cre-don` (SETTLE_MODE=deployed: the
- * deployed workflow through the KeystoneForwarder).
+ * deployed workflow through the KeystoneForwarder), `offline` (CHAIN=off: nothing sent on chain, `txHash` is "offline").
  */
-export type SettleVia = "cre-simulator" | "owner-fallback" | "cre-don";
+export type SettleVia = "cre-simulator" | "owner-fallback" | "cre-don" | "offline";

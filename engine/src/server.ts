@@ -12,6 +12,8 @@ import { CoinbaseFeed, FallbackPrices, KrakenFeed, fetchSettlementMarks, settlem
 import { Driver, PredictDriver, realClock } from "./driver.ts";
 import { PredictRound, checkUserSpec, protocolSpec, type RoundSpec } from "./predict.ts";
 import { PredictBots } from "./predict-bots.ts";
+import { Stats, playersInLog } from "./stats.ts";
+import { mountDuels } from "./duel-server.ts";
 import { LOBBY_CANCELLED, LOBBY_LIVE, LOBBY_OPEN, LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
 import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyCreateRound, verifyJoin, verifyOrder, verifyPrediction, type CreateRoundParams } from "./orders.ts";
@@ -115,6 +117,20 @@ function persistBook(id: number, json: string): string {
   return json;
 }
 let current: Match | null = null;
+// Settlement results for GET /stats: settlements.jsonl in DATA, appended once per `settled`, loaded here.
+const stats = new Stats(DATA, log);
+const whoOf = (players: { player: string; callsign: string; bot: boolean }[]) => new Map(players.map((p) => [p.player, { callsign: p.callsign, bot: p.bot }]));
+/** A `settled` event was emitted: note its time in the log (an input line, so events stay as they were) and record it for /stats. */
+function settledHere(m: { logFile: string }, mode: "royale" | "predict", id: number, bookHash: string | null, e: EngineEvent, players: { player: string; callsign: string; bot: boolean }[]) {
+  const at = Date.now();
+  record(m, { in: "settled", at });
+  stats.record(mode, id, bookHash, e as unknown as { txHash: string; winners: string[]; amounts: string[] }, whoOf(players), at);
+}
+/** CHAIN=off: nothing to pay on chain, so `settled` follows `final` with its provisional payouts (non-zero, by address). */
+function settleOffline(l: { markSettled(txHash: string, mode: "simulated", via: SettleVia, winners: string[], amounts: string[]): void }, pay: { player: string; provisionalPayoutUnits: string }[]) {
+  const paid = pay.filter((x) => BigInt(x.provisionalPayoutUnits) > 0n).sort((a, b) => (a.player < b.player ? -1 : a.player > b.player ? 1 : 0));
+  l.markSettled("offline", "simulated", "offline", paid.map((x) => x.player), paid.map((x) => x.provisionalPayoutUnits));
+}
 
 const record = (m: { logFile: string }, line: unknown) => appendFileSync(m.logFile, JSON.stringify(line) + "\n");
 
@@ -122,6 +138,7 @@ function wire(m: Match) {
   m.lobby.onEvent((e, line) => {
     appendFileSync(m.logFile, line + "\n");
     for (const c of m.clients) if (c.readyState === c.OPEN) c.send(line);
+    if (e.type === "settled") settledHere(m, "royale", m.lobby.id, (m.lobby.finalEvent?.bookHash as string) ?? null, e, m.lobby.players);
     if (e.type === "lobby") log(`[lobby ${m.lobby.id}] ${e.status}, ${(e.players as unknown[]).length} players, startsAt ${e.startsAt}`);
     else if (e.type === "eliminated" || e.type === "final" || e.type === "warning") log(`[lobby ${m.lobby.id}] ${line.slice(0, 400)}`);
   });
@@ -321,8 +338,9 @@ async function finish(m: Match) {
   const pot = chain.on ? await onchainPot(l.id) : l.potUnits;
   if (pot !== l.potUnits) log(`[lobby ${l.id}] warning: on-chain pot ${pot} != engine pot ${l.potUnits}; final and report use the on-chain pot`);
   record(m, { in: "final", marks, potUnits: pot.toString() });
-  l.emitFinal(marks, pot);
+  const fin = l.emitFinal(marks, pot);
   if (chain.on) await settle(m, l, marks, pot).catch((e) => { m.chainError = `settle: ${failReason(e)}`.slice(0, 500); log(`[lobby ${l.id}] ${m.chainError}`); });
+  else settleOffline(l, fin.finalists as { player: string; provisionalPayoutUnits: string }[]);
   if (args.loop && current === m) setTimeout(() => void createLobbyRetrying(), 5000);
 }
 
@@ -540,6 +558,7 @@ function wireRound(m: RoundMatch) {
   m.round.onEvent((e, line) => {
     appendFileSync(m.logFile, line + "\n");
     for (const c of m.clients) if (c.readyState === c.OPEN) c.send(line);
+    if (e.type === "settled") settledHere(m, "predict", m.round.id, (m.round.finalEvent?.bookHash as string) ?? null, e, m.round.players);
     if (e.type === "lobby") log(`[round ${m.round.id}] ${e.status}, ${(e.players as unknown[]).length} players, lock ${m.round.lockTime}, end ${m.round.endTime}`);
     else if (e.type === "locked" || e.type === "cancelled") log(`[round ${m.round.id}] ${e.type}${e.type === "cancelled" ? `: ${e.reason}` : `, ${(e.predictions as unknown[]).length} predictions`}`);
     else if (e.type === "final") log(`[round ${m.round.id}] ${line.slice(0, 400)}`);
@@ -743,7 +762,8 @@ async function finishRound(m: RoundMatch) {
   const pot = chain.on ? await onchainPot(r.id) : r.potUnits;
   if (pot !== r.potUnits) log(`[round ${r.id}] warning: on-chain pot ${pot} != engine pot ${r.potUnits}; final and report use the on-chain pot`);
   record(m, { in: "final", settlementPrice: price, potUnits: pot.toString() });
-  r.emitFinal(price, pot);
+  const fin = r.emitFinal(price, pot);
+  if (!chain.on) settleOffline(r, fin.winners as { player: string; provisionalPayoutUnits: string }[]);
   if (chain.on) {
     // buildReport takes the {BTC, ETH, SOL} map and reads the round's market from it.
     const marks = { BTC: price, ETH: price, SOL: price } as Prices;
@@ -895,8 +915,12 @@ async function recoverRounds() {
       log(`[round ${id}] restart: reached final before the restart, settling from the stored book`);
       const price = final.settlementPrice as string;
       const target = {
-        id, markSettled: (txHash: string, mode: "deployed" | "simulated", via: SettleVia, winners: string[], amounts: string[]) =>
-          appendFileSync(file, JSON.stringify({ type: "settled", lobbyId: id, txHash, mode, via, winners, amounts }) + "\n"),
+        id, markSettled: (txHash: string, mode: "deployed" | "simulated", via: SettleVia, winners: string[], amounts: string[]) => {
+          appendFileSync(file, JSON.stringify({ type: "settled", lobbyId: id, txHash, mode, via, winners, amounts }) + "\n");
+          const at = Date.now();
+          appendFileSync(file, JSON.stringify({ in: "settled", at }) + "\n");
+          stats.record("predict", id, final.bookHash ?? null, { txHash, winners, amounts }, playersInLog(lines), at);
+        },
       };
       await settle(m, target, { BTC: price, ETH: price, SOL: price }, BigInt(fin.potUnits))
         .catch((e) => log(`[round ${id}] restart settle failed: ${failReason(e)}`));
@@ -941,8 +965,18 @@ function resume(): Match | null {
 }
 
 // ---------- HTTP
+/** Distinct players in lobbies and rounds whose status is not settled or cancelled. A settlement that failed on chain
+ * (chainError set while settling) no longer counts: it waits for a hand settlement, nobody is playing in it. */
+function playingNow(): number {
+  const who = new Set<string>();
+  const counts = (status: string, chainError: string | null) => status !== "settled" && status !== "cancelled" && !(status === "settling" && chainError);
+  for (const m of matches.values()) if (counts(m.lobby.status, m.chainError)) for (const p of m.lobby.players) who.add(p.player);
+  for (const m of rounds.values()) if (counts(m.round.status, m.chainError)) for (const p of m.round.players) who.add(p.player);
+  for (const p of duels.playing()) who.add(p);
+  return who.size;
+}
 function send(res: ServerResponse, code: number, body: unknown, raw = false) {
-  res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" });
+  res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS" });
   res.end(raw ? (body as string) : JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 async function readJson(req: IncomingMessage): Promise<any> {
@@ -1003,6 +1037,7 @@ const server = createServer(async (req, res) => {
       }
     }
     if (req.method === "GET" && url.pathname === "/rounds") return send(res, 200, listRounds());
+    if (req.method === "GET" && url.pathname === "/stats") return send(res, 200, stats.view(Date.now(), playingNow()));
     // Lobbies and rounds that reached `final` and are not settled yet: what `npm run cre-settler` settles.
     if (req.method === "GET" && url.pathname === "/settlements/pending") {
       const pending = [
@@ -1064,13 +1099,17 @@ const server = createServer(async (req, res) => {
       record(m, { in: "order", player: r.player, nonce: String(r.nonce), order: r.order, marks, t });
       return send(res, 200, { ok: true, t, price: marks[r.order.market] });
     }
+    if (await duels.handle(req, res, parts)) return;
     send(res, 404, { error: "not found" });
   } catch (e) {
     send(res, 400, { error: failReason(e) });
   }
 });
 
-const wss = new WebSocketServer({ noServer: true });
+// Clients only send small duel inputs; anything larger is refused by ws (connection closed).
+const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+// Stickman Duel: queue, 60 Hz matches, books, settlement (src/duel-server.ts), on the same chain client and data dir.
+const duels = mountDuels({ chain, dataDir: DATA, log, stats, sigOff: SIG_OFF, settleMode: SETTLE_MODE, chainSelector: CHAIN_SELECTOR, send, readJson, wss });
 const markClients = new Set<WebSocket>();
 setInterval(() => {
   if (!markClients.size) return;
@@ -1081,6 +1120,8 @@ server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://x");
   if (url.pathname !== "/ws") return socket.destroy();
   const q = url.searchParams.get("lobby");
+  const dq = url.searchParams.get("duel");
+  if (dq) return duels.upgrade(req, socket, head, dq);
   if (url.searchParams.get("feed") === "marks") {
     // Live marks for the predict screen before the lock (no lobby events carry a price until then).
     return wss.handleUpgrade(req, socket, head, (ws) => { markClients.add(ws); ws.on("close", () => markClients.delete(ws)); });
@@ -1107,6 +1148,8 @@ server.on("upgrade", (req, socket, head) => {
 server.listen(PORT, async () => {
   log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
+  setInterval(duels.loop, 4);
+  void duels.recover().catch((e) => log(`duel recovery failed: ${failReason(e)}`));
   void recoverRounds().catch((e) => log(`round recovery failed: ${failReason(e)}`));
   if (PREDICT_ON) void openProtocolRound(null);
   if (ROYALE_ON && !(args.resume && resume())) await createLobbyRetrying();

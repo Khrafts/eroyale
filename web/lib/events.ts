@@ -205,3 +205,31 @@ export function unitsToUsd(units: string): string {
   const cents = (u % 1_000_000n) / 10_000n;
   return `${whole}.${cents.toString().padStart(2, "0")}`;
 }
+
+// ---------- Island (the spec "Island"): the polled engine routes ----------
+/** GET /stats. Units are 6-decimal integer strings, addresses lowercase. */
+export type StatsLeader = { player: string; callsign: string; bot: boolean; wins: number; earnedUnits: string };
+export type RecentWin = {
+  lobbyId: number;
+  mode: "royale" | "predict" | "duel";
+  player: string;
+  callsign: string;
+  bot: boolean;
+  amountUnits: string;
+  at: number; // unix ms
+};
+export type Stats = { now: number; playing: number; paidTodayUnits: string; leaderboard: StatsLeader[]; recentWins: RecentWin[] };
+/** GET /health. */
+export type Health = { ok: boolean; chain: boolean; current: number | null; protocolRound: number | null; priceAgeMs: number | null };
+/** GET /marks. `now` is unix ms. */
+export type MarksInfo = { marks: Marks | null; stale: boolean; now: number };
+/** GET /lobbies. */
+export type LobbiesInfo = {
+  current: number | null;
+  lobbies: { lobbyId: number; status: LobbyStatus; players: number; startsAt: number | null }[];
+};
+/** GET /rounds. */
+export type RoundsInfo = { protocol: number | null; rounds: RoundInfo[]; active?: RoundInfo[]; recent?: RoundInfo[] };
+
+/** A real settlement transaction. An engine run with CHAIN=off settles offline (txHash "offline"): nothing on chain. */
+export const isTxHash = (tx: string | null | undefined): boolean => !!tx && /^0x[0-9a-fA-F]{64}$/.test(tx);

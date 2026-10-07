@@ -2,6 +2,7 @@
   "chain": "base-sepolia",
   "chainId": 84532,
   "chainSelector": "10344971235874465080",
+  "duelEscrow": "0x6037eA43B1fD085605a05B0d238E495E332EB2a7",
   "escrow": "0xf4D071E6713C60200C7deDD905be46c31aFa9394",
   "forwarder": "0x82300bd7c3958625581cc2F77bC6464dcEcDF3e5",
   "maxCreatorFeeBps": 500,

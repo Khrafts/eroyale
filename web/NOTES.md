@@ -1,9 +1,8 @@
 ## Status
-- Step: predict mode done; the phone shows the engine's lock time after creating a round, and the create screen says the lock aligns to the minute.
-- Last check: the UI checks pass; all six predict shots reviewed.
-- Next: run the phone and arena against a live predict engine (`/arena?mode=predict`, `/play?mode=predict`).
-- Blockers: none. Shots use installed Chrome because Playwright 1.63's Chromium is not downloaded.
-- Known: in the royale final view the flood holds at the last zone line, so finalists below it are drawn under water (still labelled and paid).
+- Step: feat/duel with feat/island merged (Phase 10 look-play and look-arena in); duel UI merged (duel-ui review and look fixes).
+- Last check: duel-ui branch GATE PASS ui, predict-ui, island-ui, duel-ui; look-arena 67cef50 GATE PASS ui, predict-ui, island-ui, look-ui (/arena +1.7%, /play +4.4% vs main).
+- Duel verified live: CHAIN=off two-browser PvP + bot fight; Base Sepolia PvP settled through the CRE simulator.
+- Next: gates rerun on the merged tree, then the duel PR. Blockers: none.
 
 ## Running
 
@@ -26,11 +25,11 @@ Against a live engine (no `mock=1`; without NEXT_PUBLIC_ENGINE_WS the pages show
 
 Screenshots: `npm run build && SHOTS_DIR=<dir> npm run shots` writes the eight gate PNGs. `SHOTS_ONLY=a,b` limits the set; `NEXT_DIST_DIR` and `PORT` let a second build run beside the first.
 
-Files: `lib/events.ts` (wire types), `lib/useMatch.ts` (mock or WS feed, clock, positions), `lib/engine.ts` (burner key, signed join and orders), `mocks/match.ts`, `components/arena/VariantB.tsx` + `components/arena/b/` (the storm arena, one canvas), `components/play/` (phone).
+Files: `lib/events.ts` (wire types), `lib/useMatch.ts` (mock or WS feed, clock, positions), `lib/engine.ts` (burner key, signed join and orders), `mocks/match.ts`, `components/arena/VariantB.tsx` + `components/arena/b/` (the arena, one canvas in the island's world), `components/play/` (phone).
 
 ## Prediction mode
 
-Same app, same world: `/arena` draws a prediction lobby as a price survey on the storm canvas (`components/arena/b/predict.ts`, picked in `VariantB.tsx` when `state.mode === "predict"`); `/play?mode=predict` is the phone (`components/play/Predict.tsx`). Flood blue is still only the storm: after the lock it closes in from above and below, leaving a dry corridor that is the winners' band (`ptick.band`). Gold is winners and payouts, chalk the live price.
+Same app, same world: `/arena` draws a prediction lobby as a price chart on the same canvas (`components/arena/b/predict.ts`, picked in `VariantB.tsx` when `state.mode === "predict"`); `/play?mode=predict` is the phone (`components/play/Predict.tsx`). The sea is still only the zone: after the lock it closes in from above and below, leaving a sun band that is the winners' span (`ptick.band`). Sun is winners and payouts, ink the live price.
 
 Against the mock: `?mock=predict` on either page (implies predict mode).
 - `&at=` moments of the protocol round (lobby 41, BTC, 20 players, 18 calls, top 5, linear): `open` (18 s to the lock), `locked`, `close` (30 s to the resolve), `final` (settlement price landed, payouts provisional), `settled`, or seconds after the round opened.
@@ -49,3 +48,110 @@ Rules the screens keep:
 - Payouts say provisional until `settled`; bots carry BOT.
 
 Files: `lib/events.ts` (predict wire types), `lib/useMatch.ts` (predict state, snapshot, follow), `lib/predict.ts` (ranges, preview, rounds, cents), `lib/engine.ts` (CreateRound, Prediction), `mocks/predict.ts`, `components/arena/b/predict.ts`, `components/play/Predict.tsx` + `predict.module.css`.
+
+## Island
+
+The front door (`/`, alias `/island`): docs/island-prototype.html ported to three 0.186.1 (pinned exactly) with its
+own examples/jsm OrbitControls and BufferGeometryUtils. No React Three Fiber. `ColorManagement.enabled = false` and
+linear sRGB output keep the prototype's r147 colours; light intensities are the prototype's times PI (lights are
+physical since r155).
+
+Run it:
+- Mocks: `/?mock=island&at=overview|live|checkpoint|settled|studio|victory` (clock frozen at the moment; built from
+  mocks/match.ts folded through useMatch's reducer and mocks/predict.ts round lists). `?view=list` opens the list.
+  `&motion=reduce` forces reduced motion.
+- Live: `NEXT_PUBLIC_ENGINE_WS=ws://localhost:8802/ws npx next dev -p 3101`, engine
+  `CHAIN=off npm run dev -- --port 8802 --bots 12 --preset stage --predict-bots 10 --loop`. Polls /lobbies, /rounds,
+  /marks, /health, /stats every 3 s (backs off to 15 s while the engine is down, paused while the tab is hidden).
+  WebSockets through useMatch: the current royale lobby, the open protocol round, and up to three locked protocol
+  rounds still waiting for their result.
+- Shots: `npm run shots` adds island-overview, island-panel, island-studio, island-victory, island-list (1440x900)
+  and island-phone (390x844). Headless Chrome gets WebGL from SwiftShader (`--use-angle=swiftshader`); each island
+  shot waits for `window.__islandReady` (set once every building has popped in). SwiftShader runs the scene at about
+  2 fps, so CSS transitions lag in shots.
+
+Modules:
+- `components/island/world/` (plain TS, its own chunk, loaded only with WebGL2): scene.ts (renderer, camera,
+  controls, smooth zoom, flights, view offset, frame loop, studio preview renderer), materials.ts (toon, outline,
+  instancing, canvas textures), common.ts (layout, shoreline, obstacle book), terrain, water, sky, plaza (fountain
+  jets, coins), buildings/{arena,observatory,park,wheel,plots,dojo,lighthouse,billboards}, props (instanced), life
+  (clouds, blimp, balloons, boats, fireflies, confetti), avatar/{rig,dances}, picking, labels.
+- `components/island/ui/` (React): Island.tsx (mount, world API, bus), TopBar, Feed, Panel (every building),
+  AvatarStudio, ListView, island.css (the prototype's CSS, every rule under `.isle`). IslandRoot.tsx loads it with
+  `next/dynamic` and `ssr: false`.
+- `lib/island/`: store.ts (one external store; React via useSyncExternalStore, the world via getSnapshot each
+  frame; a small bus for feed lines, cut flares, confetti, victory), live.tsx (polling + useMatch watches),
+  mock.ts, avatar.ts (AV, DANCES, cfgFor by address, storage `royale.avatar.<address>` and `royale.callsign`),
+  format.ts (label and panel lines), places.ts (games, billboards; no three).
+
+Known differences from the prototype:
+- Shadows use PCFShadowMap: r186 removed PCFSoftShadowMap, so shadow edges are slightly harder.
+- The prototype's mock simulation is gone. Labels, panels and list show engine data; anything without data says so
+  (park, podium, top bar and lighthouse while /stats 404s; empty promo boards read "NO ROUNDS YET"; the blimp invites
+  you to create a round).
+- Player rounds have no titles on the wire: boards and lists say "Call the ETH close. Steep split." and
+  "ETH call · round #42", with the creator's short address (no creator callsign on /rounds).
+- Promo boards and the blimp are labelled as player rounds with the biggest pots, never "PROMOTED" or a price.
+- Buttons with no backend are gone: Dojo "Notify me", Sky Wheel "Suggest a use", plot "Propose a building", sponsor
+  "Visit sponsor", blimp "Book the blimp", the open slot's bid form. The Observatory's nudge box became the live price
+  and the prediction count, with "Make your call" handing off to /play?mode=predict&lobby=.
+- The lighthouse drops "Your region · Allowed" (no data); it shows engine, chain (from /health), escrow (from
+  contracts/deployments at build time), prices fresh/stale and the last payout.
+- The ticker's change is against the oldest mark seen in the last ten minutes (the engine has no daily open), and the
+  candle bars are the latest BTC moves in basis points.
+- The wallet chip shows the burner address only (no balance call).
+- On phones the feed sits above the hint (the prototype stacked them on top of each other).
+
+## One look
+
+Phase 10: the island's look becomes the product's look. Track look-theme laid the shared base; look-play and
+look-arena restyle /play and /arena on it.
+
+- Tokens: `lib/theme.ts` (constants for canvas and script code: every token of CLAUDE.md "One look", `GAME`,
+  `MEANING`, `STROKE`, `RADIUS`, `SHADOW`, `FONT`, `ISLAND` for the island's own grass/sand/podium colours, and
+  `canvasFont(role, weight, px)`) and `app/theme.css` (the same values as custom properties on `:root`, kebab-case:
+  `--ink`, `--sky-top`, `--sea-deep`, `--coral-text`, `--island-grass`, `--shadow-chip`, `--radius-card`, `--display`,
+  `--body`, `--mono` ...). Change both together. `body` gets `font-family: var(--body)`.
+- Loss text on paper is `coralText` / `--coral-text` `#D12B52`: 4.87:1 on paper (coral itself is 2.85:1).
+- Fonts: `app/fonts.ts` loads Unbounded, Instrument Sans and JetBrains Mono with next/font/local from `app/fonts/`
+  (variable latin woff2, OFL texts, URLs in `app/fonts/SOURCES.txt`). Each face keeps its real family name
+  (`declarations`), so canvas code and `document.fonts.check('16px "Unbounded"')` work; layout.tsx puts
+  `--font-display`, `--font-body`, `--font-mono` on `<html>`. The island no longer loads fonts.googleapis.com.
+  Sofia Sans is gone, and so is `components/arena/b/fonts.ts`: the arena draws with `canvasFont` from lib/theme.ts.
+- The island reads the shared tokens: `.isle` keeps only its extras, places.ts `COLORS` and world `C` are built from
+  theme.ts, water/sky/terrain/common import it, canvas text uses `canvasFont`. No visible change (checked by pixel diff
+  against feat/island with `motion=reduce` shots).
+- Kit: `components/kit/` (`index.tsx` + `kit.module.css`, the island.css rules on theme.css values): `Chip` (glass, or
+  `fill` for a meaning colour with ink text), `Button` (game colour via `color="royale"|"predict"|...` or a theme
+  constant; `big` = display face, ink text, for LONG/SHORT; `href` makes a link), `GhostButton`, `Card` (soft, or
+  `raised`), `Panel`, `PanelHead` (game colour with the two soft circles), `Segmented`, `BotTag`, `BrandMark`,
+  `TopBar` (brand chip linking to `/`, optional middle content, wallet chip from a passed address).
+  The island's `.isle` sets `--mono` to `--font-mono-island` (JetBrains Mono's 500 file alone) so its 600/700 figures
+  stay synthetic bold as before; everywhere else `--mono` has true weights up to 800. Class names are
+  exported as `kit` for layouts the components do not cover. Buttons and chips use the spec's `0 3px 0` shadow (the
+  island's own .cta keeps its 4px).
+- Arena (look-arena): one 1920x1080 canvas as before. `components/arena/b/toon.ts` is the island's world in 2D: the sky
+  gradient with pre-rendered toon clouds, `box` (chip/panel: fill, 3 px ink outline, hard ink shadow, optional tag tip),
+  `panel` (game-colour head with the two soft circles), the wordmark/pot/count chips, the bot tag, avatar heads drawn
+  from `cfgFor` (or your saved look when this browser has a burner key; the arena never creates one) into an offscreen
+  sprite once per look, size and crown, the podium step and confetti. `scene.ts`: toon land (meadow, grass, a sand
+  beach above the waterline, ink outline), the sea (seaMid to seaDeep, seaShallow band, seaFoam line and flecks), heads
+  on summits under label chips (equity on a sun or coral pill), mint/violet pennants, a coral ring for at-risk, the
+  cut line in coral and ink, the checkpoint surge with toon shards and a paper flash, the final podium (top three by
+  equity; their summits keep a numbered sun flag) with confetti. `predict.ts`: ink price line over a paper underlay,
+  dashed ink calls ending in head chips, the sun band between two sea fronts, confetti on the reveal. The HUD sits
+  `HUD_Y` (16 px) below the top edge so the sky reads above it. Every colour from theme.ts; no hex in arena files.
+
+## Stickman Duel
+
+`/duel` (phone), `/arena?duel=:id` (big screen) and the island's Dojo, on `shared/duel.ts` through `components/duel/sim.ts`.
+
+- `/duel`: the menu (an attract loop of a bot match, Practice, callsign, Fight for 5 USDC). `/duel?mode=practice` starts at once: the rules at 60 Hz against `botInput` (Normal by default, Easy/Normal/Hard toggle), you are fighter 0, `window.__duelState()` returns the live DuelState. Keyboard on window (arrows, Z = A, X = B, Z+X throw); touch pad bottom left, A and B bottom right, A+B pill for a one-thumb throw.
+- Ranked: signed `DuelQueue` (EIP-712, same domain and burner as /play; `components/duel/net.ts`, nonce on the same `royale.nonce.<player>` key as lib/engine.ts), ticket polled every 1 s, after 10 s alone "Fight the bot for free" (`POST /duels/queue/:ticket/bot`). The fight (`link.ts`): input bits sent on change over `WS /ws?duel=`; your fighter is the rules stepped from the newest `dstate` up to now plus 3 ticks with your recorded bits; the opponent is interpolated about 4 ticks behind. The result fetches `GET /duels/:id/final`, replays it in the browser (`verify.ts`) and shows the replay hash, whether the winner matches and whether keccak256 of the body equals `bookHash`; payouts say provisional until `settled`, offline settlements say nothing was paid on chain.
+- `/arena?duel=:id`: one canvas at 1920x1080, island chips for the duel, stake and status, the end card with payout, replay hash and book hash. Loaded with React.lazy from `app/arena/page.tsx`, so /arena's first load did not grow (+1.1% vs main, as before the branch).
+- Leaving the queue sends `DELETE /duels/queue/:ticket` and returns to the menu only on 200 or 404; a 409 with a matched ticket goes to the fight. A `dfinal` is placed by its `winnerSide` (else the winner's address among the players); until it can be placed the result waits and no draw is shown. `GET /duels/:id` 404 stops following the duel; an archived or finished snapshot is shown from its `dfinal`/`settled` without reconnecting. Offline amounts always carry "not paid, offline"; draws say "Refunded, tx …". Stake amounts come from the engine's `stakeUnits`. Your name in a fight is the engine's `players[side].callsign`.
+- Island: `components/duel/dojo.ts` polls `GET /duels` every 3 s (paused while hidden); the Dojo panel (`DojoPanel.tsx`, mounted by Panel.tsx), the list card, the Dojo label line and the Duel jet (queue + players in live duels, out of 20) read it.
+- Mocks: `/duel?mock=duel&at=practice|fight|result`, `/arena?mock=duel&at=fight`, `/?mock=island&at=dojo` (Dojo panel open, mock GET /duels). The mock match is botInput level 3 against level 2 through the rules (`mock.ts`); in the ranked moments you are kestrel on side 1, who wins 2-0.
+- Framing: the camera fits the pair across and the highest fighter plus a body (phone: fighters about 45% of the stage), never shows past the posts, and at the end of a match on the big screen pulls back to the whole deck under the result card. Each side has an accent ring under its feet (tang, violet) and side 1 changes shirt when it is too close to side 0's. A clean hit holds the picture about 50 ms and flashes the defender paper for two frames. The combo count clears at a new round and hides during the round intro.
+- Renderer (`render.ts`): sky gradient and clouds, meadow, sand deck with an ink edge, dojo posts at the walls; stickmen in ink with avatar colours (yours from storage, others `cfgFor`), joints eased toward pose targets each frame, hit sparks and bursts on hp drops and fresh blockstun, the combo count (kept on the attacker by the rules), health with a coral trail, round dots, timer, round and winner banners. `prefers-reduced-motion`: no sparks, shake or banner pop.
+- Verified 2026-10-07 against a local CHAIN=off engine from the duel-engine branch: two browser contexts queued and fought (duel 2, alpha 2-0, both phones show the same replay hash 77c85e54 and a matching book hash, settled offline), a draw by time-out (duel 1, stakes refunded), a free bot fight, the big screen end card, and the live Dojo panel.

@@ -413,6 +413,11 @@ export type MatchOptions = {
   lobby?: number | null;
   /** Prediction mode: follow the protocol round (GET /rounds) instead of the current royale lobby. */
   predict?: boolean;
+  /**
+   * Prediction mode only. false: no marks feed WebSocket and no pre-lock snapshot polling (the island watches a round
+   * for its locked, final and settled events alone). Default true.
+   */
+  feed?: boolean;
 };
 
 export function useMatch(opts: MatchOptions = {}): Match {
@@ -432,6 +437,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
     const mockPred = q.get("mock") === "predict";
     const mock = q.get("mock") === "1" || mockPred;
     const predict = !!opts.predict || mockPred || q.get("mode") === "predict";
+    const withFeed = opts.feed !== false;
     setSource(mock ? "mock" : "live");
     const publish = (s: MatchState) => {
       ref.current = s;
@@ -582,7 +588,8 @@ export function useMatch(opts: MatchOptions = {}): Match {
           s.error = `Cannot reach the engine at ${base}. Retrying.`;
           publish(s);
         }
-        if (!closed) retry = setTimeout(connect, 1000);
+        // backoff: 1 s, 2 s, 4 s, then every 8 s; a successful open resets it
+        if (!closed) retry = setTimeout(connect, Math.min(8000, 1000 * 2 ** (failures - 1)));
       };
       ws.onmessage = (m) => {
         if (g !== gen) return;
@@ -658,10 +665,14 @@ export function useMatch(opts: MatchOptions = {}): Match {
     let feed: WebSocket | null = null;
     let feedAt = 0; // performance.now() of the last feed frame
     let feedRetry: ReturnType<typeof setTimeout> | undefined;
+    let feedFailures = 0;
     const openFeed = () => {
-      if (closed || !predict) return;
+      if (closed || !predict || !withFeed) return;
       const f = new WebSocket(`${base}${base.includes("?") ? "&" : "?"}feed=marks`);
       feed = f;
+      f.onopen = () => {
+        feedFailures = 0;
+      };
       f.onmessage = (m) => {
         try {
           const ev = JSON.parse(String(m.data)) as { type: string; marks: Record<string, string> | null; at: number };
@@ -676,7 +687,8 @@ export function useMatch(opts: MatchOptions = {}): Match {
         }
       };
       f.onclose = () => {
-        if (feed === f && !closed) feedRetry = setTimeout(openFeed, 2000);
+        // backoff: 2 s, 4 s, then every 8 s; a successful open resets it
+        if (feed === f && !closed) feedRetry = setTimeout(openFeed, Math.min(8000, 2000 * 2 ** feedFailures++));
       };
     };
     openFeed();
@@ -684,7 +696,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
     // The snapshot every few seconds before the lock: who has called (players[].predicted), and the price only as a
     // fallback when the marks feed has been quiet for 3 s.
     const marks = setInterval(async () => {
-      if (closed || s.mode !== "predict" || s.locked || s.lobbyId === null || s.cancelled) return;
+      if (closed || !withFeed || s.mode !== "predict" || s.locked || s.lobbyId === null || s.cancelled) return;
       const g = gen;
       try {
         const t0 = Date.now();
@@ -723,7 +735,7 @@ export function useMatch(opts: MatchOptions = {}): Match {
       feed?.close();
       ws?.close();
     };
-  }, [opts.lobby, opts.predict]);
+  }, [opts.lobby, opts.predict, opts.feed]);
 
   const clock = useMemo(() => () => clockRef.current(), []);
   const inject = useMemo(() => (ev: MatchEvent) => injectRef.current(ev), []);

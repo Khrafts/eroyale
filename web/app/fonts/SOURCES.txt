@@ -1,14 +1,28 @@
-Self-hosted copies of Google Fonts files, fetched 2026-10-06. Variable weight axis (1..1000), normal style, latin subset only.
+Self-hosted copies of Google Fonts files, latin subset only, normal style.
 Each woff2 is the gstatic file that the Google Fonts CSS API (css2) returned for the /* latin */ block with a Chrome User-Agent.
 
-SofiaSansCondensed-latin-wght.woff2
-  file: https://fonts.gstatic.com/s/sofiasanscondensed/v6/r05EGKVS5aVKd567NYXawnFKJaTtoAuLnIcIptH3eXxF.woff2
-  css:  https://fonts.googleapis.com/css2?family=Sofia+Sans+Condensed:wght@1..1000&display=swap
-SofiaSansExtraCondensed-latin-wght.woff2
-  file: https://fonts.gstatic.com/s/sofiasansextracondensed/v6/raxoHjafvdAIOju4GcIfJH0i7zi50X3zRtuLNiMS0fSuJk52kCel.woff2
-  css:  https://fonts.googleapis.com/css2?family=Sofia+Sans+Extra+Condensed:wght@1..1000&display=swap
+One look (Phase 10), fetched 2026-10-07. Loaded by app/fonts.ts with next/font/local; each face keeps its
+real family name and the faces mirror the island's former Google Fonts stylesheet
+(css2?family=Unbounded:wght@500;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500):
+Unbounded and Instrument Sans are the one variable file css2 returned for each of those weights; JetBrains Mono 500 is
+the static file it returned (declared for 100..500), and the variable file serves 600..800.
 
-SofiaSansCondensed-OFL.txt
-  https://raw.githubusercontent.com/google/fonts/main/ofl/sofiasanscondensed/OFL.txt
-SofiaSansExtraCondensed-OFL.txt
-  https://raw.githubusercontent.com/google/fonts/main/ofl/sofiasansextracondensed/OFL.txt
+Unbounded-latin-wght.woff2 (weight 200..900)
+  file: https://fonts.gstatic.com/s/unbounded/v12/Yq6W-LOTXCb04q32xlpwu8ZfvRIkSQ.woff2
+  css:  https://fonts.googleapis.com/css2?family=Unbounded:wght@200..900&display=swap
+InstrumentSans-latin-wght.woff2 (weight 400..700, width 100%)
+  file: https://fonts.gstatic.com/s/instrumentsans/v4/pxiTypc9vsFDm051Uf6KVwgkfoSxQ0GsQv8ToedPibnr0SZe1ZuWi3g.woff2
+  css:  https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap
+JetBrainsMono-latin-500.woff2 (weight 500, static)
+  file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8-qxTOlOVk6OThhvA.woff2
+  css:  https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap
+JetBrainsMono-latin-wght.woff2 (weight 100..800)
+  file: https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD7OwGtT0rU.woff2
+  css:  https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap
+
+Unbounded-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/unbounded/OFL.txt
+InstrumentSans-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/instrumentsans/OFL.txt
+JetBrainsMono-OFL.txt
+  https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/OFL.txt
