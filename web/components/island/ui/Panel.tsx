@@ -4,7 +4,7 @@
 // /play?mode=predict&screen=create to create a round.
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import Link from "@/components/kit/link";
-import { createRound, docTitle, playRound, playRoyale, watchLobby, watchRound } from "@/lib/nav";
+import { EARLY_NOTE, createRound, docTitle, playRound, playRoyale, watchLobby, watchRound } from "@/lib/nav";
 import { useIsland, type IslandSnap, type UserRound } from "@/lib/island/store";
 import {
   lastPayoutAgo,
@@ -252,6 +252,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
         title: "Price Prediction",
         body: (
           <>
+            <p className="fine" style={{ marginTop: 0 }}>{EARLY_NOTE}</p>
             <p className="lede">Call the closing price. Predictions stay hidden until the lock, and the closest quarter of players split the pot.</p>
             <Stats rows={[["Round", p ? `${p.market} · round #${p.lobbyId}` : "–"], ["Locks in", p ? lockIn(s, p) : "–"], ["Players", p ? (p.maxPlayers ? `${p.players} / ${p.maxPlayers}` : String(p.players)) : "–"], ["Pot", p ? usdc(p.potUnits) : "–"]]} />
             {p ? (
@@ -285,7 +286,13 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
         ),
       };
     case "dojo":
-      return { eyebrow: "Islet · The Dojo", c: tang, title: "Stickman Duel", body: <DojoBody /> };
+      return { eyebrow: "Islet · The Dojo", c: tang, title: "Stickman Duel", body: (
+          <>
+            <p className="fine" style={{ marginTop: 0 }}>{EARLY_NOTE}</p>
+            <DojoBody />
+          </>
+        ),
+      };
     case "park":
       return {
         eyebrow: "Leaderboard Park",

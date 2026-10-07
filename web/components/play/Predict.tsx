@@ -5,9 +5,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { AppLink, BotTag, Button, Chip } from "@/components/kit";
+import { AppLink, BotTag, Button, Chip, EarlyBadge } from "@/components/kit";
 import { EndActions, type Action } from "@/components/kit/actions";
-import { PANEL, docTitle, island, playRoyale, watchGame, watchRound, type GameId } from "@/lib/nav";
+import { EARLY_NOTE, PANEL, docTitle, island, playRoyale, watchGame, watchRound, type GameId } from "@/lib/nav";
 import { useUrlState, type ParamSet } from "@/lib/useUrlState";
 import { engineHttp } from "@/lib/engineUrl";
 import { MARKETS, isTxHash, unitsToUsd } from "@/lib/events";
@@ -219,9 +219,10 @@ function Rounds({ match, go }: { match: Match; go: Go }) {
   const royale = match.source === "mock" ? "/play?mock=1" : playRoyale();
   return (
     <>
-    <Head game="predict" eyebrow="The Observatory" title="Call the price" />
+    <Head game="predict" eyebrow={<>The Observatory <EarlyBadge /></>} title="Call the price" />
     <section className={p.page}>
       <p className={s.lede}>Say where the price will be when the round resolves. The closest calls split the pot.</p>
+      <p className={s.fine}>{EARLY_NOTE}</p>
       {error && <p className={s.error}>{error}</p>}
       {!loaded && <p className={s.fine}>Finding open rounds</p>}
       {proto && (

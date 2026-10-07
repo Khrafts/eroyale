@@ -6,6 +6,7 @@ import type { CSSProperties } from "react";
 import { NAV_GAMES, navGame, watchGame, type GameId, type NavGame } from "@/lib/nav";
 import Link from "./link";
 import { usePopover } from "./popover";
+import { EarlyBadge } from "./index";
 import k from "./kit.module.css";
 import n from "./nav.module.css";
 
@@ -28,6 +29,7 @@ export default function Switcher({ game, live, watch }: { game?: GameId; live?: 
             <span className={n.short}>{g.short}</span>
           </>
         )}
+        {g.early && (menu ? <EarlyBadge /> : <span className={n.full} aria-hidden="true"><EarlyBadge /></span>)}
         {isLive && (
           <span className={n.live} aria-hidden="true">
             {menu ? "you're in" : ""}
