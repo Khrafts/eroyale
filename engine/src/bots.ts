@@ -60,7 +60,7 @@ export class Bots {
     if (!lobby.acceptingOrders) return;
     const next = lobby.preset.checkpoints.find((c) => c > t);
     const cpIdx = next === undefined ? -1 : lobby.preset.checkpoints.indexOf(next);
-    const line = cpIdx >= 0 ? lobby.preset.zoneCents[cpIdx] : 0n;
+    const line = cpIdx >= 0 ? lobby.checkpointLine(cpIdx) : 0n;
     const secsLeft = (next ?? lobby.preset.duration) - t;
     for (const p of lobby.players) {
       const b = this.brains.get(p.player);

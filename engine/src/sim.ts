@@ -1,5 +1,5 @@
 // Offline match: virtual clock, seeded prices and bots. Same seed, same bytes.
-// npm run sim -- --bots N --preset stage|standard --seed S --out FILE --events FILE
+// npm run sim -- --bots N --preset stage|standard --seed S [--zone-mode linear|relative] --out FILE --events FILE
 // npm run sim -- --mode predict --bots N --seed S --market BTC|ETH|SOL [--winner-bps B --split S --creator-fee-bps F] --out FILE --events FILE
 import { writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -8,16 +8,16 @@ import { Bots, botAddress, botCallsign } from "./bots.ts";
 import { RandomWalkPrices } from "./prices.ts";
 import { Driver, PredictDriver, VirtualClock } from "./driver.ts";
 import { hashSeed } from "./rng.ts";
-import { MARKETS, PRESETS, TICKS_PER_SEC, type Market, type Preset } from "./types.ts";
+import { LINEAR_ZONE, MARKETS, PRESETS, TICKS_PER_SEC, type Market, type Preset, type ZoneConfig } from "./types.ts";
 import { PredictRound, SPLITS, checkUserSpec, protocolSpec, type RoundSpec, type Split } from "./predict.ts";
 import { PredictBots } from "./predict-bots.ts";
 import { keccak256, toBytes } from "viem";
 
 export const SIM_START = 1791288000 - 120; // fixed virtual start time (unix seconds)
 
-export function runSim(nBots: number, preset: Preset, seed: number) {
+export function runSim(nBots: number, preset: Preset, seed: number, zone: ZoneConfig = LINEAR_ZONE) {
   const lines: string[] = [];
-  const lobby = new Lobby({ id: 1, preset, maxPlayers: 50 });
+  const lobby = new Lobby({ id: 1, preset, maxPlayers: 50, zone });
   lobby.onEvent((_e, line) => lines.push(line));
   lobby.emitLobby();
   const bots = new Bots(seed);
@@ -68,6 +68,7 @@ if (isMain) {
       seed: { type: "string", default: "1" }, out: { type: "string" }, events: { type: "string" },
       mode: { type: "string", default: "royale" }, market: { type: "string", default: "BTC" },
       "winner-bps": { type: "string" }, split: { type: "string" }, "creator-fee-bps": { type: "string" },
+      "zone-mode": { type: "string", default: "linear" },
     },
   });
   if (values.mode === "predict") {
@@ -102,7 +103,9 @@ if (isMain) {
   if (!preset) throw new Error(`unknown preset ${values.preset}`);
   const n = Number(values.bots);
   if (!Number.isInteger(n) || n < 4 || n > 50) throw new Error("--bots must be 4 to 50");
-  const { bookJson, events, lobby } = runSim(n, preset, Number(values.seed));
+  if (values["zone-mode"] !== "linear" && values["zone-mode"] !== "relative") throw new Error("--zone-mode must be linear or relative");
+  const zone: ZoneConfig = values["zone-mode"] === "relative" ? { mode: "relative", startBps: 200n, endBps: 100n } : LINEAR_ZONE;
+  const { bookJson, events, lobby } = runSim(n, preset, Number(values.seed), zone);
   if (values.out) writeFileSync(values.out, bookJson);
   if (values.events) writeFileSync(values.events, events);
   const liq = lobby.players.filter((p) => p.elimReason === "liquidated").length;

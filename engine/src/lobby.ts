@@ -4,8 +4,8 @@ import { cut, equityCents, fromCents, settle, toCents } from "../../shared/scori
 import type { Finalist, FinalBook, Position } from "../../shared/scoring.ts";
 import { keccak256, toBytes } from "viem";
 import {
-  ENTRY_UNITS, FEE_BPS, MARKETS, START_BALANCE, TICKS_PER_SEC, ZONE_START_CENTS,
-  type EngineEvent, type Market, type Order, type Preset, type Prices, type SettleVia, type Status,
+  ENTRY_UNITS, FEE_BPS, LINEAR_ZONE, MARKETS, START_BALANCE, TICKS_PER_SEC, ZONE_START_CENTS,
+  type EngineEvent, type Market, type Order, type Preset, type Prices, type SettleVia, type Status, type ZoneConfig,
 } from "./types.ts";
 
 type Pos = { side: 1 | -1; notional: bigint; entry: bigint; margin: bigint; leverage: number };
@@ -24,7 +24,7 @@ export type PlayerState = {
   lastNonce: bigint;
 };
 
-export type LobbyConfig = { id: number; preset: Preset; maxPlayers: number; entryUnits?: bigint; feeBps?: bigint };
+export type LobbyConfig = { id: number; preset: Preset; maxPlayers: number; entryUnits?: bigint; feeBps?: bigint; zone?: ZoneConfig };
 export type OrderResult = { ok: true } | { ok: false; error: string };
 
 const MONEY_IN = /^\d+(\.\d{1,2})?$/;
@@ -36,6 +36,7 @@ export class Lobby {
   readonly maxPlayers: number;
   readonly entryUnits: bigint;
   readonly feeBps: bigint;
+  readonly zoneCfg: ZoneConfig;
   status: Status = "open";
   startsAt: number | null = null; // unix seconds
   players: PlayerState[] = [];
@@ -59,6 +60,7 @@ export class Lobby {
     this.maxPlayers = cfg.maxPlayers;
     this.entryUnits = cfg.entryUnits ?? ENTRY_UNITS;
     this.feeBps = cfg.feeBps ?? FEE_BPS;
+    this.zoneCfg = cfg.zone ?? LINEAR_ZONE;
   }
 
   onEvent(fn: (e: EngineEvent, line: string) => void) { this.sinks.push(fn); }
@@ -164,7 +166,16 @@ export class Lobby {
     });
   }
 
-  private zoneAt(k: number): bigint {
+  /** The zone at tick k. Relative mode takes the alive equities' sum and count at this tick (computed once in step). */
+  private zoneAt(k: number, aliveSum = 0n, aliveN = 0): bigint {
+    const z = this.zoneCfg;
+    if (z.mode === "relative") {
+      if (aliveN === 0) return this.zone;
+      const lastK = this.preset.checkpoints[this.preset.checkpoints.length - 1] * TICKS_PER_SEC;
+      const gap = k >= lastK ? z.endBps : z.startBps + ((z.endBps - z.startBps) * BigInt(k)) / BigInt(lastK);
+      const target = ((aliveSum / BigInt(aliveN)) * (10000n - gap)) / 10000n;
+      return target > this.zone ? target : this.zone;
+    }
     const cps = this.preset.checkpoints.map((s) => s * TICKS_PER_SEC);
     let k0 = 0, z0 = ZONE_START_CENTS;
     for (let i = 0; i < cps.length; i++) {
@@ -173,6 +184,11 @@ export class Lobby {
       k0 = cps[i]; z0 = z1;
     }
     return z0;
+  }
+
+  /** The line a bot must clear at checkpoint i: the preset's line, or in relative mode the zone now (it only rises). */
+  checkpointLine(i: number): bigint {
+    return this.zoneCfg.mode === "relative" ? this.zone : this.preset.zoneCents[i];
   }
 
   private nextCheckpoint(t: number) {
@@ -209,12 +225,14 @@ export class Lobby {
     const t = k / TICKS_PER_SEC;
     this.lastT = t;
     this.marks = marks;
-    this.zone = this.zoneAt(k);
 
-    // Liquidation
+    // Liquidation (and, for the relative zone, the sum of the surviving equities)
     const liq: PlayerState[] = [];
+    let aliveSum = 0n, aliveN = 0;
     for (const p of this.players) {
-      if (!p.alive || equityCents(this.finalist(p), marks) > 0n) continue;
+      if (!p.alive) continue;
+      const eq = equityCents(this.finalist(p), marks);
+      if (eq > 0n) { aliveSum += eq; aliveN++; continue; }
       for (const m of MARKETS) {
         const x = p.positions.get(m);
         if (!x) continue;
@@ -227,6 +245,7 @@ export class Lobby {
     if (liq.length) {
       this.emit({ type: "eliminated", t, checkpoint: null, players: this.eliminate(liq.map((p) => ({ p, reason: "liquidated" as const }))) });
     }
+    this.zone = this.zoneAt(k, aliveSum, aliveN);
 
     this.emit({ type: "tick", t, marks, zone: fromCents(this.zone), nextCheckpoint: this.nextCheckpoint(t) });
     const warnIdx = this.preset.checkpoints.findIndex((c) => c - 10 === t);
@@ -236,7 +255,7 @@ export class Lobby {
     const cpIdx = this.preset.checkpoints.indexOf(t);
     if (cpIdx >= 0) {
       const alive = this.players.filter((p) => p.alive);
-      const res = cut(alive.map((p) => ({ player: p.player, equityCents: this.equity(p), joinIndex: p.joinIndex })), this.preset.zoneCents[cpIdx]);
+      const res = cut(alive.map((p) => ({ player: p.player, equityCents: this.equity(p), joinIndex: p.joinIndex })), this.zoneCfg.mode === "relative" ? this.zone : this.preset.zoneCents[cpIdx]);
       if (res.length) {
         const byId = new Map(alive.map((p) => [p.player, p]));
         this.emit({ type: "eliminated", t, checkpoint: cpIdx + 1, players: this.eliminate(res.map((r) => ({ p: byId.get(r.player)!, reason: r.reason }))) });
