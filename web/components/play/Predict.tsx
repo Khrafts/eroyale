@@ -9,6 +9,7 @@ import { AppLink, BotTag, Button, Chip } from "@/components/kit";
 import { EndActions, type Action } from "@/components/kit/actions";
 import { PANEL, docTitle, island, playRoyale, watchGame, watchRound, type GameId } from "@/lib/nav";
 import { useUrlState, type ParamSet } from "@/lib/useUrlState";
+import { engineHttp } from "@/lib/engineUrl";
 import { MARKETS, isTxHash, unitsToUsd } from "@/lib/events";
 import type { RoundInfo } from "@/lib/events";
 import { cfgFor } from "@/lib/island/avatar";
@@ -130,7 +131,8 @@ export default function PredictPhone() {
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
   }, [view.kind, go]);
-  return <Screens view={view} go={go} />;
+  // a new round is a new match: remount so the old round's screen never shows under the new URL
+  return <Screens key={view.kind === "round" ? `round-${view.lobby}` : view.kind} view={view} go={go} />;
 }
 
 function Screens({ view, go }: { view: View; go: Go }) {
@@ -178,8 +180,24 @@ const watchHref = (match: Match): string =>
  */
 function RoundActions({ match, go, label = "Next round" }: { match: Match; go: Go; label?: string }) {
   const { rounds } = useRounds(match);
-  const proto = rounds.find((r) => r.protocol && r.lobbyId !== match.state.lobbyId);
-  const primary: Action = proto ? { label, onClick: () => go.swap(proto.lobbyId) } : { label: "See open rounds", onClick: go.list };
+  // the protocol round taking calls now: the polled list can be up to 3 s old, so a locked one is skipped, and a live
+  // click asks the engine again before moving
+  const open = (r: RoundInfo, now: number) => r.protocol && r.lobbyId !== match.state.lobbyId && r.lockTime > now;
+  const proto = rounds.find((r) => open(r, match.clock()));
+  const next = async () => {
+    let id = proto?.lobbyId ?? null;
+    if (match.source === "live") {
+      try {
+        const b = (await (await fetch(`${engineHttp()}/rounds`, { cache: "no-store" })).json()) as { rounds?: RoundInfo[] };
+        id = (b.rounds ?? []).find((r) => open(r, match.clock()))?.lobbyId ?? id;
+      } catch {
+        /* keep the polled one */
+      }
+    }
+    if (id !== null) go.swap(id);
+    else go.list();
+  };
+  const primary: Action = proto ? { label, onClick: () => void next() } : { label: "See open rounds", onClick: go.list };
   return (
     <EndActions
       game="predict"

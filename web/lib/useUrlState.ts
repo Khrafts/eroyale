@@ -25,7 +25,24 @@ export function withParams(set: ParamSet, path?: string, search: string = typeof
 }
 
 const here = () => location.pathname + location.search;
+// Every history write re-reads the URL, whoever makes it: the kit's AppLink moves with Next's router, which writes
+// history itself (its HistoryUpdater) and fires no popstate. Wrap pushState/replaceState once and announce each write
+// (in a microtask: Next writes from an insertion effect, where no update may be scheduled).
+let patched = false;
+function patchHistory() {
+  if (patched) return;
+  patched = true;
+  for (const k of ["pushState", "replaceState"] as const) {
+    const orig = history[k];
+    history[k] = function (this: History, ...a: Parameters<History["pushState"]>) {
+      const r = orig.apply(this, a);
+      queueMicrotask(() => dispatchEvent(new Event(EVT)));
+      return r;
+    };
+  }
+}
 const subscribe = (cb: () => void) => {
+  patchHistory();
   addEventListener("popstate", cb);
   addEventListener(EVT, cb);
   return () => {
@@ -40,7 +57,9 @@ function write(url: string, push: boolean, state: Record<string, unknown> | null
   if (url === here()) return;
   try {
     if (push) history.pushState(state, "", url);
-    else history.replaceState({ ...(history.state ?? {}), ...(state ?? {}) }, "", url);
+    // only our own key: Next's internal flags (__NA) copied into the state would make Next's router ignore the move
+    // (useSearchParams would keep the old URL); Next copies its own tree into the new state itself
+    else history.replaceState({ [FROM]: (history.state as Record<string, unknown> | null)?.[FROM] ?? null, ...(state ?? {}) }, "", url);
   } catch {
     /* ignore: a sandboxed frame */
   }
