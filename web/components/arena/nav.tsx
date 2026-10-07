@@ -2,7 +2,7 @@
 // The /arena overlay's content, loaded lazily by Overlay.tsx: the kit app bar as a floating chip cluster (brand,
 // game switcher) plus a picker of what to watch (GET /lobbies, GET /rounds, GET /duels), and, when a pinned lobby,
 // round or duel is over, the offer to move on (CLAUDE.md "Navigation" rules 6 and 8).
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { TopBar, kit } from "@/components/kit";
 import Link from "@/components/kit/link";
 import { usePopover } from "@/components/kit/popover";
@@ -75,10 +75,37 @@ function useLists(on: boolean): Lists {
   return lists;
 }
 
+/** Where the bar goes. The canvas is the 1920 by 1080 design scaled to fit the window (VariantB), so the bar is placed
+ *  and scaled in canvas coordinates: a solid panel over the HUD's top-left strip (x 16 to 496, y 12 to 106 or 120 in a
+ *  duel: the title chip, or the left fighter's name) and nothing else at any window size, so it never reaches the
+ *  centre panel ("Final", the countdown, the settled price). It always uses the compact switcher (a "Games" menu) and is
+ *  scaled no smaller than 0.66 and at least 300 px wide before scaling so its chips fit. A portrait phone has empty space above the canvas: the bar sits
+ *  there at natural size instead. */
+const DW = 1920;
+const DH = 1080;
+const STRIP_W = 480;
+function useFit(strip: number): { wide: boolean; style: CSSProperties } {
+  const [size, setSize] = useState<[number, number]>([DW, DH]);
+  useEffect(() => {
+    const r = () => setSize([innerWidth, innerHeight]);
+    r();
+    addEventListener("resize", r);
+    return () => removeEventListener("resize", r);
+  }, []);
+  const [w, h] = size;
+  const s = Math.min(w / DW, h / DH);
+  const ox = (w - DW * s) / 2;
+  const oy = (h - DH * s) / 2;
+  if (oy >= 84) return { wide: w >= 700, style: { left: 8, top: 8, width: Math.min(w - 16, 656), ["--mh" as string]: "0px" } };
+  const k = Math.max(s, 0.66);
+  return { wide: false, style: { left: ox + 16 * s, top: oy + 12 * s, width: Math.max(300, (STRIP_W * s) / k), transform: `scale(${k})`, ["--mh" as string]: `${(strip * s) / k}px` } };
+}
+
 const vs = (d: DuelsLive) => d.players.map((p) => p.callsign || `${p.player.slice(0, 6)}…`).join(" vs ") || "two fighters";
 
 export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavProps) {
   const lists = useLists(!mock && hasEngine());
+  const fit = useFit(game === "duel" ? 108 : 94);
   const pop = usePopover();
   const watching =
     game === "duel" ? (duel ? `Duel #${duel}` : "Mock duel") : lobby ? `${game === "predict" ? "Round" : "Lobby"} #${lobby}` : game === "predict" ? "The protocol round" : "The current lobby";
@@ -93,7 +120,8 @@ export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavPro
   ];
   return (
     <>
-      <TopBar game={game} watch={null} className={game === "duel" ? `${n.bar} ${n.duel}` : n.bar}>
+      <div className={fit.wide ? n.fit : `${n.fit} ${n.compact}`} style={fit.style}>
+      <TopBar game={game} watch={null} className={n.bar}>
         <div className={n.pick} ref={pop.box}>
           <button ref={pop.btn} type="button" className={`${kit.chip} ${n.pickBtn}`} aria-haspopup="true" aria-expanded={pop.open} aria-controls="arena-pick" aria-label={`Watching ${watching}. Pick what to watch`} style={{ ["--c" as string]: game === "duel" ? tang : game === "predict" ? violet : coral }} onClick={() => pop.setOpen((o) => !o)}>
             <span className={n.eye} aria-hidden="true" />
@@ -118,6 +146,7 @@ export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavPro
           )}
         </div>
       </TopBar>
+      </div>
       {ended && <Next game={game} lobby={lobby} duel={duel} lists={lists} />}
     </>
   );

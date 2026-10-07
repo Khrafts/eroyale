@@ -309,7 +309,7 @@ export function stamp(ctx: CanvasRenderingContext2D, T: Type, tx: string, mode: 
   ctx.textBaseline = "alphabetic";
   T.text(ctx, "Settled", 0, 8, T.font("d", 800, 24), ink, "center");
   T.text(ctx, onchain ? shortHash(tx) : "offline", 0, 38, T.font("x", 700, 19), ink, "center");
-  T.text(ctx, onchain ? (mode === "simulated" ? "simulated report" : "onchain report") : "no chain", 0, 106, T.font("c", 600, 18), ink, "center");
+  T.text(ctx, onchain ? (mode === "simulated" ? "CRE run locally" : "CRE on the DON") : "no chain", 0, 106, T.font("c", 600, 18), ink, "center");
   ctx.restore();
   // a ripple on impact
   if (!reduced && dt > 0.2 && dt < 1) {

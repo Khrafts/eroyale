@@ -1230,12 +1230,17 @@ export class Scene {
     ctx.globalAlpha = hA;
     const total = ranked.reduce((a, f) => a + BigInt(units(f.player)), 0n);
     const title = `${w0.callsign} holds the high ground`;
+    // Count only finalists with a non-zero payout: the split is pro rata to profit, so finalists at or under the
+    // start balance are paid nothing.
+    const paid = ranked.filter((f) => BigInt(units(f.player)) > 0n).length;
+    const who = paid === ranked.length ? `${paid} ${paid === 1 ? "finalist" : "finalists"}` : `${paid} of ${ranked.length} finalists`;
+    const usd = `$${commas(unitsToUsd(total.toString()))}`;
     const sub =
       settled && !isTxHash(settled.txHash)
-        ? `${ranked.length} finalists split $${commas(unitsToUsd(total.toString()))}. Settled offline (no chain), nothing paid.`
+        ? `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Settled offline (no chain), nothing paid.`
         : settled
-          ? `${ranked.length} finalists were paid $${commas(unitsToUsd(total.toString()))} from the pot.`
-          : `${ranked.length} finalists split $${commas(unitsToUsd(total.toString()))}. Payouts are provisional until settlement.`;
+          ? `${who} ${paid === 1 ? "was" : "were"} paid ${usd} from the pot.`
+          : `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Payouts are provisional until settlement.`;
     ctx.translate(0, HUD_Y);
     const tf = T.font("d", 800, 44);
     const sf = T.font("c", 600, 24);

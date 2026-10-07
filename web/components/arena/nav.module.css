@@ -3,8 +3,10 @@
 /* the bar is a solid paper panel that fully covers the canvas HUD's top-left strip (title chip; in a duel the left
    fighter's name and head) and stops above the next row (pot chips, the predict title, the health bar) and left of the
    centre panel, at the arena's 1920 by 1080 */
-.bar{position:absolute;top:12px;left:16px;width:min(656px, calc(100vw - 32px));min-height:94px;box-sizing:border-box;padding:6px;background:var(--paper);border:var(--stroke) solid var(--ink);border-radius:var(--radius-panel);box-shadow:var(--shadow-panel);pointer-events:auto}
-.duel{min-height:108px}
+/* .fit is placed and scaled in canvas coordinates by useFit() in nav.tsx */
+.fit{position:absolute;transform-origin:0 0;pointer-events:none}
+.compact .bar a[aria-label^="Royale Isle"] > span{display:none}
+.bar{position:relative;width:100%;min-height:var(--mh, 94px);box-sizing:border-box;padding:6px;background:var(--paper);border:var(--stroke) solid var(--ink);border-radius:var(--radius-panel);box-shadow:var(--shadow-panel);pointer-events:auto}
 .pick{position:relative;flex:none}
 .pickBtn{cursor:pointer;font-weight:600;gap:8px;padding:7px 12px}
 .pickBtn:focus-visible, .item:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}

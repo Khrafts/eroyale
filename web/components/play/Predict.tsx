@@ -1124,7 +1124,7 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: Go }) 
             <p className={s.stampBody}>
               Settled on chain, tx <span className={s.fig}>{shortAddr(settled.txHash)}</span>
             </p>
-            <p className={s.stampBody}>{settled.mode === "deployed" ? "Paid by the CRE workflow report" : "Paid from a simulated CRE report"}</p>
+            <p className={s.stampBody}>{settled.mode === "deployed" ? "Paid on chain from the CRE workflow report" : "Paid on chain from the CRE workflow, run locally"}</p>
           </div>
         ) : (
           <div className={s.stamp}>
