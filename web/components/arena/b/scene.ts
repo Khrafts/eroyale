@@ -770,7 +770,7 @@ export class Scene {
     T.odo(ctx, v, x, py + 23, ef, EQ_PX, ink, "center");
     if (payout) {
       py += 36;
-      T.text(ctx, "$" + payout, x, py + 26, T.font("x", 800, 28), ink, "center");
+      T.text(ctx, money(payout), x, py + 26, T.font("x", 800, 28), ink, "center");
       T.text(ctx, note, x, py + 48, T.font("c", 600, 17), ink2, "center");
     }
   }
@@ -779,7 +779,7 @@ export class Scene {
     const T = this.T;
     const nw = T.w(ctx, T.font("d", 700, NAME_PX), p.callsign) + (p.bot ? botW(ctx, this.T) + 6 : 0);
     const ew = T.widthOf(ctx, T.font("x", 700, EQ_PX), "10,000.00") + 18;
-    const aw = payout ? Math.max(T.widthOf(ctx, T.font("x", 800, 28), "$" + payout), T.w(ctx, T.font("c", 600, 17), "offline, nothing paid")) : 0;
+    const aw = payout ? Math.max(T.widthOf(ctx, T.font("x", 800, 28), money(payout)), T.w(ctx, T.font("c", 600, 17), "offline, nothing paid")) : 0;
     return { w: Math.max(nw, ew, aw) + 26, h: CHIP_H + (payout ? 58 : 0) };
   }
 
@@ -1178,6 +1178,7 @@ export class Scene {
 
   // ---------- final ----------
   private payoutOf(s: MatchState, id: string) {
+    if (this.earlyNow) return CALC;
     const fin = s.final!;
     const settled = s.settled;
     if (settled) {
@@ -1258,7 +1259,7 @@ export class Scene {
       const ef = T.font("x", 700, 20);
       const af = T.font("x", 800, i === 0 ? 34 : 28);
       const p = this.peaks.get(f.player);
-      const amt = "$" + commas(unitsToUsd(units(f.player)));
+      const amt = this.earlyNow ? CALC : "$" + commas(unitsToUsd(units(f.player)));
       const eqv = p ? p.eq : num(f.equity);
       const bot = p?.bot ?? false;
       const bw = bot ? botW(ctx, this.T) + 6 : 0;
@@ -1299,7 +1300,7 @@ export class Scene {
         : settled
           ? `${who} ${paid === 1 ? "was" : "were"} paid ${usd} from the pot.`
           : this.earlyNow
-            ? `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Provisional · live prices.`
+            ? `${ranked.length} ${ranked.length === 1 ? "finalist" : "finalists"} at live prices. Payouts are calculated from the closing price.`
             : `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Payouts are provisional until settlement.`;
     ctx.translate(0, HUD_Y);
     const tf = T.font("d", 800, 44);
@@ -1323,7 +1324,7 @@ export class Scene {
         this.real,
         reduced,
         pend * hA,
-        this.earlyNow ? "Payouts at live prices until then" : "Payouts are provisional until it lands",
+        this.earlyNow ? "Payouts are calculated once it lands" : "Payouts are provisional until it lands",
         this.earlyNow ? "Waiting for the closing price" : "Chainlink CRE is running the settlement",
         this.earlyNow ? "Last one-minute Coinbase candle" : "Report to Base Sepolia",
       );
@@ -1376,4 +1377,10 @@ function niceStep(raw: number) {
   const steps = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000];
   for (const s of steps) if (s >= raw) return s;
   return 10000;
+}
+
+/** Before the closing price, payouts read "Calculating…": live-price amounts can differ a lot from the final ones. */
+const CALC = "Calculating…";
+function money(payout: string) {
+  return payout === CALC ? CALC : "$" + payout;
 }
