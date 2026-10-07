@@ -4,7 +4,7 @@
 import Link from "./link";
 import { useState, type ReactNode } from "react";
 import { usePopover } from "./popover";
-import { island } from "@/lib/nav";
+import { island, me } from "@/lib/nav";
 import k from "./kit.module.css";
 import n from "./nav.module.css";
 
@@ -47,6 +47,9 @@ export default function YouChip({ wallet, callsign, avatar }: { wallet: string; 
           </button>
           <Link className={n.item} href={island("studio")} onClick={() => setOpen(false)}>
             My avatar
+          </Link>
+          <Link className={n.item} href={me()} onClick={() => setOpen(false)}>
+            My activity
           </Link>
         </div>
       )}
