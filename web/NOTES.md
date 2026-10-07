@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 12 nav-kit: lib/nav.ts, lib/useUrlState.ts, the kit app bar (bar/switcher/you/link.tsx), EndActions, app/not-found.tsx, route titles.
-- Last check: typecheck clean; GATE PASS ui, duel-ui, look-ui; nav-ui parts bundle/notfound/practice/names ok (others belong to nav-play/arena/island); /arena 134332, /play 166101 gzip B (limit 140993 / 173810).
-- Next: nav-play, nav-arena, nav-island adopt the API below ("Navigation"). Blockers: none.
+- Step: Phase 12 nav-island: island app bar (kit brand mark, switcher, you chip + stats chips and Island/List toggle), ?place= and ?view=list in the URL, intro skipped on return, panel links via nav.ts + AppLink, tag/toggle names, panel focus.
+- Last check: typecheck clean; GATE PASS island-ui, look-ui, duel-ui; nav-ui parts appbar/place/viewlist/names/bundle/notfound/practice ok (terminal/arena/predictback/titles belong to nav-play/nav-arena).
+- Next: lead merges nav-island into feat/nav and runs 12e live. Blockers: none.
 
 ## Running
 
@@ -166,3 +166,4 @@ Phase 12 kit (CLAUDE.md "Navigation"). Tracks use these; do not hand-roll anothe
 - URL state: `const { params, push, replace, back } = useUrlState()` from `@/lib/useUrlState`. `push(set, path?)` drill-down, `replace(set, path?)` lateral, `back(parentSet, path?)` = `history.back()` when the previous entry was pushed from that parent URL, else replaceState to it. `set` only changes the keys it names (`null` deletes), so `mock`, `at`, `speed`, `seed`, `me`, `motion` survive. `params` re-read on popstate and every move; empty during SSR/hydration. `withParams(set, path?, search?)` builds the same URL for an href.
 - Titles: layout template `"%s · Royale Isle"`; route titles `Trading Royale` (/play), `Stickman Duel` (/duel), `Big screen` (/arena, via app/arena/layout.tsx), `Page not found`; `/` is absolute "Royale Isle". Screens set finer titles with `docTitle`.
 - 404: `app/not-found.tsx`: `AutoTopBar` (components/kit/auto-bar.tsx: the app bar with the you chip from `burner()`, lib/engine imported after mount) and `EndActions game="island"`.
+- Island (nav-island): `?place=<id>` is the open panel (any building, billboard, `studio`): a click pushes it from the bare island and replaces it panel-to-panel; the close button, Escape and Back close it (`useUrlState().back`); a deep link or a link such as the you chip's "My avatar" (`/?place=studio`) opens it (Island.tsx follows `useSearchParams`). Mock moments (`at=studio|dojo`) open their panel without writing the URL. The toggle replaces `?view=list`. The world skips the intro swoop and pop-in (`createWorld(..., skipIntro)`) when the island was already shown in this document, the document started on another route, or `?place=` is set. The brand chip on the island closes the panel, leaves the list and resets the camera. Panels move focus to their heading and back on close, and set `document.title` to `<place> · Royale Isle`. The switcher's container query needs `.isle .top` as the `appbar` container (island.css); the wordmark hides under 1500 px of bar and the stats chips under 1240.

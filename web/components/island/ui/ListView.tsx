@@ -6,6 +6,16 @@ import { ADS, COLORS, SPONSOR, promoHead, promoted } from "@/lib/island/places";
 import { Leaderboard, RoundList, StatusRows, useNow } from "./Panel";
 import type { IslandApi } from "./Island";
 
+/** The 3D view's other places, so the list has every entry the island has. */
+const AROUND: [string, string, string, string][] = [
+  ["fountain", "The Fountain", "#1EB3B0", "Pick a game"],
+  ["park", "Leaderboard Park", COLORS.mint, "Top earners and the podium"],
+  ["lighthouse", "The Lighthouse", "#FF4F5E", "Chain, escrow and settlement status"],
+  ["wheel", "The Sky Wheel", "#2BA9D6", "A landmark, coming later"],
+  ["plotA", "Plot 07", "#3AAFD9", "Open plot, coming later"],
+  ["plotB", "Plot 11", "#3AAFD9", "Open plot, coming later"],
+];
+
 export function ListView({ api }: { api: IslandApi }) {
   useNow();
   const s = useIsland((x) => x);
@@ -60,6 +70,18 @@ export function ListView({ api }: { api: IslandApi }) {
                   {promos[0] ? `Round #${promos[0].lobbyId} by ${short(promos[0].creator) || "a player"}` : "Biggest open player round"}
                 </div>
               </button>
+            </div>
+            <h2>Around the island</h2>
+            <div className="ads">
+              {AROUND.map(([go, name, c, sub]) => (
+                <button key={go} className="ad" style={{ ["--c" as string]: c }} onClick={() => api.select(go)}>
+                  <i />
+                  <div>
+                    <b>{name}</b>
+                    {sub}
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
           <div>

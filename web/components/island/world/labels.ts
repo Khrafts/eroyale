@@ -10,11 +10,15 @@ export function makeLabels(host: HTMLElement, onClick: (id: string) => void) {
   function create(p: Pick) {
     if (!p.label) return;
     const el = document.createElement("button");
+    el.type = "button";
     el.className = "tag off";
+    // the accessible name is the place; the glyph is decoration and the live line changes every few seconds
+    el.setAttribute("aria-label", p.label);
     el.style.setProperty("--c", p.color ?? "#fff");
     const ic = document.createElement("span");
     ic.className = "ic";
     ic.textContent = p.glyph ?? "";
+    ic.setAttribute("aria-hidden", "true");
     const tx = document.createElement("span");
     tx.className = "tx";
     const tn = document.createElement("span");
