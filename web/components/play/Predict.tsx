@@ -1,11 +1,13 @@
 "use client";
 // The phone in prediction mode: rounds list, create a round, predict, locked, result, as states of /play?mode=predict.
-// Same world as the storm: flood blue is only the storm (the losing water), gold is the winners, chalk the live price.
+// The island's kit with violet heads: the sea is only the losing water outside the winners' band, sun the winners and
+// payouts, ink the live price.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { condensed, extra } from "@/components/arena/b/fonts";
+import { BotTag, Button, Chip, GhostButton, TopBar } from "@/components/kit";
 import { MARKETS, isTxHash, unitsToUsd } from "@/lib/events";
 import type { RoundInfo } from "@/lib/events";
+import { cfgFor } from "@/lib/island/avatar";
 import { burner, createRound, join, sendPrediction, signCreateRound, signJoin, signPrediction } from "@/lib/engine";
 import { useMatch, type Match } from "@/lib/useMatch";
 import {
@@ -28,6 +30,8 @@ import {
 } from "@/lib/predict";
 import { PROTOCOL_LOBBY, mockMine } from "@/mocks/predict";
 import { useRolling } from "@/lib/useRolling";
+import { AvatarHead, useMyAvatar } from "./Avatar";
+import { Head } from "./parts";
 import s from "./play.module.css";
 import p from "./predict.module.css";
 
@@ -103,10 +107,17 @@ export default function PredictPhone() {
     window.scrollTo(0, 0);
   };
   return (
-    <main className={`${s.root} ${condensed.className}`} style={{ ["--fig" as string]: extra.style.fontFamily }}>
+    <main className={s.root}>
+      <WalletBar />
       {view && <Screens view={view} go={go} />}
     </main>
   );
+}
+
+function WalletBar() {
+  const [addr, setAddr] = useState<string | null>(null);
+  useEffect(() => setAddr(burner().address), []);
+  return <TopBar wallet={addr} />;
 }
 
 function Screens({ view, go }: { view: View; go: (v: View) => void }) {
@@ -128,8 +139,9 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
   const users = rounds.filter((r) => !r.protocol);
   const royale = match.source === "mock" ? "?mock=1" : "?";
   return (
+    <>
+    <Head game="predict" eyebrow="The Observatory" title="Call the price" />
     <section className={p.page}>
-      <h1 className={s.title}>Call the price</h1>
       <p className={s.lede}>Say where the price will be when the round resolves. The closest calls split the pot.</p>
       {error && <p className={s.error}>{error}</p>}
       {!loaded && <p className={s.fine}>Finding open rounds</p>}
@@ -190,7 +202,7 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
       )}
       <h2 className={p.h2}>Rounds players made</h2>
       {users.length === 0 ? (
-        <p className={s.empty}>None open right now. Make one below.</p>
+        <p className={p.empty}>None open right now. Make one below.</p>
       ) : (
         <ul className={p.list}>
           {users.map((r) => (
@@ -200,13 +212,14 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
           ))}
         </ul>
       )}
-      <button className={p.secondary} onClick={() => go({ kind: "create" })}>
+      <Button color="predict" className={p.cta} onClick={() => go({ kind: "create" })}>
         Create a round
-      </button>
-      <a className={p.link} href={`/play${royale}`}>
+      </Button>
+      <a className={s.link} href={`/play${royale}`}>
         Play Trading Royale instead
       </a>
     </section>
+    </>
   );
 }
 
@@ -298,13 +311,16 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
 
   return (
     <section className={p.create}>
-      <div className={p.preview} aria-live="polite">
-        <div className={p.previewHead}>
+      <Head
+        game="predict"
+        top={
           <button className={p.back} onClick={() => go({ kind: "rounds" })}>
             Rounds
           </button>
-          <h1 className={p.createTitle}>Create a round</h1>
-        </div>
+        }
+        title="Create a round"
+      />
+      <div className={p.preview} aria-live="polite">
         <p className={p.previewLine}>
           If {d.maxPlayers} join, the pot is <span className={s.fig}>${unitsToUsd(pv.potUnits.toString())}</span> and the closest{" "}
           <span className={s.fig}>{k}</span> get paid
@@ -357,9 +373,9 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
         {(["lockAfter", "resolveAfter", "creatorFeeBps"] as RangeKey[]).map((key) => (
           <Slider key={key} k={key} label={LABELS[key]} value={d[key as keyof Draft] as number} show={show} set={set} />
         ))}
-        <button className={s.primary} disabled={busy || !acct || !!pv.error} onClick={submit}>
+        <Button color="predict" disabled={busy || !acct || !!pv.error} onClick={submit}>
           {busy ? "Creating the round" : "Create round"}
-        </button>
+        </Button>
         {msg && <p className={msg.tone === "bad" ? s.error : s.fine}>{msg.text}</p>}
         <p className={s.fine}>
           Calls close on a whole minute, so the lock can land up to 59 s after the time you pick. The protocol keeps 5% of every
@@ -390,7 +406,16 @@ function Slider({
         <span>{label}</span>
         <span className={`${s.fig} ${p.sliderVal}`}>{show(k, value)}</span>
       </span>
-      <input type="range" min={r.min} max={r.max} step={r.step} value={value} onChange={(e) => set(k, Number(e.target.value))} />
+      <input
+        className={s.range}
+        style={{ ["--c" as string]: "var(--violet)", ["--p" as string]: `${((value - r.min) / Math.max(1, r.max - r.min)) * 100}%` }}
+        type="range"
+        min={r.min}
+        max={r.max}
+        step={r.step}
+        value={value}
+        onChange={(e) => set(k, Number(e.target.value))}
+      />
     </label>
   );
 }
@@ -429,28 +454,63 @@ function Round({
 
 function Notice({ title, body, go }: { title: string; body: string; go: (v: View) => void }) {
   return (
-    <section className={p.page} role="alert">
-      <h1 className={s.title}>{title}</h1>
-      <p className={s.lede}>{body}</p>
-      <button className={s.primary} onClick={() => go({ kind: "rounds" })}>
-        See open rounds
-      </button>
+    <section className={s.out} role="alert">
+      <Head game="predict" eyebrow="The Observatory" title={title} />
+      <div className={p.page}>
+        <p className={s.lede}>{body}</p>
+        <Button color="predict" onClick={() => go({ kind: "rounds" })}>
+          See open rounds
+        </Button>
+      </div>
     </section>
   );
 }
 
-function RoundBar({ match, go, right }: { match: Match; go: (v: View) => void; right: React.ReactNode }) {
+/** The round's head: back to the rounds and the round's clock, the round as the title, then whatever the screen adds. */
+function RoundBar({ match, go, right, urgent, children }: { match: Match; go: (v: View) => void; right: React.ReactNode; urgent?: boolean; children?: React.ReactNode }) {
   const r = match.state.round!;
   return (
-    <header className={p.bar1}>
-      <button className={p.back} onClick={() => go({ kind: "rounds" })}>
-        Rounds
-      </button>
-      <span className={p.barTitle}>
-        {r.params.market} round {r.lobbyId}
+    <Head
+      game="predict"
+      className={p.roundHead}
+      top={
+        <>
+          <button className={p.back} onClick={() => go({ kind: "rounds" })}>
+            Rounds
+          </button>
+          <Chip className={`${p.barRight} ${urgent ? p.urgentChip : ""}`}>{right}</Chip>
+        </>
+      }
+      title={`${r.params.market} round ${r.lobbyId}`}
+    >
+      {children}
+    </Head>
+  );
+}
+
+/** Your head and callsign, small, beside your call. */
+function MeInline({ me, callsign }: { me: string | null; callsign: string | undefined }) {
+  const cfg = useMyAvatar(me, callsign ?? "");
+  if (!cfg || !callsign) return null;
+  return (
+    <span className={`${s.me} ${p.meInline}`}>
+      <AvatarHead cfg={cfg} size={28} />
+      <span className={s.meName}>{callsign}</span>
+    </span>
+  );
+}
+
+/** Your head and callsign, inside a round's head. */
+function MeLine({ me, callsign }: { me: string | null; callsign: string | undefined }) {
+  const cfg = useMyAvatar(me, callsign ?? "");
+  if (!cfg || !callsign) return null;
+  return (
+    <div className={s.headMe}>
+      <span className={s.me}>
+        <AvatarHead cfg={cfg} size={34} />
+        <span className={s.meName}>{callsign}</span>
       </span>
-      <span className={p.barRight}>{right}</span>
-    </header>
+    </div>
   );
 }
 
@@ -518,8 +578,9 @@ function JoinRound({
     }
   };
   return (
-    <section className={p.page}>
-      <RoundBar match={match} go={go} right={<>Locks in <span className={s.fig}>{countdown(left)}</span></>} />
+    <section className={s.out}>
+      <RoundBar match={match} go={go} right={<>Locks in <b>{countdown(left)}</b></>} urgent={left <= 10} />
+      <div className={p.page}>
       {createdLock ? (
         <p className={s.fine}>
           Round created. Calls close at <span className={s.fig}>{clockOf(createdLock)}</span>, lined up with the minute.
@@ -534,15 +595,24 @@ function JoinRound({
       </p>
       <label className={s.field}>
         <span>Your callsign</span>
-        <input value={callsign} maxLength={24} autoComplete="off" onChange={(e) => setCallsign(e.target.value)} placeholder="A name for the big screen" />
+        <span className={s.fieldRow}>
+          <CallsignHead me={me} callsign={callsign} />
+          <input value={callsign} maxLength={24} autoComplete="off" onChange={(e) => setCallsign(e.target.value)} placeholder="A name for the big screen" />
+        </span>
       </label>
-      <button className={s.primary} disabled={!valid || busy || !acct || closedJoins} onClick={submit}>
+      <Button color="predict" disabled={!valid || busy || !acct || closedJoins} onClick={submit}>
         {closedJoins ? "Joins are closed for this round" : busy ? "Joining" : `Join for $${unitsToUsd(r.params.entryUnits)}`}
-      </button>
+      </Button>
       {err && <p className={s.error}>{err}</p>}
       <p className={s.fine}>The entry is paid for you. Your game key stays in this browser.</p>
+      </div>
     </section>
   );
+}
+
+function CallsignHead({ me, callsign }: { me: string | null; callsign: string }) {
+  const cfg = useMyAvatar(me, callsign);
+  return cfg ? <AvatarHead cfg={cfg} size={46} /> : null;
 }
 
 /** The predict screen: live price, your call, a tape to drag and buttons to nudge it, the lock countdown. */
@@ -627,20 +697,24 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
 
   return (
     <section className={p.call}>
-      <RoundBar match={match} go={go} right={<>Locks in <span className={`${s.fig} ${left <= 10 ? p.urgent : ""}`}>{countdown(left)}</span></>} />
+      <RoundBar match={match} go={go} right={<>Locks in <b>{countdown(left)}</b></>} urgent={left <= 10} />
+      <div className={p.callBody}>
       <div className={p.callTop}>
         <p className={s.kicker}>{market} now</p>
         <LivePrice match={match} mark={mark} />
       </div>
       <div className={p.mine}>
+        <div className={p.mineTop}>
         <p className={s.kicker}>
           {sent ? (changed ? "Your new call, not sent" : "Your call") : elsewhere ? "Your call is in, sent from another device" : "Your call, not sent yet"}
         </p>
+        <MeInline me={me} callsign={st.players.find((x) => x.player === me)?.callsign} />
+        </div>
         <p className={`${s.fig} ${p.callFig}`}>{price !== null ? commas(price) : "—"}</p>
         <p className={p.diff}>{sentence}</p>
       </div>
       <p className={p.count}>
-        <span className={s.fig}>{st.predictedCount}</span> of <span className={s.fig}>{st.players.length}</span> have called. Calls stay sealed until the lock.
+        <b>{st.predictedCount}</b> of <b>{st.players.length}</b> have called. Calls stay sealed until the lock.
       </p>
       <Sketch match={match} call={draft} />
       <div className={p.thumb}>
@@ -661,10 +735,11 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
             Sent. Drag the tape or nudge it to move your call until the lock.
           </p>
         ) : (
-          <button className={s.primary} disabled={busy || !acct || left <= 0 || price === null} onClick={submit}>
+          <Button color="predict" big disabled={busy || !acct || left <= 0 || price === null} onClick={submit}>
             {busy ? "Sending" : sent || elsewhere ? `Move my call to ${commas(price ?? "")}` : `Call ${price !== null ? commas(price) : ""}`}
-          </button>
+          </Button>
         )}
+      </div>
       </div>
       {msg && <p className={`${s.toast} ${msg.tone === "bad" ? s.toastBad : ""}`}>{msg.text}</p>}
     </section>
@@ -676,7 +751,7 @@ function Sketch({ match, call }: { match: Match; call: bigint | null }) {
   const st = match.state;
   const r = st.round!;
   const W = 358;
-  const H = 150;
+  const H = 118;
   const u0 = st.tOrigin ?? st.path[0]?.u ?? r.lockTime - 60;
   const u1 = r.endTime;
   const pts = st.path.filter((q) => q.u >= u0);
@@ -816,8 +891,11 @@ function Locked({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
         ? `You are ${ordinal(myRank)} closest, ${money(myC - mark)} from the price. The closest ${k} win.`
         : `You are ${ordinal(myRank)}, ${money(myC - mark)} from the price. Only the closest ${k} win.`;
   return (
-    <section className={p.page}>
-      <RoundBar match={match} go={go} right={resolving ? "Reading the price" : <>Resolves in <span className={s.fig}>{countdown(left)}</span></>} />
+    <section className={s.out}>
+      <RoundBar match={match} go={go} right={resolving ? "Reading the price" : <>Resolves in <b>{countdown(left)}</b></>}>
+        <MeLine me={me} callsign={mine?.callsign} />
+      </RoundBar>
+      <div className={p.page}>
       <p className={s.kicker}>{r.params.market} now</p>
       <LivePrice match={match} mark={mark} />
       <p className={`${s.sentence} ${mine && !inside ? s.sentenceDanger : ""}`} role="status">
@@ -828,17 +906,29 @@ function Locked({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
       <ol className={p.leaders}>
         {ranked.slice(0, k).map((x, i) => (
           <li key={x.player} className={x.player === me ? s.meRow : ""}>
-            <span className={s.fig}>{i + 1}</span>
-            <span>
-              {x.callsign}
-              {x.bot && <span className={s.bot}>BOT</span>}
-            </span>
+            <span className={p.rk}>{i + 1}</span>
+            <Who player={x.player} callsign={x.callsign} bot={x.bot} me={me} />
             <span className={s.fig}>{commas(x.price)}</span>
             <span className={`${s.fig} ${p.dist}`}>{money(x.d)}</span>
           </li>
         ))}
       </ol>
+      </div>
     </section>
+  );
+}
+
+/** A player's head and callsign in a row; yours from your saved look. */
+function Who({ player, callsign, bot, me }: { player: string; callsign: string; bot: boolean; me: string | null }) {
+  const mine = useMyAvatar(player === me ? player : null, callsign);
+  return (
+    <span className={s.who}>
+      <AvatarHead cfg={mine ?? cfgFor(player, callsign)} size={26} />
+      <span>
+        {callsign}
+        {bot && <BotTag />}
+      </span>
+    </span>
   );
 }
 
@@ -868,6 +958,8 @@ function Strip({ match, me }: { match: Match; me: string | null }) {
         <>
           <rect x={0} y={0} width={W} height={Math.max(0, bTop)} className={p.storm} />
           <rect x={0} y={bBot} width={W} height={Math.max(0, H - bBot)} className={p.storm} />
+          <line x1={0} x2={W} y1={bTop - 3} y2={bTop - 3} className={p.stormShallow} />
+          <line x1={0} x2={W} y1={bBot + 3} y2={bBot + 3} className={p.stormShallow} />
           <line x1={0} x2={W} y1={bTop} y2={bTop} className={p.stormEdge} />
           <line x1={0} x2={W} y1={bBot} y2={bBot} className={p.stormEdge} />
         </>
@@ -917,14 +1009,17 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
   const winners = [...fin.winners].sort((a, b) => a.rank - b.rank);
   const units = win ? (paid(win.player) ?? win.provisionalPayoutUnits) : null;
   return (
-    <section className={p.page}>
-      <RoundBar match={match} go={go} right={settled ? "Settled" : "Resolved"} />
+    <section className={s.out}>
+      <RoundBar match={match} go={go} right={settled ? "Settled" : "Resolved"}>
+        <MeLine me={me} callsign={mine?.callsign ?? win?.callsign} />
+      </RoundBar>
+      <div className={p.page}>
       <p className={s.kicker}>{r.params.market} settled at</p>
       <p className={`${s.fig} ${p.settle}`}>{commas(fin.settlementPrice)}</p>
       {win ? (
         <>
-          <h1 className={s.title}>{win.rank === 1 ? "Closest call in the round" : `${ordinal(win.rank)} closest. You win.`}</h1>
-          <p className={`${s.payout} ${s.profit}`}>${unitsToUsd(units ?? "0")}</p>
+          <h2 className={p.resultTitle}>{win.rank === 1 ? "Closest call in the round" : `${ordinal(win.rank)} closest. You win.`}</h2>
+          <p className={s.payout}>${unitsToUsd(units ?? "0")}</p>
           <p className={s.sub}>
             {settled ? (isTxHash(settled.txHash) ? "Paid to your address" : "Settled offline (no chain), nothing paid") : "Provisional, until the settlement report lands"}. You called{" "}
             <span className={s.fig}>{commas(win.price)}</span>, off by <span className={s.fig}>{commas(win.distance)}</span>.
@@ -932,23 +1027,20 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
         </>
       ) : mine && myC !== null ? (
         <>
-          <h1 className={s.title}>Not close enough this time</h1>
+          <h2 className={p.resultTitle}>Not close enough this time</h2>
           <p className={s.sub}>
             You called <span className={s.fig}>{commas(mine.price)}</span>, off by <span className={s.fig}>{money(myC - sp)}</span>. The last winning call was off by{" "}
             <span className={s.fig}>{commas(winners[winners.length - 1]?.distance ?? "0.00")}</span>.
           </p>
         </>
       ) : (
-        <h1 className={s.title}>{winners[0] ? `${winners[0].callsign} called it closest` : "Nobody made a call"}</h1>
+        <h2 className={p.resultTitle}>{winners[0] ? `${winners[0].callsign} called it closest` : "Nobody made a call"}</h2>
       )}
       <ol className={p.leaders}>
         {winners.map((w) => (
           <li key={w.player} className={w.player === me ? s.meRow : ""}>
-            <span className={s.fig}>{w.rank}</span>
-            <span>
-              {w.callsign}
-              {st.players.find((x) => x.player === w.player)?.bot && <span className={s.bot}>BOT</span>}
-            </span>
+            <span className={p.rk}>{w.rank}</span>
+            <Who player={w.player} callsign={w.callsign} bot={!!st.players.find((x) => x.player === w.player)?.bot} me={me} />
             <span className={`${s.fig} ${p.dist}`}>{commas(w.distance)}</span>
             <span className={s.fig}>${unitsToUsd(paid(w.player) ?? w.provisionalPayoutUnits)}</span>
           </li>
@@ -965,16 +1057,17 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
           </div>
         ) : (
           <div className={s.stamp}>
-            <p className={s.stampTitle}>Settled offline (no chain)</p>
+            <p className={`${s.stampTitle} ${s.stampOff}`}>Settled offline (no chain)</p>
             <p className={s.stampBody}>This engine runs without a chain, so nothing was paid on chain.</p>
           </div>
         )
       ) : (
         <p className={s.fine}>Payouts are provisional until the Chainlink report settles the pot.</p>
       )}
-      <button className={p.secondary} onClick={() => go({ kind: "rounds" })}>
+      <GhostButton className={p.cta} onClick={() => go({ kind: "rounds" })}>
         Next round
-      </button>
+      </GhostButton>
+      </div>
     </section>
   );
 }

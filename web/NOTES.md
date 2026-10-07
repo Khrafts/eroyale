@@ -1,8 +1,7 @@
 ## Status
-- Step: look-theme done (tokens lib/theme.ts + app/theme.css, fonts app/fonts.ts, island on shared tokens, components/kit/).
-- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; island shots vs feat/island within run-to-run noise.
-- look-ui: tokens, Google Fonts, font files, fonts loaded, :root tokens, island body font pass; play/arena colours, Sofia, play background/brand link, arena sky/sea are look-play/look-arena work.
-- Next: look-play and look-arena build on the kit. Blockers: none.
+- Step: look-play 7.2 steps 1-3 done: /play (royale and predict) restyled on the kit and theme.css, avatar heads in 2D (components/play/Avatar.tsx).
+- Last check: GATE PASS ui, predict-ui, island-ui (/play 164755 B, +4.2% vs main); typecheck clean; look-ui: every /play part passes, arena and Sofia parts are look-arena's.
+- Next: step 4 live run against a local engine (CHAIN=off ORDER_SIG=off), then fix what it shows. Blockers: none.
 
 ## Running
 
