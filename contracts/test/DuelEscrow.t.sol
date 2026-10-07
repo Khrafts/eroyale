@@ -49,6 +49,17 @@ contract DuelEscrowTest is Test {
 
     uint96 internal constant STAKE = 5_000000;
 
+    // Golden values from fixtures/duel/expected-report.json and fixtures/duel/final-book.json, copied so the suite
+    // runs without the gate fixtures present.
+    bytes32 internal constant GOLDEN_BOOK_HASH = 0x50962073b4c7688234edcad9eb9607898b6800c75760ad9719ac215abae13bcb;
+
+    bytes internal constant GOLDEN_REPORT =
+        hex"0000000000000000000000000000000000000000000000008f90b8876dee6538000000000000000000000000000000000000000000000000000000000000000150962073b4c7688234edcad9eb9607898b6800c75760ad9719ac215abae13bcb000000000000000000000000091573639978183e2d5c031a2c186a93026c0925";
+
+    address internal constant GOLDEN_PLAYER_A = 0x091573639978183e2d5C031a2C186a93026C0925;
+
+    address internal constant GOLDEN_PLAYER_B = 0x3a9e05deEd4FfC7e047dA41E0925D4F1183105Cc;
+
     MockUSDC internal usdc;
 
     DuelEscrow internal escrow;
@@ -365,6 +376,49 @@ contract DuelEscrowTest is Test {
         assertEq(token.balanceOf(alice), 9_500000);
         assertEq(token.balanceOf(treasury), 500000);
         assertEq(token.balanceOf(address(reentrant)), 0);
+    }
+
+    function test_GoldenDuelReport() public {
+        vm.prank(owner);
+        uint256 id = escrow.createDuel(STAKE);
+
+        assertEq(id, 1);
+
+        vm.prank(relayer);
+        escrow.joinFor(id, GOLDEN_PLAYER_A);
+
+        vm.prank(relayer);
+        escrow.joinFor(id, GOLDEN_PLAYER_B);
+
+        vm.prank(owner);
+        escrow.start(id);
+
+        (uint64 selector, uint256 duelId, bytes32 bookHash, address winner) = abi.decode(
+            GOLDEN_REPORT,
+            (uint64, uint256, bytes32, address)
+        );
+
+        assertEq(selector, CHAIN_SELECTOR);
+        assertEq(duelId, id);
+        assertEq(bookHash, GOLDEN_BOOK_HASH);
+        assertEq(winner, GOLDEN_PLAYER_A);
+
+        vm.expectEmit();
+        emit IDuelEscrow.Settled(id, GOLDEN_BOOK_HASH, GOLDEN_PLAYER_A);
+
+        vm.prank(forwarder);
+        escrow.onReport("", GOLDEN_REPORT);
+
+        assertEq(usdc.balanceOf(GOLDEN_PLAYER_A), 9_500000);
+        assertEq(usdc.balanceOf(GOLDEN_PLAYER_B), 0);
+        assertEq(usdc.balanceOf(treasury), 500000);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+
+        IDuelEscrow.Duel memory duel = escrow.getDuel(id);
+
+        assertEq(uint8(duel.status), uint8(IDuelEscrow.Status.Settled));
+        assertEq(duel.bookHash, GOLDEN_BOOK_HASH);
+        assertEq(duel.winner, GOLDEN_PLAYER_A);
     }
 
     /* ============ helpers ============ */

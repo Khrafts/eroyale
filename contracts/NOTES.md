@@ -1,8 +1,8 @@
 <!-- status -->
-Step: Phase 11 duel-contracts: DuelEscrow + 13 tests, DeployDuel (anvil dry run ok), workflow buildDuelReport + duel handler
-Last checks: contracts, workflow, predict-contracts, predict-workflow PASS; duel-contracts gate not installed yet
-Next: golden duel test from gates.next-duel fixture; switch workflow/src/duel-stub.ts to shared/duel.ts after feat/duel merge
-Blockers: gates.next-duel fixtures, shared/duel.ts (duel-sim) not landed
+Step: Phase 11 duel-contracts: DuelEscrow + 14 tests incl. golden, DeployDuel, workflow buildDuelReport + duel handler
+Last checks: contracts, workflow, predict-contracts, predict-workflow PASS; duel-contracts PASS with a temporary copy of duel-sim's shared/duel.ts
+Next: after feat/duel has shared/duel.ts: merge it, import replay from ../../shared/duel.ts, delete workflow/src/duel-stub.ts, rerun all five gates
+Blockers: shared/duel.ts (duel-sim) not in feat/duel yet
 <!-- /status -->
 
 # Contracts track notes
