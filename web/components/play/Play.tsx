@@ -138,7 +138,7 @@ function RoyalePhone() {
       game="royale"
       back={{ to: "The Arena", href: island(PANEL.royale) }}
       live={live}
-      watch={id !== null && source === "live" ? watchLobby(id) : watchGame("royale")}
+      watch={id !== null && (source === "live" || match.pinned) ? watchLobby(id) : watchGame("royale")}
       title={docTitle("royale", id !== null && kind !== "join" ? `${TITLES[kind]}, lobby ${id}` : TITLES[kind])}
     >
       <Body match={match} me={me} kind={kind} myElim={myElim} acct={acct} onJoined={setJoinedAs} />
@@ -194,8 +194,8 @@ function Body({
   }
 }
 
-/** The big screen on this lobby (live), else following royale. */
-const watchHref = (match: Match): string => (match.state.lobbyId !== null && match.source === "live" ? watchLobby(match.state.lobbyId) : (watchGame("royale") ?? "/arena"));
+/** The big screen on this lobby (live or pinned), else following royale. */
+const watchHref = (match: Match): string => (match.state.lobbyId !== null && (match.source === "live" || match.pinned) ? watchLobby(match.state.lobbyId) : (watchGame("royale") ?? "/arena"));
 
 /**
  * The royale end-state block (rule 5, rule 8). Primary: on a pinned lobby "Go to the current lobby" (drops ?lobby);
