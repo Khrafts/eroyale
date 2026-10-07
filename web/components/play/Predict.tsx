@@ -334,7 +334,7 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
     key === "entryUnits"
       ? `$${unitsToUsd(String(v))}`
       : key === "maxPlayers"
-        ? String(v)
+        ? `${v} players`
         : key === "lockAfter" || key === "resolveAfter"
           ? durationStr(v)
           : key === "winnerBps"
@@ -377,15 +377,7 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
 
   return (
     <section className={p.create}>
-      <Head
-        game="predict"
-        top={
-          <button className={p.back} onClick={go.list}>
-            Rounds
-          </button>
-        }
-        title="Create a round"
-      />
+      <Head game="predict" title="Create a round" />
       <div className={p.preview} aria-live="polite">
         <p className={p.previewLine}>
           If {d.maxPlayers} join, the pot is <span className={s.fig}>${unitsToUsd(pv.potUnits.toString())}</span> and the closest{" "}
@@ -539,12 +531,7 @@ function RoundBar({ match, go, right, urgent, children }: { match: Match; go: Go
       game="predict"
       className={p.roundHead}
       top={
-        <>
-          <button className={p.back} onClick={go.list}>
-            Rounds
-          </button>
-          <Chip className={`${p.barRight} ${urgent ? p.urgentChip : ""}`}>{right}</Chip>
-        </>
+<Chip className={`${p.barRight} ${urgent ? p.urgentChip : ""}`}>{right}</Chip>
       }
       title={`${r.params.market} round ${r.lobbyId}`}
     >
