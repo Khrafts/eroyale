@@ -4,6 +4,9 @@
 // round or duel is over, the offer to move on (CLAUDE.md "Navigation" rules 6 and 8).
 import { useEffect, useState, type CSSProperties } from "react";
 import { TopBar, kit } from "@/components/kit";
+// the switcher: load its chunk with this one (prefetched while idle) so the Games menu
+// is there on the first keypress instead of one more round trip later
+import "@/components/kit/switcher";
 import Link from "@/components/kit/link";
 import { usePopover } from "@/components/kit/popover";
 import { engineHttp } from "@/lib/engineUrl";
@@ -78,8 +81,8 @@ function useLists(on: boolean): Lists {
 /** Where the bar goes. The canvas is the 1920 by 1080 design scaled to fit the window (VariantB), so the bar is placed
  *  and scaled in canvas coordinates: a solid panel over the HUD's top-left strip (x 16 to 496, y 12 to 106 or 120 in a
  *  duel: the title chip, or the left fighter's name) and nothing else at any window size, so it never reaches the
- *  centre panel ("Final", the countdown, the settled price). It always uses the compact switcher (a "Games" menu) and is
- *  scaled no smaller than 0.66 and at least 300 px wide before scaling so its chips fit. A portrait phone has empty space above the canvas: the bar sits
+ *  centre panel ("Final", the countdown, the settled price). On a big screen (90% of 1920 or more) it shows the segmented switcher scaled
+ *  into that strip; smaller, the compact switcher (a "Games" menu), no smaller than 0.66 and at least 300 px wide before scaling so its chips fit. A portrait phone has empty space above the canvas: the bar sits
  *  there at natural size instead. */
 const DW = 1920;
 const DH = 1080;
@@ -97,6 +100,11 @@ function useFit(strip: number): { wide: boolean; style: CSSProperties } {
   const ox = (w - DW * s) / 2;
   const oy = (h - DH * s) / 2;
   if (oy >= 84) return { wide: w >= 700, style: { left: 8, top: 8, width: Math.min(w - 16, 656), ["--mh" as string]: "0px" } };
+  // a big screen: the segmented switcher (the kit shows it from 640 px of bar content; 660 leaves room for the padding and border), scaled down to fit the same strip
+  if (s >= 0.9) {
+    const kb = (STRIP_W * s) / 660;
+    return { wide: true, style: { left: ox + 16 * s, top: oy + 12 * s, width: 660, transform: `scale(${kb})`, ["--mh" as string]: `${(strip * s) / kb}px` } };
+  }
   const k = Math.max(s, 0.66);
   return { wide: false, style: { left: ox + 16 * s, top: oy + 12 * s, width: Math.max(300, (STRIP_W * s) / k), transform: `scale(${k})`, ["--mh" as string]: `${(strip * s) / k}px` } };
 }
