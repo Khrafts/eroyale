@@ -1,8 +1,8 @@
 ## Status
-- Step: review fixes U1-U6 (protocol rounds watched from /rounds.active until settled; feed dedupes eliminations by identity and skips past final/settled; bot tags on liquidation and "closest" lines; poll re-arms in finally; useMatch `feed: false` for island round watchers; world dispose frees GPU resources and contexts).
-- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; /arena +0.6%, /play +0.8% first load vs main.
-- Next: lead reviews and commits.
-- Blockers: none. maxPlayers still needs one GET /lobbies/:id per lobby (useMatch's snapshot drops it; /lobbies does not carry it).
+- Step: look-theme done (tokens lib/theme.ts + app/theme.css, fonts app/fonts.ts, island on shared tokens, components/kit/).
+- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; island shots vs feat/island within run-to-run noise.
+- look-ui: tokens, Google Fonts, font files, fonts loaded, :root tokens, island body font pass; play/arena colours, Sofia, play background/brand link, arena sky/sea are look-play/look-arena work.
+- Next: look-play and look-arena build on the kit. Blockers: none.
 
 ## Running
 
@@ -101,3 +101,32 @@ Known differences from the prototype:
   candle bars are the latest BTC moves in basis points.
 - The wallet chip shows the burner address only (no balance call).
 - On phones the feed sits above the hint (the prototype stacked them on top of each other).
+
+## One look
+
+Phase 10: the island's look becomes the product's look. Track look-theme laid the shared base; look-play and
+look-arena restyle /play and /arena on it.
+
+- Tokens: `lib/theme.ts` (constants for canvas and script code: every token of CLAUDE.md "One look", `GAME`,
+  `MEANING`, `STROKE`, `RADIUS`, `SHADOW`, `FONT`, `ISLAND` for the island's own grass/sand/podium colours, and
+  `canvasFont(role, weight, px)`) and `app/theme.css` (the same values as custom properties on `:root`, kebab-case:
+  `--ink`, `--sky-top`, `--sea-deep`, `--coral-text`, `--island-grass`, `--shadow-chip`, `--radius-card`, `--display`,
+  `--body`, `--mono` ...). Change both together. `body` gets `font-family: var(--body)`.
+- Loss text on paper is `coralText` / `--coral-text` `#D12B52`: 4.87:1 on paper (coral itself is 2.85:1).
+- Fonts: `app/fonts.ts` loads Unbounded, Instrument Sans and JetBrains Mono with next/font/local from `app/fonts/`
+  (variable latin woff2, OFL texts, URLs in `app/fonts/SOURCES.txt`). Each face keeps its real family name
+  (`declarations`), so canvas code and `document.fonts.check('16px "Unbounded"')` work; layout.tsx puts
+  `--font-display`, `--font-body`, `--font-mono` on `<html>`. The island no longer loads fonts.googleapis.com.
+  Sofia Sans stays until look-arena drops it.
+- The island reads the shared tokens: `.isle` keeps only its extras, places.ts `COLORS` and world `C` are built from
+  theme.ts, water/sky/terrain/common import it, canvas text uses `canvasFont`. No visible change (checked by pixel diff
+  against feat/island with `motion=reduce` shots).
+- Kit: `components/kit/` (`index.tsx` + `kit.module.css`, the island.css rules on theme.css values): `Chip` (glass, or
+  `fill` for a meaning colour with ink text), `Button` (game colour via `color="royale"|"predict"|...` or a theme
+  constant; `big` = display face, ink text, for LONG/SHORT; `href` makes a link), `GhostButton`, `Card` (soft, or
+  `raised`), `Panel`, `PanelHead` (game colour with the two soft circles), `Segmented`, `BotTag`, `BrandMark`,
+  `TopBar` (brand chip linking to `/`, optional middle content, wallet chip from a passed address).
+  The island's `.isle` sets `--mono` to `--font-mono-island` (JetBrains Mono's 500 file alone) so its 600/700 figures
+  stay synthetic bold as before; everywhere else `--mono` has true weights up to 800. Class names are
+  exported as `kit` for layouts the components do not cover. Buttons and chips use the spec's `0 3px 0` shadow (the
+  island's own .cta keeps its 4px).

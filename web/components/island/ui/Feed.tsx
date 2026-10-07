@@ -2,8 +2,9 @@
 // Bottom-left feed: the three newest lines, each fading after nine seconds.
 import { useEffect, useState } from "react";
 import { onBus, type FeedItem } from "@/lib/island/store";
+import { coral, mint, sun, violet } from "@/lib/theme";
 
-const COLORS: Record<FeedItem["kind"], string> = { win: "#FFC93C", live: "#FF5E7E", cut: "#FF5E7E", lock: "#8B5CFF", promo: "#14C98E", final: "#8B5CFF" };
+const COLORS: Record<FeedItem["kind"], string> = { win: sun, live: coral, cut: coral, lock: violet, promo: mint, final: violet };
 const TAGS: Record<FeedItem["kind"], string> = { win: "Payout", live: "The Arena", cut: "Checkpoint", lock: "The Observatory", promo: "Billboard", final: "Result" };
 
 export function Feed() {

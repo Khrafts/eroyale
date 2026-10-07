@@ -2,8 +2,10 @@
 // the panels load without it).
 import type { IslandSnap, UserRound } from "./store";
 import { short, usdcShort } from "./format";
+import { ISLAND, coral, ink, mint, sun, tang, violet } from "../theme";
 
-export const COLORS = { coral: "#FF5E7E", violet: "#8B5CFF", tang: "#FF8A3D", mint: "#14C98E", sky: "#4CC9F0", sun: "#FFC93C", ink: "#2B1D52" };
+/** The shared tokens (lib/theme.ts) the panels and the world colour places with. */
+export const COLORS = { coral, violet, tang, mint, sky: ISLAND.sky, sun, ink };
 
 export type Game = { id: "royale" | "predict" | "duel" | "create"; name: string; short: string; color: string; route: string; h: (s: IslandSnap) => number };
 /** The fountain's four jets; each jet's height follows its game's player count. */

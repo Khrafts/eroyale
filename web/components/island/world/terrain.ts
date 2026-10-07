@@ -1,6 +1,7 @@
 // The main island, the Dojo islet, two sand bars, and meadow patches on the grass.
 import * as THREE from "three";
 import { Cyl } from "./materials";
+import { ISLAND } from "@/lib/theme";
 import { DECOR, G, GRASS, ISLET, ISLET_PH, LH, SAND, SAND_Y, f, warp, type Ctx } from "./common";
 
 export function buildTerrain(ctx: Ctx) {
@@ -26,7 +27,7 @@ export function buildTerrain(ctx: Ctx) {
     const m = P(
       ctx.scene,
       warp(new THREE.CircleGeometry(3 + R() * 4, 18).rotateX(-Math.PI / 2), R() * 6),
-      R() < 0.5 ? "#7BE28A" : "#4CC765",
+      R() < 0.5 ? ISLAND.meadow : ISLAND.meadowDark,
       [r * Math.cos(a), G + 0.015, r * Math.sin(a)],
       [0, 0, 0],
       { ol: false, shadow: false },

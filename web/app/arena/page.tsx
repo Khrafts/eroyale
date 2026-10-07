@@ -40,7 +40,7 @@ export default function ArenaPage() {
       clearInterval(id);
     };
   }, []);
-  if (predict === null) return <main style={{ position: "fixed", inset: 0, background: "#172930" }} />;
+  if (predict === null) return <main style={{ position: "fixed", inset: 0, background: "var(--sky-top)" }} />;
   return <Arena predict={predict} />;
 }
 

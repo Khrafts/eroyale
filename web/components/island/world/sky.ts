@@ -1,5 +1,6 @@
 // Gradient sky dome with a soft sun disc.
 import * as THREE from "three";
+import { skyBottom, skyTop } from "@/lib/theme";
 import { HORIZON, SUN_DIR } from "./common";
 
 export function buildSky(scene: THREE.Scene) {
@@ -9,7 +10,7 @@ export function buildSky(scene: THREE.Scene) {
       new THREE.ShaderMaterial({
         side: THREE.BackSide,
         depthWrite: false,
-        uniforms: { top: { value: new THREE.Color("#5B7CFA") }, mid: { value: new THREE.Color("#B3BEFF") }, bot: { value: new THREE.Color(HORIZON) }, sun: { value: SUN_DIR } },
+        uniforms: { top: { value: new THREE.Color(skyTop) }, mid: { value: new THREE.Color(skyBottom) }, bot: { value: new THREE.Color(HORIZON) }, sun: { value: SUN_DIR } },
         vertexShader: "varying vec3 vP; void main(){ vP = (modelMatrix*vec4(position,1.)).xyz; gl_Position = projectionMatrix*viewMatrix*vec4(vP,1.); }",
         fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 bot; uniform vec3 sun; varying vec3 vP;
       void main(){ vec3 d = normalize(vP); float h = d.y;

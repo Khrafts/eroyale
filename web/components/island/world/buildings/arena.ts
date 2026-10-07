@@ -1,6 +1,7 @@
 // The Arena (Trading Royale): colonnade, awning, gate, candle bars in the pit, a price ticker ring, a beam that
 // flares at every checkpoint cut, and spotlights while a lobby is live.
 import * as THREE from "three";
+import { canvasFont } from "@/lib/theme";
 import { C, Box, Cyl } from "../materials";
 import { LAYOUT, place, type Ctx } from "../common";
 import { MARKETS, type Market } from "@/lib/events";
@@ -40,7 +41,7 @@ export function buildArena(ctx: Ctx, snap0: IslandSnap) {
     cx.fillStyle = C.coral;
     cx.fillRect(0, 0, w, h);
     cx.fillStyle = "#FFFAF2";
-    cx.font = "800 54px Unbounded, system-ui";
+    cx.font = canvasFont("display", 800, 54);
     cx.textAlign = "center";
     cx.textBaseline = "middle";
     cx.fillText("ROYALE", w / 2, h / 2 + 3);
@@ -60,13 +61,13 @@ export function buildArena(ctx: Ctx, snap0: IslandSnap) {
   const tickerSrc = (cx: CanvasRenderingContext2D, w: number, h: number) => {
     cx.fillStyle = C.ink;
     cx.fillRect(0, 0, w, h);
-    cx.font = '500 70px "JetBrains Mono", ui-monospace, monospace';
+    cx.font = canvasFont("mono", 500, 70);
     cx.textBaseline = "middle";
     let x = 30;
     if (!snap.marks) {
       while (x < w) {
         const s = "PRICES LOADING ";
-        cx.fillStyle = "#FFFBF5";
+        cx.fillStyle = C.paper;
         cx.fillText(s, x, h / 2);
         x += cx.measureText(s).width;
         cx.fillStyle = C.sun;
@@ -79,7 +80,7 @@ export function buildArena(ctx: Ctx, snap0: IslandSnap) {
       for (const m of MARKETS) {
         const ch = change(snap, m);
         const s = m + " " + commas(snap.marks[m]) + " ";
-        cx.fillStyle = "#FFFBF5";
+        cx.fillStyle = C.paper;
         cx.fillText(s, x, h / 2);
         x += cx.measureText(s).width;
         if (ch !== null) {
