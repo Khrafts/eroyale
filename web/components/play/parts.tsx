@@ -81,3 +81,15 @@ export function WaitingClose() {
     </div>
   );
 }
+
+/** An indeterminate progress bar in the game's colour, for screens waiting on the engine. */
+export function LoadBar({ label }: { label: string }) {
+  return (
+    <div className={s.loadWrap} role="status" aria-live="polite">
+      <div className={s.loadBar} aria-hidden="true">
+        <span />
+      </div>
+      <p className={s.loadLabel}>{label}</p>
+    </div>
+  );
+}

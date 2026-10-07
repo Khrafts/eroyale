@@ -240,3 +240,16 @@
   .toast { animation: none; }
   .spinner { animation: none; border-color: var(--ink); background: var(--mint); }
 }
+
+/* Loading bar */
+.loadWrap { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 4px; }
+.loadBar { position: relative; height: 18px; border: var(--stroke) solid var(--ink); border-radius: 999px; background: var(--island-white); box-shadow: var(--shadow-chip); overflow: hidden; }
+.loadBar span { position: absolute; top: 0; bottom: 0; left: -40%; width: 40%; border-radius: 999px; background: var(--coral); border-right: var(--stroke) solid var(--ink); animation: loadSlide 1.2s ease-in-out infinite; }
+.loadLabel { margin: 0; color: var(--muted); font-size: 13px; }
+@keyframes loadSlide { to { left: 100%; } }
+.howList { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 8px; }
+.howList li { display: flex; gap: 10px; align-items: baseline; background: var(--island-white); border: var(--stroke) solid var(--line); border-radius: var(--radius-card); padding: 8px 12px; font-size: 14px; color: var(--ink2); }
+.howList b { font: 800 13px/1 var(--mono); color: var(--ink); background: var(--sun); border: var(--stroke) solid var(--ink); border-radius: 999px; padding: 3px 7px; }
+.outList { margin: 6px 0 20px; opacity: 0.8; }
+.outHead { margin: 12px 0 0; font: 800 15px/1.2 var(--display); color: var(--ink2); }
+@media (prefers-reduced-motion: reduce) { .loadBar span { animation: none; left: 0; width: 100%; opacity: 0.5; } }
