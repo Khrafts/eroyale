@@ -24,7 +24,7 @@ const keyOf = (mode: string, lobbyId: number, bookHash: string | null, txHash: s
 
 /**
  * When a logged settlement happened, for logs written before settlements.jsonl: the `{"in":"settled","at"}` line the
- * engine now writes beside `settled`; else the match's end time (royale: countdown startsAt + preset duration, predict:
+ * engine now writes beside `settled`; else the match's end time (royale: countdown startsAt + the recorded duration, else the preset's, predict:
  * the round's endTime), which `final` and `settled` follow; else the log file's mtime.
  */
 export function settledAt(lines: any[], path: string): number {
@@ -32,7 +32,7 @@ export function settledAt(lines: any[], path: string): number {
   if (mark) return mark.at;
   const create = lines.find((x) => x.in === "create");
   const countdown = [...lines].reverse().find((x) => x.in === "countdown" && Number.isFinite(x.startsAt));
-  const duration = create?.preset ? PRESETS[create.preset as keyof typeof PRESETS]?.duration : undefined;
+  const duration = Number.isInteger(create?.duration) ? create.duration as number : create?.preset ? PRESETS[create.preset as keyof typeof PRESETS]?.duration : undefined;
   if (countdown && duration !== undefined) return (countdown.startsAt + duration) * 1000;
   const round = lines.find((x) => x.type === "round" && Number.isFinite(x.endTime));
   if (round) return round.endTime * 1000;

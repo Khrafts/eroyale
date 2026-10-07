@@ -20,6 +20,22 @@ export const PRESETS: Record<Preset["name"], Preset> = {
   standard: { name: "standard", duration: 360, checkpoints: [90, 180, 270], zoneCents: [line(100n), line(300n), line(600n)] },
 };
 
+/**
+ * How the displayed and enforced zone moves. `linear` (the spec, the default): a straight line from 9800.00 to each
+ * checkpoint's zone line. `relative` (ZONE_MODE=relative): each tick the target is the alive players' average equity
+ * less a gap that falls linearly from startBps at t=0 to endBps at the last checkpoint, then holds; the zone never
+ * goes down, and a checkpoint enforces the zone at that tick.
+ */
+export type ZoneConfig = { mode: "linear" } | { mode: "relative"; startBps: bigint; endBps: bigint };
+export const LINEAR_ZONE: ZoneConfig = { mode: "linear" };
+
+/** A preset with its length replaced: checkpoints at 25/50/75% (whole seconds), the base preset's zone lines. */
+export function withDuration(base: Preset, duration: number): Preset {
+  if (!Number.isInteger(duration) || duration <= 0 || duration % 60 !== 0) throw new Error(`duration must be a positive multiple of 60 s, got ${duration}`);
+  if (duration === base.duration) return base;
+  return { ...base, duration, checkpoints: [Math.floor(duration / 4), Math.floor(duration / 2), Math.floor((duration * 3) / 4)] };
+}
+
 export const START_BALANCE = "10000.00";
 export const ZONE_START_CENTS = 980000n;
 export const ENTRY_UNITS = 5_000000n;

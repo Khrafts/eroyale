@@ -10,14 +10,14 @@ import { Lobby } from "./lobby.ts";
 import { Bots, botAddress, botCallsign } from "./bots.ts";
 import { CoinbaseFeed, FallbackPrices, KrakenFeed, fetchSettlementMarks, settlementMinute, type PriceSource } from "./prices.ts";
 import { Driver, PredictDriver, realClock } from "./driver.ts";
-import { PredictRound, checkUserSpec, protocolSpec, type RoundSpec } from "./predict.ts";
+import { PredictRound, RANGES, checkUserSpec, protocolSpec as baseProtocolSpec, type RoundSpec } from "./predict.ts";
 import { PredictBots } from "./predict-bots.ts";
 import { Stats, playersInLog } from "./stats.ts";
 import { mountDuels } from "./duel-server.ts";
 import { LOBBY_CANCELLED, LOBBY_LIVE, LOBBY_OPEN, LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
 import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyCreateRound, verifyJoin, verifyOrder, verifyPrediction, type CreateRoundParams } from "./orders.ts";
-import { ENTRY_UNITS, MARKETS, PRESETS, type EngineEvent, type Order, type Preset, type Prices, type SettleVia } from "./types.ts";
+import { ENTRY_UNITS, MARKETS, PRESETS, withDuration, type EngineEvent, type Order, type Preset, type Prices, type SettleVia, type ZoneConfig } from "./types.ts";
 import type { Hex } from "viem";
 
 // ---------- config
@@ -30,18 +30,46 @@ if (existsSync(envFile)) {
 const { values: args } = parseArgs({
   options: {
     bots: { type: "string", default: "0" }, preset: { type: "string", default: "stage" }, port: { type: "string" },
-    open: { type: "string", default: "15" }, countdown: { type: "string", default: "10" }, seed: { type: "string" },
+    open: { type: "string", default: process.env.OPEN_S?.trim() || "15" }, countdown: { type: "string", default: process.env.COUNTDOWN_S?.trim() || "10" }, seed: { type: "string" },
     max: { type: "string", default: "50" }, loop: { type: "boolean", default: false }, resume: { type: "boolean", default: false },
     predict: { type: "boolean", default: false }, "predict-bots": { type: "string", default: "0" }, "predict-only": { type: "boolean", default: false },
     "predict-rounds": { type: "string", default: "0" },
   },
 });
-const preset = PRESETS[args.preset as Preset["name"]];
-if (!preset) throw new Error(`unknown preset ${args.preset}`);
+const basePreset = PRESETS[args.preset as Preset["name"]];
+if (!basePreset) throw new Error(`unknown preset ${args.preset}`);
+// Game timings and the zone from the environment; unset = the spec's values. Invalid values refuse to start.
+const envInt = (name: string, ok: (n: number) => boolean, rule: string): number | undefined => {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || !ok(n)) { console.error(`${name}=${raw} is invalid: ${rule}`); process.exit(1); }
+  return n;
+};
+const ROYALE_DURATION_S = envInt("ROYALE_DURATION_S", (n) => n > 0 && n % 60 === 0, "a positive multiple of 60 seconds");
+const preset = ROYALE_DURATION_S === undefined ? basePreset : withDuration(basePreset, ROYALE_DURATION_S);
+const inRange = (r: readonly [number, number]) => (n: number) => n >= r[0] && n <= r[1];
+const PREDICT_LOCK_AFTER_S = envInt("PREDICT_LOCK_AFTER_S", inRange(RANGES.lockAfter), `${RANGES.lockAfter[0]} to ${RANGES.lockAfter[1]} seconds`);
+const PREDICT_RESOLVE_AFTER_S = envInt("PREDICT_RESOLVE_AFTER_S", inRange(RANGES.resolveAfter), `${RANGES.resolveAfter[0]} to ${RANGES.resolveAfter[1]} seconds`);
+/** The protocol round's spec, with the lock and resolve times from the environment when set. */
+function protocolSpec(market: (typeof MARKETS)[number]): RoundSpec {
+  const s = baseProtocolSpec(market);
+  if (PREDICT_LOCK_AFTER_S !== undefined) s.lockAfter = PREDICT_LOCK_AFTER_S;
+  if (PREDICT_RESOLVE_AFTER_S !== undefined) s.resolveAfter = PREDICT_RESOLVE_AFTER_S;
+  return s;
+}
+const ZONE_MODE = process.env.ZONE_MODE?.trim() || "linear";
+if (ZONE_MODE !== "linear" && ZONE_MODE !== "relative") { console.error(`ZONE_MODE=${ZONE_MODE} is invalid: linear or relative`); process.exit(1); }
+const zoneBps = (name: string, dflt: number) => BigInt(envInt(name, (n) => n <= 5000, "0 to 5000 basis points") ?? dflt);
+const ZONE: ZoneConfig = ZONE_MODE === "relative"
+  ? { mode: "relative", startBps: zoneBps("ZONE_GAP_START_BPS", 200), endBps: zoneBps("ZONE_GAP_END_BPS", 100) }
+  : { mode: "linear" };
 const N_BOTS = Number(args.bots);
 const PORT = Number(args.port ?? process.env.PORT ?? 8787);
 const OPEN_S = Number(args.open);
 const COUNTDOWN_S = Number(args.countdown);
+if (!Number.isFinite(OPEN_S) || OPEN_S < 0) throw new Error(`--open / OPEN_S must be a non-negative number, got ${args.open}`);
+if (!Number.isFinite(COUNTDOWN_S) || COUNTDOWN_S < 0) throw new Error(`--countdown / COUNTDOWN_S must be a non-negative number, got ${args.countdown}`);
 const MAX_PLAYERS = Number(args.max);
 const SEED = Number(args.seed ?? Date.now() % 2 ** 31);
 const PRICE_URL = (process.env.PRICE_SOURCE_URL ?? "").trim();
@@ -144,8 +172,8 @@ function wire(m: Match) {
   });
 }
 
-function newMatch(id: number, p: Preset, seed: number, nBots: number): Match {
-  const lobby = new Lobby({ id, preset: p, maxPlayers: MAX_PLAYERS });
+function newMatch(id: number, p: Preset, seed: number, nBots: number, zone: ZoneConfig = ZONE): Match {
+  const lobby = new Lobby({ id, preset: p, maxPlayers: MAX_PLAYERS, zone });
   const bots = new Bots(seed);
   const driver = new Driver(lobby, realClock, prices, bots);
   const m: Match = {
@@ -181,7 +209,12 @@ async function createLobby(): Promise<Match> {
     books.delete(id);
     log(`[lobby ${id}] moved a stored book for this id aside`);
   }
-  record(m, { in: "create", id, preset: preset.name, seed: m.seed, maxPlayers: MAX_PLAYERS });
+  // The actual timings and zone, so --resume and /stats do not depend on this process's environment.
+  record(m, {
+    in: "create", id, preset: preset.name, seed: m.seed, maxPlayers: MAX_PLAYERS,
+    duration: preset.duration, checkpoints: preset.checkpoints, zoneCents: preset.zoneCents.map(String),
+    zone: ZONE.mode === "relative" ? { mode: "relative", startBps: String(ZONE.startBps), endBps: String(ZONE.endBps) } : { mode: "linear" },
+  });
   wire(m);
   m.lobby.emitLobby();
   current = m;
@@ -934,6 +967,16 @@ async function recoverRounds() {
 }
 
 // ---------- replay a crashed match from its log
+/** The preset a lobby was created with: the recorded timings, else (older logs) the named preset. */
+function presetOf(create: any): Preset {
+  const base = PRESETS[create.preset as Preset["name"]];
+  if (!Array.isArray(create.checkpoints) || !Array.isArray(create.zoneCents) || !Number.isInteger(create.duration)) return base;
+  return { name: base?.name ?? "stage", duration: create.duration, checkpoints: create.checkpoints.map(Number), zoneCents: create.zoneCents.map((z: string) => BigInt(z)) };
+}
+function zoneOf(create: any): ZoneConfig {
+  const z = create.zone;
+  return z?.mode === "relative" ? { mode: "relative", startBps: BigInt(z.startBps), endBps: BigInt(z.endBps) } : { mode: "linear" };
+}
 function resume(): Match | null {
   const files = readdirSync(DATA).filter((f) => /^lobby-\d+\.jsonl$/.test(f)).sort((a, b) => Number(a.match(/\d+/)![0]) - Number(b.match(/\d+/)![0]));
   const last = files.pop();
@@ -941,7 +984,7 @@ function resume(): Match | null {
   const inputs = readFileSync(resolve(DATA, last), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.in);
   const create = inputs.find((x) => x.in === "create");
   if (!create || inputs.some((x) => x.in === "final" || x.in === "cancel")) return null; // finished: its book is served from disk
-  const m = newMatch(create.id, PRESETS[create.preset as Preset["name"]], create.seed, 0);
+  const m = newMatch(create.id, presetOf(create), create.seed, 0, zoneOf(create));
   localId = Math.max(localId, create.id);
   const l = m.lobby;
   l.emitLobby();
@@ -1146,7 +1189,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(PORT, async () => {
-  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
+  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} duration=${preset.duration}s checkpoints=${preset.checkpoints.join("/")} zone=${ZONE.mode === "relative" ? `relative(${ZONE.startBps}->${ZONE.endBps}bps)` : "linear"} open=${OPEN_S}s countdown=${COUNTDOWN_S}s protocolRound=${protocolSpec(MARKETS[0]).lockAfter}/${protocolSpec(MARKETS[0]).resolveAfter}s bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
   setInterval(duels.loop, 4);
   void duels.recover().catch((e) => log(`duel recovery failed: ${failReason(e)}`));
