@@ -26,6 +26,7 @@ import { ADS, GAMES, SPONSOR, promoFoot, promoHead, promoted } from "@/lib/islan
 import { AvatarStudio } from "./AvatarStudio";
 import type { IslandApi } from "./Island";
 import { coral, mint, tang, violet } from "@/lib/theme";
+import { DojoBody } from "@/components/duel/DojoPanel";
 
 /** Re-render once a second for countdowns. */
 export function useNow() {
@@ -259,18 +260,7 @@ function defOf(id: string, s: IslandSnap, api: IslandApi, me: string | null): De
         ),
       };
     case "dojo":
-      return {
-        eyebrow: "Islet · The Dojo",
-        c: tang,
-        title: "Stickman Duel",
-        body: (
-          <>
-            <p className="lede">One-on-one stickman fights with fluid movement, combos and mix-ups. Every match records its inputs, so the result can be replayed and verified before the stake is paid out.</p>
-            <Stats rows={[["Status", "Opening soon"], ["Format", "1v1 · best of 3"], ["Stakes", "1–25 USDC"], ["Settlement", "Replay-verified"]]} />
-            <p className="fine">The Dojo is not open yet. Nothing here takes an entry.</p>
-          </>
-        ),
-      };
+      return { eyebrow: "Islet · The Dojo", c: tang, title: "Stickman Duel", body: <DojoBody /> };
     case "park":
       return {
         eyebrow: "Leaderboard Park",

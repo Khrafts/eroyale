@@ -1,0 +1,77 @@
+/* /duel: the island's panel at full screen, tang as the game colour. Every value from app/theme.css. */
+.screen{min-height:100dvh;overflow-x:hidden;display:flex;flex-direction:column;background:var(--paper);color:var(--ink);font-family:var(--body)}
+.body{padding:16px 16px calc(env(safe-area-inset-bottom,0px) + 24px);display:flex;flex-direction:column;gap:14px;max-width:560px;width:100%;margin:0 auto;box-sizing:border-box}
+.lede{margin:0;font:400 15px/1.45 var(--body);color:var(--ink2)}
+.fine{margin:0;font:400 12.5px/1.45 var(--body);color:var(--muted)}
+.err{margin:0;font:600 13.5px/1.4 var(--body);color:var(--coral-text)}
+.h3{margin:6px 0 0;font:800 14px/1.2 var(--display);letter-spacing:-.01em}
+.fig{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* the two ways in */
+.modes{display:grid;gap:12px}
+.mode{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center;text-align:left;width:100%;box-sizing:border-box;padding:14px;border:var(--stroke) solid var(--ink);border-radius:var(--radius-card);background:var(--island-white);box-shadow:var(--shadow-chip);cursor:pointer;color:var(--ink);font:inherit;transition:transform .12s}
+.mode:hover{transform:translateY(-2px)}
+.mode:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}
+.mode canvas{grid-row:span 2}
+.mode b{font:800 17px/1.15 var(--display);letter-spacing:-.01em}
+.mode span{font:400 13.5px/1.35 var(--body);color:var(--ink2)}
+.price{display:inline-block;margin-left:6px;padding:2px 8px;border:var(--stroke) solid var(--ink);border-radius:var(--radius-round);font:600 11.5px/1.3 var(--mono);vertical-align:2px;background:var(--paper)}
+.price.paid{background:var(--tang)}
+
+.field{display:grid;gap:6px;font:600 13px/1.2 var(--body);color:var(--ink2)}
+.field input{border:var(--stroke) solid var(--ink);border-radius:var(--radius-card);padding:12px 14px;font:500 16px/1.2 var(--body);color:var(--ink);background:var(--island-white)}
+.field input:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}
+
+/* the fight: stage on top, controls in the bottom third */
+.fight{height:100dvh;display:flex;flex-direction:column;background:var(--paper);overflow:hidden;max-width:100vw;color:var(--ink);overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+.stageBox{position:relative;flex:1;min-height:0;border-bottom:var(--stroke) solid var(--ink)}
+.strip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 14px;border-bottom:var(--stroke) solid var(--line);font:500 12.5px/1.2 var(--body);color:var(--ink2)}
+.strip .fig{color:var(--ink);font-weight:600}
+.overlay{position:absolute;left:12px;right:12px;bottom:12px}
+
+.controls{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px calc(env(safe-area-inset-bottom,0px) + 18px);touch-action:none}
+.pad{position:relative;width:156px;height:156px;border-radius:50%;background:var(--island-white);border:var(--stroke) solid var(--ink);box-shadow:var(--shadow-chip);touch-action:none;cursor:pointer}
+.arr{position:absolute;width:0;height:0;border:11px solid transparent}
+.up{left:50%;top:12px;margin-left:-11px;border-bottom:14px solid var(--line);border-top-width:0}
+.down{left:50%;bottom:12px;margin-left:-11px;border-top:14px solid var(--line);border-bottom-width:0}
+.left{top:50%;left:12px;margin-top:-11px;border-right:14px solid var(--line);border-left-width:0}
+.right{top:50%;right:12px;margin-top:-11px;border-left:14px solid var(--line);border-right-width:0}
+.up.on{border-bottom-color:var(--ink)}.down.on{border-top-color:var(--ink)}.left.on{border-right-color:var(--ink)}.right.on{border-left-color:var(--ink)}
+.nub{position:absolute;left:50%;top:50%;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;background:var(--tang);border:var(--stroke) solid var(--ink);box-shadow:var(--shadow-chip);transition:transform .06s;pointer-events:none}
+
+.buttons{display:grid;grid-template-columns:auto auto;grid-template-rows:auto auto;gap:10px 14px;align-items:end}
+.btn{border:var(--stroke) solid var(--ink);border-radius:50%;box-shadow:var(--shadow-chip);font:800 22px/1 var(--display);color:var(--ink);cursor:pointer;touch-action:none;-webkit-tap-highlight-color:transparent;transition:transform .05s, box-shadow .05s}
+.btn[aria-pressed="true"]{transform:translateY(3px);box-shadow:0 0 0 var(--ink)}
+.btn:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:3px}
+.a{width:72px;height:72px;background:var(--tang);grid-column:1;grid-row:2;margin-bottom:18px}
+.b{width:80px;height:80px;background:var(--sun);grid-column:2;grid-row:2}
+.throw{grid-column:1 / span 2;grid-row:1;justify-self:center;width:auto;height:auto;min-height:44px;min-width:64px;padding:7px 16px;border-radius:var(--radius-round);font:700 12px/1 var(--mono);background:var(--paper)}
+.keys{display:none}
+@media (hover:hover) and (pointer:fine){.keys{display:block}}
+
+/* queue */
+.waiting{display:flex;align-items:center;gap:14px}
+.clock{font:800 44px/1 var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+
+/* result */
+.verdict{font:900 34px/1.05 var(--display);letter-spacing:-.02em;margin:0}
+.score{font:800 22px/1 var(--mono)}
+.rows{display:grid;gap:0;background:var(--island-white);border:var(--stroke) solid var(--line);border-radius:var(--radius-card);overflow:hidden}
+.rows > div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:10px 14px;border-top:1px solid var(--line);font:400 13.5px/1.3 var(--body);color:var(--ink2)}
+.rows > div:first-child{border-top:0}
+.rows b{font:600 13px/1.3 var(--mono);color:var(--ink);text-align:right;overflow-wrap:anywhere}
+.rows b.hash{word-break:break-all}
+.chipSun{display:inline-block;padding:3px 10px;border:var(--stroke) solid var(--ink);border-radius:var(--radius-round);background:var(--sun);color:var(--ink);font:700 13px/1.3 var(--mono)}
+.ok{color:var(--ink)}
+.prov{font:500 11px/1 var(--mono);color:var(--muted);margin-left:6px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* practice level */
+.levelRow{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:var(--stroke) solid var(--line)}
+.levelRow > span{font:600 12.5px/1 var(--body);color:var(--ink2)}
+.levelRow > div{flex:1}
+
+@media (prefers-reduced-motion: reduce){.mode,.btn,.nub{transition:none}}
+
+/* below 420 px the brand chip keeps its mark only, so a game chip and the wallet chip fit in the top bar */
+@media (max-width: 420px){.top > a:first-child > span{display:none}.top > a:first-child{padding-right:5px}}

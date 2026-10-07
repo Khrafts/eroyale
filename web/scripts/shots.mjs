@@ -1,4 +1,4 @@
-// Screenshots of every screen against the mock (royale ?mock=1, prediction ?mock=predict, island ?mock=island). Starts `next start` itself.
+// Screenshots of every screen against the mock (royale ?mock=1, prediction ?mock=predict, island ?mock=island, duel ?mock=duel). Starts `next start` itself.
 // Env: SHOTS_DIR (output dir, default ./shots), SHOTS_ONLY (comma list), PORT.
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -35,6 +35,12 @@ const SHOTS = [
   { name: "island-victory", path: `/?mock=island&at=victory`, size: DESK, island: true },
   { name: "island-list", path: `/?view=list&mock=island`, size: DESK },
   { name: "island-phone", path: `/?mock=island&at=overview`, size: PHONE, island: true },
+  // Stickman Duel (?mock=duel): a frozen bot-against-bot match through the rules; the island with the Dojo panel open.
+  { name: "duel-practice", path: `/duel?mock=duel&at=practice`, size: PHONE },
+  { name: "duel-fight", path: `/duel?mock=duel&at=fight`, size: PHONE },
+  { name: "duel-result", path: `/duel?mock=duel&at=result`, size: PHONE },
+  { name: "arena-duel", path: `/arena?mock=duel&at=fight`, size: ARENA },
+  { name: "island-dojo", path: `/?mock=island&at=dojo`, size: DESK, island: true },
 ];
 
 const only = process.env.SHOTS_ONLY?.split(",").map((s) => s.trim()).filter(Boolean);

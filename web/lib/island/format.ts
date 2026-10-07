@@ -3,6 +3,7 @@ import { unitsToUsd } from "../events";
 import { commas } from "../predict";
 import { danceName } from "./avatar";
 import { nowSec, type IslandSnap, type PredictInfo, type UserRound } from "./store";
+import { dojoLine } from "../../components/duel/dojo";
 
 export const mmss = (s: number) => {
   const v = Math.max(0, Math.ceil(s));
@@ -98,7 +99,7 @@ export function lineOf(key: string, s: IslandSnap): string {
       return predictLine(s);
     case "game.duel":
     case "duel.line":
-      return "Opening soon";
+      return dojoLine();
     case "game.create":
       return "Your market, your rules";
     case "park.line":
