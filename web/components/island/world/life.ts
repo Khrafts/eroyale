@@ -13,7 +13,7 @@ export function buildLife(ctx: Ctx, snap0: IslandSnap) {
   const { scene, R } = ctx;
   let snap = snap0;
   const clouds: { g: THREE.Group; a: number; r: number; y: number; s: number }[] = [];
-  const cloudMat = toon("#FFFFFF", { emissive: "#F2EEFF", emissiveIntensity: 0.35 });
+  const cloudMat = toon(C.white, { emissive: "#F2EEFF", emissiveIntensity: 0.35 });
   for (let i = 0; i < 14; i++) {
     const g = new THREE.Group();
     const n = 3 + Math.floor(R() * 4);
@@ -77,7 +77,7 @@ export function buildLife(ctx: Ctx, snap0: IslandSnap) {
     sh.lineTo(2.4, 0);
     sh.lineTo(0, 4);
     sh.closePath();
-    P(b, new THREE.ShapeGeometry(sh), toon("#FFFFFF", { side: THREE.DoubleSide }), [0.1, 1.2, 0], [0, 0, 0], { ol: false });
+    P(b, new THREE.ShapeGeometry(sh), toon(C.white, { side: THREE.DoubleSide }), [0.1, 1.2, 0], [0, 0, 0], { ol: false });
     return b;
   }
   const boats = [

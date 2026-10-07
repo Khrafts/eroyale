@@ -46,7 +46,7 @@ export function buildProps(ctx: Ctx) {
   const lampHeads: THREE.Vector3[] = [];
   const GREENS = ["#2FBF62", "#46D17A", "#25A85A", "#5BD98A"];
   const FUN = ["#FF9EC7", "#C59BFF", "#FFB347", "#FF7BAC"];
-  const FLOWERS = [C.coral, C.sun, "#FFFFFF", C.violet, C.tang, C.sky];
+  const FLOWERS = [C.coral, C.sun, C.white, C.violet, C.tang, C.sky];
   const addTree = (x: number, y: number, z: number, s: number, col: string) => {
     const ry = R() * 6.28;
     trunks.push({ m: m4(x, y, z, 0, ry, 0, s) });

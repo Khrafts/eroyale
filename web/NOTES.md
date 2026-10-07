@@ -1,8 +1,8 @@
 ## Status
-- Step: look-arena 7.3 done: royale and prediction arena in the island's world (b/toon.ts, scene.ts, predict.ts), Sofia files removed (b/fonts.ts is a shim for /play's old import).
-- Last check: GATE PASS ui, predict-ui, island-ui (/arena first load +1.6%); typecheck clean; look-ui arena and Sofia parts pass, its play parts are look-play's.
-- Frame times, 50 bots live (CHAIN=off engine), 1920x1080 headless Chrome: interval p95 16.7 ms, JS per frame p95 1.9 ms over checkpoint 1 (-12 s to +8 s).
-- Next: merge with look-play, then delete b/fonts.ts once /play stops importing it. Blockers: none.
+- Step: Phase 10 one look: look-play (/play in the island kit, merged into feat/island) and look-arena (royale and prediction arena in the island's world, b/toon.ts, scene.ts, predict.ts) together on look-arena; Sofia Sans and b/fonts.ts removed.
+- Last check (each track before this merge): GATE PASS ui, predict-ui, island-ui (/arena +1.6%, /play +4.4% vs main); typecheck clean; look-ui /play parts and arena + Sofia parts pass. Rerun on the merged tree pending.
+- Frame times, 50 bots live (CHAIN=off engine), 1920x1080 headless Chrome: interval p95 16.7 ms, JS per frame p95 1.9 ms over checkpoint 1.
+- Next: lead verifies the merged tree, spec-check and look check, then merges into feat/island. Blockers: none.
 
 ## Running
 

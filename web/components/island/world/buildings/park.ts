@@ -19,7 +19,7 @@ export function buildPark(ctx: Ctx, snap0: IslandSnap) {
   P(arch, new THREE.TorusGeometry(4.2, 0.45, 10, 40, Math.PI), C.sun, [0, 0, 0], [0, 0, 0], { ol: 0.06 });
   for (let i = 0; i <= 10; i++) {
     const a = (i / 10) * Math.PI;
-    P(arch, Sph(0.22, 8, 6), basic(i % 2 ? "#FFFFFF" : "#FFE58A"), [4.2 * Math.cos(a), 4.2 * Math.sin(a), 0.45], [0, 0, 0], { ol: false, shadow: false });
+    P(arch, Sph(0.22, 8, 6), basic(i % 2 ? C.white : "#FFE58A"), [4.2 * Math.cos(a), 4.2 * Math.sin(a), 0.45], [0, 0, 0], { ol: false, shadow: false });
   }
   const trophies: { col: THREE.Mesh; cup: THREE.Group }[] = [];
   for (let i = 0; i < 10; i++) {
@@ -30,12 +30,12 @@ export function buildPark(ctx: Ctx, snap0: IslandSnap) {
     const col = P(g, Cyl(0.85, 1, 1, 10), "#FFFAF2", [0, 0.5, 0], [0, 0, 0], { ol: 0.05 });
     const cup = new THREE.Group();
     g.add(cup);
-    const cc = i === 0 ? C.sun : i === 1 ? "#D8D2F5" : i === 2 ? "#FFB38A" : [C.sky, C.mint, C.coral, C.violet][i % 4];
+    const cc = i === 0 ? C.sun : i === 1 ? C.silver : i === 2 ? C.bronze : [C.sky, C.mint, C.coral, C.violet][i % 4];
     P(cup, Cyl(0.75, 0.3, 0.9, 12), cc, [0, 0.45, 0], [0, 0, 0], { ol: 0.04 });
     P(cup, Cyl(0.35, 0.45, 0.2, 12), cc, [0, 0, 0], [0, 0, 0], { ol: 0.03 });
     trophies.push({ col, cup });
   }
-  ([[-2.4, 1.6, "#D8D2F5"], [0, 2.4, C.sun], [2.4, 1.2, "#FFB38A"]] as [number, number, string][]).forEach(([x, h, c]) =>
+  ([[-2.4, 1.6, C.silver], [0, 2.4, C.sun], [2.4, 1.2, C.bronze]] as [number, number, string][]).forEach(([x, h, c]) =>
     P(park, Box(2.2, h, 2.2), c, [x, 0.3 + h / 2, 1.6], [0, 0, 0], { ol: 0.07 }),
   );
 
