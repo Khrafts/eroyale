@@ -96,7 +96,7 @@ export function buildFountain(ctx: Ctx, snap0: IslandSnap) {
   const pp = new Float32Array(NP * 3);
   const pc = new Float32Array(NP * 3);
   const pv = new Float32Array(NP * 3);
-  const white = new THREE.Color("#ffffff");
+  const white = new THREE.Color(C.white);
   const tmpC = new THREE.Color();
   function spawn(i: number, stagger: boolean) {
     const j = jetDefs[(i / PER) | 0];

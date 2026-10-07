@@ -12,7 +12,7 @@ export function buildPlots(ctx: Ctx) {
     const t = cTex(512, 512, (cx, w, h) => {
       cx.fillStyle = "#6FDB7E";
       cx.fillRect(0, 0, w, h);
-      cx.strokeStyle = "#FFFFFF";
+      cx.strokeStyle = C.white;
       cx.lineWidth = 14;
       cx.setLineDash([40, 26]);
       cx.strokeRect(22, 22, w - 44, h - 44);

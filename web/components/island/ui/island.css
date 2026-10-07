@@ -190,6 +190,7 @@
 .isle{background:var(--island-backdrop);color:var(--ink);font:15px/1.45 var(--body);overflow:hidden;-webkit-font-smoothing:antialiased}
 .isle [hidden]{display:none !important}
 .isle a.cta,.isle a.ghost{text-align:center;text-decoration:none;box-sizing:border-box}
+.isle a.ghost{color:var(--ink)}
 .isle .wallet{font:500 12.5px/1 var(--mono)}
 .isle .empty{background:var(--island-white);border:2px dashed var(--line);border-radius:14px;padding:12px 14px;font-size:13px;color:var(--muted);margin:0 0 12px}
 /* phones: the feed sits above the hint instead of under it */

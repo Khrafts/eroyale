@@ -225,7 +225,7 @@ export function createWorld(canvas: HTMLCanvasElement, labelsHost: HTMLElement, 
   reg("lighthouse", lh, { label: "The Lighthouse", line: "lh.line", glyph: "⚑", color: "#FF4F5E", haloR: 5.5, anchorY: 24, focusDist: 58, prio: 1.5 });
   reg("plotA", plotA, { label: "Plot 07", line: "plot.line", glyph: "+", color: "#3AAFD9", haloR: 10, anchorY: 7, focusDist: 48, prio: 1.2 });
   reg("plotB", plotB, { label: "Plot 11", line: "plot.line", glyph: "+", color: "#3AAFD9", haloR: 10, anchorY: 7, focusDist: 48, prio: 1.2 });
-  ADS.forEach((ad) => reg(ad.id, bb.groups[ad.id], { color: "#FFFFFF", haloR: 7.5, haloY: SAND_Y, anchorY: 10, focusDist: 42 }));
+  ADS.forEach((ad) => reg(ad.id, bb.groups[ad.id], { color: C.white, haloR: 7.5, haloY: SAND_Y, anchorY: 10, focusDist: 42 }));
   reg("blimp", life.blimp, { noFly: true });
   const mePick = reg("me", parkH.mine.root, { route: "studio", label: "You", line: "me.line", glyph: "☺", color: C.sun, anchorY: 5.6, focusDist: 26, prio: 2.5 });
 

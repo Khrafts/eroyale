@@ -33,12 +33,12 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
         cx.fillStyle = C.ink;
         rr(cx, 44, 44, ew + 36, 50, 25);
         cx.fill();
-        cx.fillStyle = "#fff";
+        cx.fillStyle = C.white;
         cx.fillText(eyebrow, 62, 78);
         cx.font = canvasFont("display", 800, 68);
         cx.fillStyle = C.ink;
         wrapText(cx, promoHead(u), 52, 196, w - 110, 82);
-        cx.fillStyle = "#fff";
+        cx.fillStyle = C.white;
         wrapText(cx, promoHead(u), 48, 190, w - 110, 82);
         cx.font = canvasFont("body", 600, 30);
         cx.fillText(promoFoot(u), 50, h - 52);
@@ -84,7 +84,7 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
         cx.fillStyle = C.ink;
         cx.fillText(empty ? "YET" : "HERE", 64, 264);
         cx.font = canvasFont("body", 500, 32);
-        cx.fillStyle = "#4A3D73";
+        cx.fillStyle = C.ink2;
         cx.fillText(empty ? "Player rounds with the biggest pots show here" : "Promote a round you created · 24 h slot", 66, 344);
         cx.fillStyle = C.violet;
         cx.font = canvasFont("mono", 500, 30);
@@ -123,7 +123,7 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
       }),
     );
   });
-  const white = new THREE.Color("#ffffff");
+  const white = new THREE.Color(C.white);
   const tmpC = new THREE.Color();
   const bulbs = new THREE.InstancedMesh(Sph(0.2, 8, 6), new THREE.MeshBasicMaterial(), bulbItems.length);
   bulbItems.forEach((b, i) => {
@@ -148,7 +148,7 @@ export function buildBillboards(ctx: Ctx, snap0: IslandSnap) {
     }
     const step = Math.floor(t * 5);
     bulbItems.forEach((b, i) =>
-      bulbs.setColorAt(i, tmpC.set((b.k + step) % 3 === 0 ? "#FFFFFF" : C.sun).multiplyScalar((b.k + step) % 3 === 0 ? 1 : 0.75)),
+      bulbs.setColorAt(i, tmpC.set((b.k + step) % 3 === 0 ? C.white : C.sun).multiplyScalar((b.k + step) % 3 === 0 ? 1 : 0.75)),
     );
     bulbs.instanceColor!.needsUpdate = true;
   });
