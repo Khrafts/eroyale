@@ -9,6 +9,8 @@
   --sea-foam:#FFFFFF; --sea-shallow:#86F7E6; --sea-mid:#2CC3E0; --sea-deep:#3A6FE0;
   /* loss, danger, liquidated as text on paper (4.87:1) */
   --coral-text:#D12B52;
+  /* a soft ink shade under a figure; the white gloss along a filled bar */
+  --shade:rgba(43,29,82,.18); --gloss:rgba(255,255,255,.45);
 
   /* game colours */
   --game-royale:var(--coral); --game-predict:var(--violet); --game-duel:var(--tang); --game-create:var(--mint);

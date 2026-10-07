@@ -8,7 +8,7 @@ import type { Stats } from "../events";
 import { royaleFrom, roundFrom, userRoundFrom } from "./live";
 import type { IslandSnap } from "./store";
 
-export const ISLAND_MOMENTS = ["overview", "live", "checkpoint", "settled", "studio", "victory"] as const;
+export const ISLAND_MOMENTS = ["overview", "live", "checkpoint", "settled", "studio", "victory", "dojo"] as const;
 export type IslandMoment = (typeof ISLAND_MOMENTS)[number];
 
 /** Royale match seconds shown at each island moment. */
@@ -19,6 +19,7 @@ const ROYALE_AT: Record<IslandMoment, number> = {
   settled: MOMENTS.settled,
   studio: MOMENTS.lobby,
   victory: MOMENTS.lobby,
+  dojo: MOMENTS.lobby,
 };
 /** The mock match starts at this unix second (web/mocks/match.ts STARTS_AT). */
 const STARTS_AT = 1791297000;

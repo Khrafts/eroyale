@@ -13,6 +13,7 @@ import { Driver, PredictDriver, realClock } from "./driver.ts";
 import { PredictRound, checkUserSpec, protocolSpec, type RoundSpec } from "./predict.ts";
 import { PredictBots } from "./predict-bots.ts";
 import { Stats, playersInLog } from "./stats.ts";
+import { mountDuels } from "./duel-server.ts";
 import { LOBBY_CANCELLED, LOBBY_LIVE, LOBBY_OPEN, LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
 import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyCreateRound, verifyJoin, verifyOrder, verifyPrediction, type CreateRoundParams } from "./orders.ts";
@@ -971,10 +972,11 @@ function playingNow(): number {
   const counts = (status: string, chainError: string | null) => status !== "settled" && status !== "cancelled" && !(status === "settling" && chainError);
   for (const m of matches.values()) if (counts(m.lobby.status, m.chainError)) for (const p of m.lobby.players) who.add(p.player);
   for (const m of rounds.values()) if (counts(m.round.status, m.chainError)) for (const p of m.round.players) who.add(p.player);
+  for (const p of duels.playing()) who.add(p);
   return who.size;
 }
 function send(res: ServerResponse, code: number, body: unknown, raw = false) {
-  res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" });
+  res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS" });
   res.end(raw ? (body as string) : JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 async function readJson(req: IncomingMessage): Promise<any> {
@@ -1097,13 +1099,17 @@ const server = createServer(async (req, res) => {
       record(m, { in: "order", player: r.player, nonce: String(r.nonce), order: r.order, marks, t });
       return send(res, 200, { ok: true, t, price: marks[r.order.market] });
     }
+    if (await duels.handle(req, res, parts)) return;
     send(res, 404, { error: "not found" });
   } catch (e) {
     send(res, 400, { error: failReason(e) });
   }
 });
 
-const wss = new WebSocketServer({ noServer: true });
+// Clients only send small duel inputs; anything larger is refused by ws (connection closed).
+const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+// Stickman Duel: queue, 60 Hz matches, books, settlement (src/duel-server.ts), on the same chain client and data dir.
+const duels = mountDuels({ chain, dataDir: DATA, log, stats, sigOff: SIG_OFF, settleMode: SETTLE_MODE, chainSelector: CHAIN_SELECTOR, send, readJson, wss });
 const markClients = new Set<WebSocket>();
 setInterval(() => {
   if (!markClients.size) return;
@@ -1114,6 +1120,8 @@ server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://x");
   if (url.pathname !== "/ws") return socket.destroy();
   const q = url.searchParams.get("lobby");
+  const dq = url.searchParams.get("duel");
+  if (dq) return duels.upgrade(req, socket, head, dq);
   if (url.searchParams.get("feed") === "marks") {
     // Live marks for the predict screen before the lock (no lobby events carry a price until then).
     return wss.handleUpgrade(req, socket, head, (ws) => { markClients.add(ws); ws.on("close", () => markClients.delete(ws)); });
@@ -1140,6 +1148,8 @@ server.on("upgrade", (req, socket, head) => {
 server.listen(PORT, async () => {
   log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
+  setInterval(duels.loop, 4);
+  void duels.recover().catch((e) => log(`duel recovery failed: ${failReason(e)}`));
   void recoverRounds().catch((e) => log(`round recovery failed: ${failReason(e)}`));
   if (PREDICT_ON) void openProtocolRound(null);
   if (ROYALE_ON && !(args.resume && resume())) await createLobbyRetrying();

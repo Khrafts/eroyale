@@ -6,7 +6,7 @@ import { PRESETS } from "./types.ts";
 
 export type Win = { player: string; callsign: string; bot: boolean; amountUnits: string };
 // bookHash identifies the match: a lobby id reused by a new escrow (same ENGINE_DATA_DIR) is a different settlement.
-export type Settlement = { lobbyId: number; mode: "royale" | "predict"; at: number; txHash: string; bookHash: string | null; winners: Win[] };
+export type Settlement = { lobbyId: number; mode: "royale" | "predict" | "duel"; at: number; txHash: string; bookHash: string | null; winners: Win[] };
 type Who = { callsign: string; bot: boolean };
 
 const DAY_MS = 86_400_000;
@@ -60,6 +60,22 @@ export class Stats {
       const bookHash = lines.find((x) => x.type === "final")?.bookHash ?? null;
       if (!this.seen.has(keyOf(mode, id, bookHash, e.txHash))) this.record(mode, id, bookHash, e, playersInLog(lines), settledAt(lines, path));
     }
+    // Ranked duels: <dir>/duels/ (CHAIN=off) and <dir>/duel-<DuelEscrow>/ (src/duel-server.ts). Free bot fights are not winnings.
+    for (const sub of readdirSync(dir).filter((f) => /^(duels|duel-0x[0-9a-f]{40})$/.test(f))) {
+      const ddir = resolve(dir, sub);
+      const files = readdirSync(ddir).flatMap((f) => { const m = /^duel-(\d+)\.jsonl$/.exec(f); return m ? [{ f, id: Number(m[1]) }] : []; }).sort((a, b) => a.id - b.id);
+      for (const { f, id } of files) {
+        const path = resolve(ddir, f);
+        const lines = parseLines(path);
+        const e = lines.find((x) => x.type === "settled");
+        if (!e || !lines.find((x) => x.in === "create")?.ranked) continue;
+        const bookHash = lines.find((x) => x.type === "dfinal")?.bookHash ?? null;
+        const who = new Map<string, Who>();
+        for (const x of lines) if (x.type === "duel" && Array.isArray(x.players)) for (const p of x.players) who.set(String(p.player).toLowerCase(), { callsign: p.callsign, bot: !!p.bot });
+        const at = lines.find((x) => x.in === "settled" && Number.isFinite(x.at))?.at ?? Math.floor(statSync(path).mtimeMs);
+        if (!this.seen.has(keyOf("duel", id, bookHash, e.txHash))) this.record("duel", id, bookHash, e, who, at);
+      }
+    }
   }
 
   private keep(s: Settlement) {
@@ -71,7 +87,7 @@ export class Stats {
   }
 
   /** Record one `settled` event (winners and amounts as paid). Once per match (mode, id, book); repeats are ignored. */
-  record(mode: "royale" | "predict", lobbyId: number, bookHash: string | null, e: { txHash: string; winners: string[]; amounts: string[] }, who: Map<string, Who>, at = Date.now()) {
+  record(mode: "royale" | "predict" | "duel", lobbyId: number, bookHash: string | null, e: { txHash: string; winners: string[]; amounts: string[] }, who: Map<string, Who>, at = Date.now()) {
     if (this.seen.has(keyOf(mode, lobbyId, bookHash, e.txHash))) return;
     const winners = e.winners.map((w, i) => {
       const player = w.toLowerCase();

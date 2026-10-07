@@ -3,6 +3,7 @@
 import type { IslandSnap, UserRound } from "./store";
 import { short, usdcShort } from "./format";
 import { ISLAND, coral, ink, mint, sun, tang, violet } from "../theme";
+import { dojoPlayers } from "../../components/duel/dojo";
 
 /** The shared tokens (lib/theme.ts) the panels and the world colour places with. */
 export const COLORS = { coral, violet, tang, mint, sky: ISLAND.sky, sun, ink };
@@ -19,7 +20,8 @@ export const GAMES: Game[] = [
     h: (s) => 2.6 + (s.royale ? Math.min(50, s.royale.status === "live" ? s.royale.alive : s.royale.players) : 0) / 50 * 4.4,
   },
   { id: "predict", name: "Price Prediction", short: "PP", color: COLORS.violet, route: "observatory", h: (s) => 2.6 + (Math.min(50, s.predict?.players ?? 0) / 50) * 4.4 },
-  { id: "duel", name: "Stickman Duel", short: "SD", color: COLORS.tang, route: "dojo", h: () => 1.4 },
+  // the Duel jet: the queue plus the players in live duels (GET /duels)
+  { id: "duel", name: "Stickman Duel", short: "SD", color: COLORS.tang, route: "dojo", h: () => 1.4 + (Math.min(20, dojoPlayers()) / 20) * 4.4 },
   { id: "create", name: "Create a round", short: "+", color: COLORS.mint, route: "create", h: () => 3.4 },
 ];
 

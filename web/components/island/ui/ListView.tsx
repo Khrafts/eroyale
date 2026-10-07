@@ -30,7 +30,7 @@ export function ListView({ api }: { api: IslandApi }) {
         <div className="cards">
           {card("arena", "Trading Royale", COLORS.coral, "The Arena", lineOf("royale.line", s))}
           {card("observatory", "Price Prediction", COLORS.violet, "The Observatory", lineOf("predict.line", s))}
-          {card("dojo", "Stickman Duel", COLORS.tang, "The Dojo", "Opening soon")}
+          {card("dojo", "Stickman Duel", COLORS.tang, "The Dojo", lineOf("duel.line", s))}
           {card("create", "Create a round", COLORS.mint, "The Fountain", "Your market, your rules")}
         </div>
         <div className="two">

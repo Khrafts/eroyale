@@ -126,7 +126,7 @@ abstract contract ReceiverTemplate is IReceiver, Ownable {
   ///      Only use address(0) if you fully understand the security implications.
   function setForwarderAddress(
     address _forwarder
-  ) external onlyOwner {
+  ) public virtual onlyOwner {
     address previousForwarder = s_forwarderAddress;
 
     // Emit warning if disabling forwarder check
