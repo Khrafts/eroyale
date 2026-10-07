@@ -3,7 +3,7 @@
 import { encodeAbiParameters, keccak256 } from "viem";
 
 import { predictSettle, settle, type FinalBook, type PredictBook, type Prices } from "../../shared/scoring.ts";
-import { replay } from "./duel-stub.ts";
+import { replay } from "../../shared/duel.ts";
 
 export type SettlementReport = {
   lobbyId: bigint;
@@ -148,7 +148,8 @@ const DUEL_REPORT_PARAMS = [
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 
 // rawBook is the exact body served at GET /duels/:id/final; bookHash is keccak256 of those bytes. Replays both input
-// strings with shared/duel.ts and refuses unless the replay's tick count equals the book's. The winner index maps to
+// strings with shared/duel.ts and refuses unless each input string has exactly `ticks` characters and the
+// replay's tick count equals the book's. The winner index maps to
 // the book's player address (zero address for a draw). Unless `onchain` is null (offline score-fixture only), refuses
 // unless the book's players (as a set) and stake equal the on-chain duel's. Also refuses a book whose feeBps is not
 // the contract's 500.
@@ -164,6 +165,12 @@ export function buildDuelReport(rawBook: Uint8Array, chainSelector: bigint, onch
   if (!Array.isArray(book.inputs) || book.inputs.length !== 2) throw new Error("a duel book needs two input strings");
   if (typeof book.inputs[0] !== "string" || typeof book.inputs[1] !== "string") throw new Error("inputs must be strings");
   if (!Number.isSafeInteger(book.ticks) || book.ticks < 1) throw new Error(`bad ticks ${book.ticks}`);
+  // The engine records one input per applied tick for each side, so each string is exactly `ticks` long.
+  for (const side of [0, 1] as const) {
+    if (book.inputs[side].length !== book.ticks) {
+      throw new Error(`inputs[${side}] has ${book.inputs[side].length} ticks, book says ${book.ticks}`);
+    }
+  }
   if (typeof book.stakeUnits !== "string" || !/^[1-9]\d*$/.test(book.stakeUnits)) throw new Error(`bad stakeUnits ${book.stakeUnits}`);
   if (BigInt(book.feeBps) !== DUEL_FEE_BPS) throw new Error(`book feeBps ${book.feeBps} vs DuelEscrow ${DUEL_FEE_BPS}`);
   const stake = BigInt(book.stakeUnits);

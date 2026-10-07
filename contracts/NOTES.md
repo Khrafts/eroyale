@@ -1,8 +1,8 @@
 <!-- status -->
-Step: Phase 11 duel-contracts: DuelEscrow + 14 tests incl. golden, DeployDuel, workflow buildDuelReport + duel handler
-Last checks: contracts, workflow, predict-contracts, predict-workflow PASS; duel-contracts PASS with a temporary copy of duel-sim's shared/duel.ts
-Next: after feat/duel has shared/duel.ts: merge it, import replay from ../../shared/duel.ts, delete workflow/src/duel-stub.ts, rerun all five gates
-Blockers: shared/duel.ts (duel-sim) not in feat/duel yet
+Step: Phase 11 duel-contracts done: DuelEscrow + 14 tests, DeployDuel (not broadcast), workflow duel reports on shared/duel.ts
+Last checks: contracts, workflow, predict-contracts, predict-workflow, duel-contracts (gates.next-duel) all PASS
+Next: lead deploys DuelEscrow (11d) and fills duelEscrowAddress in workflow/config.*.json
+Blockers: none
 <!-- /status -->
 
 # Contracts track notes
@@ -103,7 +103,7 @@ Rounds: `cast send "$ESCROW_ADDRESS" "createRound(uint32,uint96,uint16,address,u
 
 ## Workflow: duel books
 
-- `buildDuelReport(rawBook, chainSelector, onchain)` in `workflow/src/report.ts` (a separate export so `buildReport`'s return type, used by the engine, does not change; `buildReport` on a duel book throws). It replays both input strings with `replay()` from `shared/duel.ts`, refuses unless `replay().ticks == book.ticks`, refuses a book `feeBps` other than 500, maps the winner index to `book.players[i]` (zero address for a draw), and encodes the duel report. With `onchain` (from `getDuel`) it also refuses unless the book's players (as a set) and `stakeUnits` equal the duel's. Returns `{duelId, winner, winnerIndex, rounds, ticks, payoutUnits, feeUnits, bookHash, report}`.
+- `buildDuelReport(rawBook, chainSelector, onchain)` in `workflow/src/report.ts` (a separate export so `buildReport`'s return type, used by the engine, does not change; `buildReport` on a duel book throws). It refuses unless each `inputs[i]` has exactly `book.ticks` characters, replays both with `replay()` from `shared/duel.ts`, refuses unless `replay().ticks == book.ticks`, refuses a book `feeBps` other than 500, maps the winner index to `book.players[i]` (zero address for a draw), and encodes the duel report. With `onchain` (from `getDuel`) it also refuses unless the book's players (as a set) and `stakeUnits` equal the duel's. Returns `{duelId, winner, winnerIndex, rounds, ticks, payoutUnits, feeUnits, bookHash, report}`.
 - `scripts/score-fixture.ts` keeps its five arguments; for a `mode: "duel"` book prices, potUnits and feeBps are ignored and it prints `{duelId, winner, winnerIndex, rounds, ticks, payoutUnits, feeUnits, bookHash, report}`.
 - Handler: HTTP trigger `{"duelId": N}` reads `getDuel` from `duelEscrowAddress`, needs Live, each node GETs `/duels/N/final` and runs `buildDuelReport`, consensus on `{duelId, bookHash, winner, report}`, logs `report 0x…` (for `SETTLE_MODE=simulated`: owner calls `DuelEscrow.settleFallback` with those bytes), then `writeReport` to DuelEscrow. `{"lobbyId": N}` is unchanged. `cre-compile src/main.ts` builds the WASM.
 
