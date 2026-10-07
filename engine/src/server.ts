@@ -425,28 +425,48 @@ async function settle(m: { chainError: string | null }, l: Settles, marks: Price
 }
 
 /**
- * Watches for Settled(id) until `until`: every 10 s scans the blocks it has not scanned yet (the RPC caps eth_getLogs
- * at a few blocks per call, so each block is read once) and checks the lobby status. Errors are logged, not swallowed.
+ * Watches for Settled(id) until `until`. One shared watcher serves every pending lobby, so the RPC load does not grow
+ * with the number of lobbies waiting for settlement (with SETTLE_MODE=cre that is every lobby of the last CRE_WAIT_MS):
+ * every 10 s it reads the head, scans the new blocks once for Settled of any id (the RPC caps eth_getLogs at a few
+ * blocks per call), and checks one pending lobby's status (round robin) in case a log was missed. Blocks before the
+ * watch started are covered by that status check: settle() already checked the status before watching.
  */
-async function watchSettled(id: number, from: bigint, until: number): Promise<string | null> {
-  let next = from;
-  while (Date.now() < until) {
+type SettledWatch = { id: number; from: bigint; until: number; checked: number; done: (hash: string | null) => void };
+const settledWatches = new Map<number, SettledWatch>();
+let settledCursor: bigint | null = null; // next block the shared watcher scans
+let settledLoop = false;
+function watchSettled(id: number, from: bigint, until: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    settledWatches.get(id)?.done(null);
+    const w: SettledWatch = { id, from, until, checked: 0, done: (h) => { if (settledWatches.get(id) === w) settledWatches.delete(id); resolve(h); } };
+    settledWatches.set(id, w);
+    if (!settledLoop) { settledLoop = true; void runSettledWatcher(); }
+  });
+}
+async function runSettledWatcher() {
+  while (settledWatches.size) {
+    for (const w of [...settledWatches.values()]) if (Date.now() >= w.until) w.done(null);
+    if (!settledWatches.size) break;
     try {
       const top = await chain.blockNumber();
-      if (top >= next) {
-        const hash = await chain.findSettled(id, next, top);
-        if (hash) return hash;
-        next = top + 1n;
+      if (settledCursor === null || settledCursor > top + 1n) settledCursor = top;
+      if (top >= settledCursor) {
+        for (const x of await chain.settledBetween(settledCursor, top)) settledWatches.get(x.id)?.done(x.hash);
+        settledCursor = top + 1n;
       }
-      if ((await chain.getLobby(id)).status === LOBBY_SETTLED) {
-        const hash = await chain.findSettled(id, from, next - 1n);
-        if (hash) return hash;
-        log(`[lobby ${id}] escrow says Settled but no Settled log since block ${from}`);
+      const w = [...settledWatches.values()].sort((a, b) => a.checked - b.checked)[0];
+      if (w) {
+        w.checked = Date.now();
+        if ((await chain.getLobby(w.id)).status === LOBBY_SETTLED) {
+          const hash = await chain.findSettled(w.id, w.from, settledCursor - 1n);
+          if (hash) w.done(hash);
+          else log(`[lobby ${w.id}] escrow says Settled but no Settled log since block ${w.from}`);
+        }
       }
-    } catch (e) { log(`[lobby ${id}] watching for Settled: ${failReason(e)}`); }
+    } catch (e) { log(`[chain] watching for Settled (${settledWatches.size} lobbies): ${failReason(e)}`); }
     await sleep(10_000);
   }
-  return null;
+  settledLoop = false;
 }
 
 // ---------- prediction rounds (the spec "Prediction mode")
