@@ -1,7 +1,9 @@
 "use client";
-// /duel, the phone: pick Practice (free, in the browser, against botInput) or Ranked (5 USDC, PvP through the engine;
-// a free bot fight if nobody shows up in 10 s), the fight, the result with the replay hash.
-// ?mode=practice starts practice at once. ?mock=duel&at=practice|fight|result shows a frozen moment with no engine.
+// /duel, the phone: Practice (free, in the browser, against botInput or a dummy) is the duel; Ranked (5 USDC, PvP
+// through the engine) is "Coming soon" (CLAUDE.md "Duel tuning"): its card is disabled and nothing links to the queue
+// or the big screen, but its screens (?ticket=, ?duel=, the mocks) still render for anyone holding the URL.
+// ?mode=practice starts practice at once (?level=sparring|fighter|master|dummy, ?guard=block for a blocking dummy).
+// ?mock=duel&at=practice|fight|result shows a frozen moment with no engine.
 // Every screen has the app bar (back to its parent, CLAUDE.md "Navigation" > "Hierarchy"); queue and fight are in the
 // URL (see "the URL holds the screen" below).
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -9,25 +11,25 @@ import { useRouter } from "next/navigation";
 import { keccak256, stringToBytes } from "viem";
 import { Button, GhostButton, PanelHead, Segmented, TopBar, kit, type Back } from "@/components/kit";
 import { EndActions, type Action } from "@/components/kit/actions";
-import Link from "@/components/kit/link";
 import { AvatarHead } from "@/components/play/Avatar";
-import { PANEL, docTitle, duel as duelRoute, island, watchDuel } from "@/lib/nav";
+import { PANEL, docTitle, duel as duelRoute, island } from "@/lib/nav";
 import { useUrlState } from "@/lib/useUrlState";
 import { useDocTitle } from "@/components/arena/title";
-import { engineHttp } from "@/lib/engineUrl";
 import { burner } from "@/lib/engine";
 import { CALLSIGN_KEY, cfgFor, loadAvatar, type AvatarCfg } from "@/lib/island/avatar";
 import { unitsToUsd, isTxHash } from "@/lib/events";
 import { botInput, encodeInputs, initDuel, replay, step, type DuelState } from "./sim";
-import { createInput, type InputSource } from "./input";
+import { D, L, R, awayFrom, createInput, type InputSource } from "./input";
+import { kindOf } from "./render";
 import { Stage } from "./Stage";
 import { Controls } from "./Controls";
 import type { View } from "./render";
 import { botFight, engineConfigured, leaveQueue, queue, ticketStatus } from "./net";
 import { DuelLink, winnerSideOf } from "./link";
+import type { Fighter } from "./sim";
 import { useVerify, type Verify } from "./verify";
 import { DUEL_MOMENTS, MOCK_DUEL_ID, MOCK_ME, MOCK_PLAYERS, MOCK_STAKE, mockReplay, mockRun, pickTick, type DuelMoment } from "./mock";
-import { parseDuels, type DuelPlayer, type DuelsLive, type QueueTicket } from "./types";
+import type { DuelPlayer, QueueTicket } from "./types";
 import s from "./duel.module.css";
 
 declare global {
@@ -40,11 +42,67 @@ const TICK_MS = 1000 / 60;
 const STAKE_UNITS = "5000000";
 /** "5" for 5000000 units, "5.50" otherwise. */
 const usd = (units: string | null | undefined) => unitsToUsd(units ?? STAKE_UNITS).replace(/\.00$/, "");
+// The practice opponent (CLAUDE.md "Duel tuning" > "Bots that spar"): the three bot levels, or a dummy the browser
+// drives (stands still, or blocks everything it can).
 const LEVELS = [
-  { value: "1", label: "Easy" },
-  { value: "2", label: "Normal" },
-  { value: "3", label: "Hard" },
+  { value: "sparring", label: "Sparring" },
+  { value: "fighter", label: "Fighter" },
+  { value: "master", label: "Master" },
+  { value: "dummy", label: "Dummy" },
 ] as const;
+type Level = (typeof LEVELS)[number]["value"];
+const BOT_LEVEL: Record<Exclude<Level, "dummy">, 1 | 2 | 3> = { sparring: 1, fighter: 2, master: 3 };
+const GUARDS = [
+  { value: "stand", label: "Stands still" },
+  { value: "block", label: "Blocks all" },
+] as const;
+const levelOf = (v: string | null): Level => (LEVELS.some((l) => l.value === v) ? (v as Level) : "sparring");
+const OPPONENT: Record<Level, string> = { sparring: "Sparring bot", fighter: "Fighter bot", master: "Master bot", dummy: "dummy" };
+const ATTACKS = new Set(["jab", "heavy", "sweep", "air"]);
+/** The dummy's bits: nothing, or (guarding) hold away from any attack in progress, low against a sweep. */
+function dummyInput(me: Fighter, op: Fighter, guard: boolean): number {
+  if (!guard) return 0;
+  const k = kindOf(op.act);
+  if (!ATTACKS.has(k) && me.act !== "blockstun") return 0;
+  return awayFrom(me.x, op.x, me.facing) | (k === "sweep" ? D : 0);
+}
+
+// ---------- the hint line (until you have blocked once and jumped over once) ----------
+const TIPS = "royale.duel.tips";
+type Tips = { blocked?: boolean; over?: boolean };
+function useTips() {
+  const [tips, setTips] = useState<Tips>({ blocked: true, over: true });
+  useEffect(() => {
+    try {
+      setTips(JSON.parse(localStorage.getItem(TIPS) ?? "{}") as Tips);
+    } catch {
+      setTips({});
+    }
+  }, []);
+  const ref = useRef(tips);
+  ref.current = tips;
+  const mark = useCallback((k: keyof Tips) => {
+    if (ref.current[k]) return;
+    const next = { ...ref.current, [k]: true };
+    ref.current = next;
+    setTips(next);
+    try {
+      localStorage.setItem(TIPS, JSON.stringify(next));
+    } catch {
+      /* storage blocked: the hint stays for this visit */
+    }
+  }, []);
+  return { show: !(tips.blocked && tips.over), mark };
+}
+function Tip() {
+  return (
+    <p className={s.tip} role="note">
+      {/* always right, whichever side the opponent is on (a cross-up swaps them) */}
+      Hold <span className={s.touchOnly}>Block</span>
+      <span className={s.keysOnly}>the arrow away from them</span> to guard · <kbd>↑</kbd> toward them jumps over
+    </p>
+  );
+}
 const BOT_ADDR = "0x0000000000000000000000000000000000000b07";
 
 type Me = { address: string | null; avatar: AvatarCfg; callsign: string };
@@ -158,9 +216,10 @@ function useEscape(go: (() => void) | null) {
 const useTitle = (screen?: string) => useDocTitle(docTitle("duel", screen));
 
 /** The app bar for every /duel screen: back control, brand, switcher (Stickman Duel current), you chip. */
-function Bar({ me, back, watch, children }: { me: Me; back?: Back; watch?: string | null; children?: ReactNode }) {
+// No "Big screen" for the duel while ranked is "Coming soon" (CLAUDE.md "Duel tuning").
+function Bar({ me, back, children }: { me: Me; back?: Back; children?: ReactNode }) {
   return (
-    <TopBar back={back} game="duel" watch={watch ?? null} wallet={me.address} callsign={me.callsign || null} avatar={me.address ? <AvatarHead cfg={me.avatar} size={28} /> : undefined} className={s.top}>
+    <TopBar back={back} game="duel" watch={null} wallet={me.address} callsign={me.callsign || null} avatar={me.address ? <AvatarHead cfg={me.avatar} size={28} /> : undefined} className={s.top}>
       {children}
     </TopBar>
   );
@@ -186,42 +245,10 @@ export default function Duel() {
 }
 
 // ---------- menu ----------
-function useLiveDuels(): DuelsLive[] | null {
-  const [live, setLive] = useState<DuelsLive[] | null>(null);
-  useEffect(() => {
-    if (!engineConfigured()) return;
-    let stop = false;
-    let t: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      if (stop) return;
-      if (!document.hidden) {
-        try {
-          const r = await fetch(`${engineHttp()}/duels`, { cache: "no-store" });
-          if (!stop) setLive(r.ok ? parseDuels(await r.json()).live : []);
-        } catch {
-          /* keep the last list */
-        }
-      }
-      if (!stop) t = setTimeout(poll, 5000);
-    };
-    void poll();
-    return () => {
-      stop = true;
-      clearTimeout(t);
-    };
-  }, []);
-  return live;
-}
-
 function Menu({ me, url }: { me: Me; url: Url }) {
-  const [callsign, setCallsign] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const router = useRouter();
   useTitle();
   useEscape(() => router.push(island(PANEL.duel)));
-  useEffect(() => setCallsign((c) => c || me.callsign), [me.callsign]);
-  const live = useLiveDuels();
   const run = useMemo(() => mockRun([3, 2]), []);
   const t0 = useRef(0);
   const avatars: [AvatarCfg, AvatarCfg] = [me.avatar, cfgFor(BOT_ADDR, "dojo bot")];
@@ -232,26 +259,6 @@ function Menu({ me, url }: { me: Me; url: Url }) {
     const i = from + (Math.floor((now - t0.current) / TICK_MS) % (run.states.length - from));
     return toView(run.states[i], ["practice", "dojo bot"], [false, true], avatars, null);
   };
-  const valid = callsign.trim().length >= 1 && callsign.trim().length <= 24;
-  const ranked = async () => {
-    if (!valid || busy) return;
-    setErr(null);
-    if (!engineConfigured()) return setErr("No engine is configured for this build, so ranked fights are off. Practice works offline.");
-    setBusy(true);
-    try {
-      localStorage.setItem(CALLSIGN_KEY, callsign.trim());
-    } catch {
-      /* ignore */
-    }
-    try {
-      const ticket = await queue(burner(), callsign.trim());
-      writeSession({ ticket, since: Date.now(), callsign: callsign.trim() });
-      url.push({ ticket });
-    } catch (e) {
-      setErr(`Could not join the queue: ${(e as Error).message}`);
-      setBusy(false);
-    }
-  };
   return (
     <main className={s.screen}>
       <Bar me={me} back={{ to: "the island", href: island(PANEL.duel) }} />
@@ -260,90 +267,59 @@ function Menu({ me, url }: { me: Me; url: Url }) {
         <Stage view={view} label="A bot match running in the dojo" />
       </div>
       <div className={s.body}>
-        <p className={s.lede}>One on one, best of three rounds. Jab into heavy, sweep the low guard, throw the blocker. Every ranked match is replayed from its inputs before the stake is paid.</p>
+        <p className={s.lede}>One on one, best of three rounds. Jab into heavy, sweep the low guard, throw the blocker, jump over and hit from behind.</p>
         <div className={s.modes}>
           <button type="button" className={s.mode} onClick={() => url.push({ mode: "practice" })} aria-label="Practice for free against the dojo bot">
             <b>
               Practice <span className={s.price}>free</span>
             </b>
-            <span>Against the dojo bot, right here in your browser. Nothing on chain.</span>
+            <span>Spar with the dojo bot at Sparring, Fighter or Master, or try your moves on a dummy. Runs in your browser, nothing on chain.</span>
           </button>
+          <div className={`${s.mode} ${s.soon}`} aria-disabled="true">
+            <b>
+              Ranked <span className={s.price}>5 USDC</span>
+            </b>
+            <span>
+              <i className={s.soonChip}>Coming soon</i>
+              Fight another player for a stake, paid out after a replay of the match.
+            </span>
+          </div>
         </div>
-        <label className={s.field}>
-          <span>Your callsign</span>
-          <input value={callsign} maxLength={24} onChange={(e) => setCallsign(e.target.value)} placeholder="1 to 24 characters" autoComplete="nickname" />
-        </label>
-        <Button color="duel" big onClick={ranked} disabled={!valid || busy}>
-          {busy ? "Joining the queue…" : "Fight for 5 USDC"}
-        </Button>
-        {err && <p className={s.err}>{err}</p>}
-        <p className={s.fine}>Ranked pairs you with the next player in the queue. Both stakes are taken only once you are matched; the winner gets the pot less the 5% fee. Nobody there after 10 seconds? You can fight the bot for free instead.</p>
-        {live !== null && (
-          <section className={s.live} aria-label="Live duels">
-            <h2>Live now</h2>
-            {live.length ? (
-              <ul>
-                {live.map((d) => (
-                  <li key={d.duelId}>
-                    <span>
-                      <b>{d.players.map((p) => `${p.callsign || p.player.slice(0, 6)}${p.bot ? " (bot)" : ""}`).join(" vs ") || `Duel #${d.duelId}`}</b>
-                      <small>
-                        Duel #{d.duelId} · round {d.round} · {d.hp[0]}–{d.hp[1]} hp
-                      </small>
-                    </span>
-                    <Link href={watchDuel(d.duelId)} className={kit.chip} aria-label={`Watch duel ${d.duelId} on the big screen`}>
-                      Watch
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className={s.fine}>No duel is running right now. Queue up and the next one is yours.</p>
-            )}
-          </section>
-        )}
       </div>
     </main>
   );
 }
 
 // ---------- practice ----------
-/** Practice / Ranked, as two links (never takes focus or arrow keys: the fight's keyboard stays free). */
-function ModeSwitch({ current }: { current: "practice" | "ranked" }) {
-  return (
-    <nav className={`${kit.seg} ${s.modeSwitch}`} aria-label="Practice or ranked">
-      <Link href={duelRoute("practice")} replace aria-current={current === "practice" ? "page" : undefined}>
-        Practice
-      </Link>
-      <Link href={duelRoute()} replace aria-current={current === "ranked" ? "page" : undefined}>
-        Ranked
-      </Link>
-    </nav>
-  );
-}
-
 function Practice({ me, url }: { me: Me; url: Url }) {
-  const [level, setLevel] = useState<"1" | "2" | "3">("2");
+  const level = levelOf(url.params.get("level"));
+  const guard = url.params.get("guard") === "block";
   const [done, setDone] = useState<{ winner: 0 | 1 | null; rounds: [number, number]; hash: string } | null>(null);
   const [game, setGame] = useState(0);
-  const toMenu = () => url.back({ mode: null });
+  const tips = useTips();
+  const toMenu = () => url.back({ mode: null, level: null, guard: null });
   useTitle("Practice");
   useEscape(toMenu);
   const input = useMemo<InputSource | null>(() => (typeof window === "undefined" ? null : createInput()), []);
   useEffect(() => () => input?.dispose(), [input]);
-  const sim = useRef({ st: initDuel(), prev: initDuel(), acc: 0, last: 0, ins: [[], []] as [number[], number[]] });
-  const levelRef = useRef(level);
-  levelRef.current = level;
+  const sim = useRef({ st: initDuel(), prev: initDuel(), acc: 0, last: 0, ins: [[], []] as [number[], number[]], side: 0 });
+  const opp = useRef({ level, guard });
+  opp.current = { level, guard };
   useEffect(() => {
-    sim.current = { st: initDuel(), prev: initDuel(), acc: 0, last: 0, ins: [[], []] };
+    sim.current = { st: initDuel(), prev: initDuel(), acc: 0, last: 0, ins: [[], []], side: 0 };
     setDone(null);
     window.__duelState = () => sim.current.st;
+    input?.setAway(() => {
+      const f = sim.current.st.f;
+      return awayFrom(f[0].x, f[1].x, f[0].facing);
+    });
     return () => {
       delete window.__duelState;
     };
-  }, [game]);
+  }, [game, input]);
   const name = me.callsign || (me.avatar.name !== "you" ? me.avatar.name : "") || "Player";
-  const avatars: [AvatarCfg, AvatarCfg] = [me.avatar, cfgFor(BOT_ADDR + level, "dojo bot")];
+  const oppName = OPPONENT[level];
+  const avatars: [AvatarCfg, AvatarCfg] = [me.avatar, cfgFor(BOT_ADDR + level, oppName)];
   const view = (now: number): View => {
     const g = sim.current;
     if (!g.last) g.last = now;
@@ -353,11 +329,19 @@ function Practice({ me, url }: { me: Me; url: Url }) {
       g.acc -= TICK_MS;
       if (g.st.over) break;
       const a = input?.bits() ?? 0;
-      const b = botInput(g.st, 1, Number(levelRef.current) as 1 | 2 | 3);
+      const o = opp.current;
+      const b = o.level === "dummy" ? dummyInput(g.st.f[1], g.st.f[0], o.guard) : botInput(g.st, 1, BOT_LEVEL[o.level]);
       g.ins[0].push(a);
       g.ins[1].push(b);
       g.prev = g.st;
       g.st = step(g.st, a, b);
+      // the hint goes once you have blocked a hit and once you have jumped over the opponent
+      const [p0, p1] = g.st.f;
+      if (p0.act === "blockstun") tips.mark("blocked");
+      const side = Math.sign(p0.x - p1.x);
+      if (side && g.side && side !== g.side && g.prev.round === g.st.round && (p0.y > 0 || g.prev.f[0].y > 0)) tips.mark("over");
+      if (side) g.side = side;
+      if (g.prev.round !== g.st.round) g.side = 0;
       if (g.st.over) {
         const r = replay(encodeInputs(g.ins[0]), encodeInputs(g.ins[1]));
         const fin = g.st;
@@ -366,7 +350,9 @@ function Practice({ me, url }: { me: Me; url: Url }) {
     }
     // draw between the last two ticks
     const t = g.acc / TICK_MS;
-    const v = toView(g.st, [name, "dojo bot"], [false, true], avatars, 0);
+    const v = toView(g.st, [name, oppName], [false, level !== "dummy"], avatars, 0);
+    // the result card covers the stage: no K.O. or "wins" banner peeking out behind it
+    if (done) v.quietEnd = true;
     for (const i of [0, 1] as const) {
       const p = g.prev.f[i],
         c = g.st.f[i];
@@ -377,22 +363,18 @@ function Practice({ me, url }: { me: Me; url: Url }) {
     }
     return v;
   };
+  const verdict = done ? (done.winner === 0 ? `You beat the ${oppName}` : done.winner === 1 ? `The ${oppName} wins` : "A draw") : "";
   return (
     <main className={s.fight}>
       <Bar me={me} back={{ to: "the Dojo", onClick: toMenu }} />
-      <div className={s.levelRow}>
-        <ModeSwitch current="practice" />
-        <div>
-          <Segmented label="Bot level" options={LEVELS} value={level} onChange={(v) => setLevel(v as "1" | "2" | "3")} />
-        </div>
-      </div>
+      <LevelRow level={level} guard={guard} onLevel={(v) => url.replace({ level: v === "sparring" ? null : v, guard: v === "dummy" ? (guard ? "block" : null) : null })} onGuard={(v) => url.replace({ guard: v === "block" ? "block" : null })} />
       <div className={s.stageBox}>
-        <Stage key={game} view={view} label="Practice fight against the dojo bot" />
+        <Stage key={game} view={view} label={`Practice fight against the ${oppName}`} />
         {done && (
           <div className={`${s.overlay} ${s.endBox}`}>
             <div className={kit.panel} style={{ padding: 14, display: "grid", gap: 10 }}>
               <p className={s.verdict} style={{ fontSize: 24 }}>
-                {done.winner === 0 ? "You beat the bot" : done.winner === 1 ? "The bot wins" : "A draw"}{" "}
+                {verdict.charAt(0).toUpperCase() + verdict.slice(1)}{" "}
                 <span className={s.score}>
                   {done.rounds[0]}–{done.rounds[1]}
                 </span>
@@ -400,16 +382,28 @@ function Practice({ me, url }: { me: Me; url: Url }) {
               <p className={s.fine}>
                 Replay hash <span className={s.fig}>{done.hash}</span>. Practice is free: nothing was staked or paid.
               </p>
-              <EndActions game="duel" primary={{ label: "Fight again", onClick: () => setGame((x) => x + 1) }} more={[{ label: "Fight for 5 USDC", href: duelRoute(), replace: true }]} />
+              <EndActions game="duel" primary={{ label: "Fight again", onClick: () => setGame((x) => x + 1) }} more={[{ label: "Back to the Dojo", onClick: toMenu }]} />
             </div>
           </div>
         )}
       </div>
+      {tips.show && <Tip />}
       {input && <Controls input={input} />}
       <p className={`${s.fine} ${s.keys}`} style={{ padding: "0 18px 12px", textAlign: "center" }}>
-        Keyboard: arrows move, jump and crouch; hold back to block; Z is A, X is B, Z and X together throw.
+        Keyboard: arrows move, jump and crouch; hold away from the opponent to block, with down to block low; Z is A, X is B, Z and X together throw.
       </p>
     </main>
+  );
+}
+
+/** The practice opponent: a segmented control (a lateral move: the URL is replaced, not pushed), and for the dummy
+ *  whether it stands still or blocks. */
+function LevelRow({ level, guard, onLevel, onGuard }: { level: Level; guard: boolean; onLevel: (v: Level) => void; onGuard: (v: string) => void }) {
+  return (
+    <div className={s.levelRow}>
+      <Segmented label="Practice opponent" options={LEVELS} value={level} onChange={onLevel} />
+      {level === "dummy" && <Segmented label="What the dummy does" className={s.guard} options={GUARDS} value={guard ? "block" : "stand"} onChange={onGuard} />}
+    </div>
   );
 }
 
@@ -589,11 +583,11 @@ function FightRoute({ me, url, duelId }: { me: Me; url: Url; duelId: number }) {
   if (!sess)
     return (
       <main className={s.screen}>
-        <Bar me={me} back={{ to: "the Dojo", onClick: () => url.back({ duel: null }) }} watch={watchDuel(duelId)} />
+        <Bar me={me} back={{ to: "the Dojo", onClick: () => url.back({ duel: null }) }} />
         <PanelHead color="duel" eyebrow={`Duel #${duelId}`} title="Not your fight" />
         <div className={s.body}>
-          <p className={s.lede}>This browser did not queue for duel #{duelId}, so it cannot play a side in it. You can still watch it.</p>
-          <EndActions game="duel" primary={{ label: "Watch it on the big screen", href: watchDuel(duelId) }} more={[{ label: "Back to the Dojo", onClick: () => url.back({ duel: null }) }]} />
+          <p className={s.lede}>This browser did not queue for duel #{duelId}, so it cannot play a side in it.</p>
+          <EndActions game="duel" primary={{ label: "Practice for free", href: duelRoute("practice"), replace: true }} more={[{ label: "Back to the Dojo", onClick: () => url.back({ duel: null }) }]} />
         </div>
       </main>
     );
@@ -655,11 +649,16 @@ function Ranked({ me, url, duelId, side, token, ranked }: { me: Me; url: Url; du
     writeSession(null);
     url.back({ duel: null });
   };
-  const again = () => void requeue(url, duelId);
   const players = info?.players ?? [];
   const nameOf = (i: 0 | 1) => players[i]?.callsign || (i === side ? me.callsign || "you" : "opponent");
   const avatarOf = (i: 0 | 1) => (i === side ? me.avatar : cfgFor(players[i]?.player ?? `p${i}`, nameOf(i)));
   const lastView = useRef<View | null>(null);
+  useEffect(() => {
+    input?.setAway(() => {
+      const v = lastView.current;
+      return v ? awayFrom(v.f[side].x, v.f[1 - side].x, v.f[side].facing) : side === 0 ? L : R;
+    });
+  }, [input, side]);
   const view = (now: number): View | null => {
     link?.input(input?.bits() ?? 0);
     const fr = link?.frame(now);
@@ -681,15 +680,14 @@ function Ranked({ me, url, duelId, side, token, ranked }: { me: Me; url: Url; du
         duelId={duelId}
         last={lastView.current}
         back={{ to: "the Dojo", onClick: toMenu }}
-        again={{ label: "Fight again", onClick: again }}
-        watch={watchDuel(duelId)}
+        again={{ label: "Practice for free", href: duelRoute("practice"), replace: true }}
         onEscape={toMenu}
       />
     );
   const status = info?.final ? "Replaying the match" : !info?.connected ? "Connecting…" : info.status === "countdown" || info.status === "matching" ? "Get ready" : info.status === "settling" ? "Replaying the match" : "Live";
   return (
     <main className={blocked ? s.screen : s.fight}>
-      <Bar me={me} back={{ to: "the Dojo", onClick: toMenu }} watch={watchDuel(duelId)} />
+      <Bar me={me} back={{ to: "the Dojo", onClick: toMenu }} />
       {blocked ? (
         <>
           <PanelHead color="duel" eyebrow={`Duel #${duelId}`} title={blocked === "missing" ? "No such duel" : blocked === "cancelled" ? "Duel cancelled" : "Not connected"} />
@@ -703,11 +701,8 @@ function Ranked({ me, url, duelId, side, token, ranked }: { me: Me; url: Url; du
             </p>
             <EndActions
               game="duel"
-              primary={blocked === "offline" ? { label: "Try again", onClick: () => location.reload() } : { label: "Queue again", onClick: again }}
-              more={[
-                { label: "Practice for free", href: duelRoute("practice"), replace: true },
-                { label: "Back to the Dojo", onClick: toMenu },
-              ]}
+              primary={blocked === "offline" ? { label: "Try again", onClick: () => location.reload() } : { label: "Practice for free", href: duelRoute("practice"), replace: true }}
+              more={[{ label: "Back to the Dojo", onClick: toMenu }]}
             />
           </div>
         </>
@@ -729,7 +724,7 @@ function Ranked({ me, url, duelId, side, token, ranked }: { me: Me; url: Url; du
   );
 }
 
-function Result({ me, side, players, final, settled, verify, ranked, stakeUnits, duelId, last, back, again, watch, onEscape }: {
+function Result({ me, side, players, final, settled, verify, ranked, stakeUnits, duelId, last, back, again, onEscape }: {
   me: Me;
   side: 0 | 1;
   players: DuelPlayer[];
@@ -743,7 +738,6 @@ function Result({ me, side, players, final, settled, verify, ranked, stakeUnits,
   last: View | null;
   back: Back;
   again: Action;
-  watch: string;
   onEscape: () => void;
 }) {
   useTitle(`Duel #${duelId} result`);
@@ -756,7 +750,7 @@ function Result({ me, side, players, final, settled, verify, ranked, stakeUnits,
   const opp = players[1 - side]?.callsign ?? "your opponent";
   return (
     <main className={s.screen}>
-      <Bar me={me} back={back} watch={watch} />
+      <Bar me={me} back={back} />
       <PanelHead color="duel" eyebrow={`Duel #${duelId} · ${ranked ? "ranked" : "bot fight"} · result`} title={verdict} />
       {last && (
         <div style={{ height: 190, borderBottom: "var(--stroke) solid var(--ink)" }}>
@@ -798,7 +792,7 @@ function Result({ me, side, players, final, settled, verify, ranked, stakeUnits,
             Book hash<b className={s.hash} title={final.bookHash}>{final.bookHash.slice(0, 10)}…{final.bookHash.slice(-6)}{verify ? (verify.bookHashOk ? " ✓" : " (differs)") : ""}</b>
           </div>
         </div>
-        <EndActions game="duel" primary={again} watch={watch} more={[{ label: "Practice", href: duelRoute("practice") }]} />
+        <EndActions game="duel" primary={again} more={[{ label: "Back to the Dojo", href: duelRoute() }]} />
       </div>
     </main>
   );
@@ -819,7 +813,6 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
   const players: [DuelPlayer, DuelPlayer] = [MOCK_PLAYERS[0], { ...MOCK_PLAYERS[1], callsign: youName }];
   const oppAvatar = cfgFor(MOCK_PLAYERS[0].player, MOCK_PLAYERS[0].callsign);
   const back: Back = { to: "the Dojo", href: duelRoute() };
-  const watch = "/arena?mock=duel&at=fight";
   if (at === "result") {
     const fin = run.final;
     const book = JSON.stringify({ mode: "duel", duelId: MOCK_DUEL_ID, players: MOCK_PLAYERS.map((p) => p.player), stakeUnits: MOCK_STAKE, feeBps: 500, inputs: rep.inputs, ticks: rep.ticks, logHash: "0x" + "0".repeat(64) });
@@ -837,8 +830,7 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
         duelId={MOCK_DUEL_ID}
         last={toView(fin, [players[0].callsign, youName], [false, false], [oppAvatar, me.avatar], MOCK_ME)}
         back={back}
-        again={{ label: "Fight again", href: duelRoute() }}
-        watch={watch}
+        again={{ label: "Practice for free", href: duelRoute("practice") }}
         onEscape={() => router.push(duelRoute())}
       />
     );
@@ -846,18 +838,13 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
   const st = run.states[tick];
   const practice = at === "practice";
   const view = practice
-    ? () => toView(st, [youName, "dojo bot"], [false, true], [me.avatar, cfgFor(BOT_ADDR + "3", "dojo bot")], 0)
+    ? () => toView(st, [youName, OPPONENT.master], [false, true], [me.avatar, cfgFor(BOT_ADDR + "master", OPPONENT.master)], 0)
     : () => toView(st, [players[0].callsign, youName], [false, false], [oppAvatar, me.avatar], MOCK_ME);
   return (
     <main className={s.fight}>
-      <Bar me={me} back={back} watch={practice ? null : watch} />
+      <Bar me={me} back={back} />
       {practice ? (
-        <div className={s.levelRow}>
-          <ModeSwitch current="practice" />
-          <div>
-            <Segmented label="Bot level" options={LEVELS} value="3" onChange={() => {}} />
-          </div>
-        </div>
+        <LevelRow level="master" guard={false} onLevel={() => {}} onGuard={() => {}} />
       ) : (
         <div className={s.strip}>
           <span>
@@ -869,6 +856,7 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
       <div className={s.stageBox}>
         <Stage view={view} label="Mock duel" />
       </div>
+      {practice && <Tip />}
       {input && <Controls input={input} />}
     </main>
   );

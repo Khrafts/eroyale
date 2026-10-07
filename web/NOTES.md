@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 12 feat/nav: nav-kit, nav-island, nav-play, nav-arena all merged (app bar, switcher, you chip on every page; /arena overlay; URL state; end-state action blocks).
-- Last check: per track: ui, predict-ui, island-ui, look-ui, duel-ui GATE PASS; nav-ui parts passed on each track; full set reruns on the merged tree.
-- Next: full gate run, judge pass (12d), live walk (12e), PR (12f). Blockers: none.
+- Step: Phase 14 duel-polish (feel-check fixes): phone camera stops 1100 past the posts and BLOCK stays in view; the camera rises with a jump at once with extra headroom; Ranked "Coming soon" chip; practice end hides the canvas banner and combo; pad/Block/A/B hidden without a coarse pointer; hint copy right after a cross-up.
+- Last check: ui, look-ui, nav-ui, gates.next-duel2 duel-ui (see commit); typecheck clean; screenshots of wall block, jump peak and practice end checked.
+- Next: lead review of fix/duel-polish. Blockers: none.
 
 ## Running
 

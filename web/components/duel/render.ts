@@ -2,6 +2,9 @@
 // its sky gradient with slow clouds, a toon meadow and a wooden dojo deck with a 3 px ink outline, and two stickmen
 // in ink lines wearing their avatar's colours. Everything is read from a plain view each frame; the renderer keeps
 // only presentation state (camera, smoothed joints, sparks, the damage trail, banners).
+// Crossing: fighters may pass each other (an airborne fighter goes over a grounded one), so nothing here assumes who
+// is on the left. Each fighter's drawn facing turns smoothly (the figure narrows through the turn) instead of
+// mirroring in one frame, hit sparks sit on the side the attacker is on, and the camera frames the pair by distance.
 import { AV, type AvatarCfg } from "@/lib/island/avatar";
 import { ISLAND, canvasFont, coral, coralText, gloss, ink, paper, shade, skyBottom, skyTop, sun, tang, violet } from "@/lib/theme";
 
@@ -148,7 +151,9 @@ function poseOf(f: RFighter, t: number): Joints {
 // ---------- the renderer ----------
 type Spark = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number };
 type Burst = { x: number; y: number; life: number; color: string; blocked: boolean };
-type FState = { j: Joints | null; trail: number; trailHold: number; lastHp: number; seenHp: number | null; lastKind: string; comboShown: number; comboPop: number; comboFade: number; flash: number };
+type FState = { j: Joints | null; trail: number; trailHold: number; lastHp: number; seenHp: number | null; lastKind: string; lastFrame: number; face: number | null; comboShown: number; comboPop: number; comboFade: number; flash: number };
+/** A "BLOCK" word over a blocked hit, rising and fading (world units). */
+type Tag = { x: number; y: number; life: number };
 
 export type Renderer = {
   draw: (v: View, now: number) => void;
@@ -170,9 +175,10 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
   let held: [RFighter, RFighter] | null = null;
   let comboRound = 0;
   let last = 0;
-  const fs: [FState, FState] = [0, 1].map(() => ({ j: null, trail: 100, trailHold: 0, lastHp: 100, seenHp: null, lastKind: "idle", comboShown: 0, comboPop: 0, comboFade: 0, flash: 0 })) as [FState, FState];
+  const fs: [FState, FState] = [0, 1].map(() => ({ j: null, trail: 100, trailHold: 0, lastHp: 100, seenHp: null, lastKind: "idle", lastFrame: 0, face: null, comboShown: 0, comboPop: 0, comboFade: 0, flash: 0 })) as [FState, FState];
   const sparks: Spark[] = [];
   const bursts: Burst[] = [];
+  const tags: Tag[] = [];
   let shake = 0;
   let lastRound = 0;
   let bannerT = 0;
@@ -192,8 +198,9 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
   const groundY = () => H * (big ? 0.8 : 0.86);
   /** Below the HUD: the highest a head may reach. */
   const hudBottom = () => (big ? (W / 1920) * 230 : 84 * u());
-  // fit the pair across and the highest of them (a jump) plus a body above the ground
-  const scale = () => Math.min(W / cam.w, (groundY() - hudBottom()) / (cam.top + 1900));
+  // fit the pair across and the highest of them (a jump) plus a body above the ground; in the air the headroom grows a
+  // little so a hat at the peak of a jump stays clear of the health bars and the timer
+  const scale = () => Math.min(W / cam.w, (groundY() - hudBottom()) / (cam.top + 1900 + Math.min(350, cam.top * 0.3)));
   const sx = (x: number) => (x - cam.x) * scale() + W / 2;
   const sy = (y: number) => groundY() - y * scale();
 
@@ -202,10 +209,13 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     const att = v.f[1 - d];
     const kind = kindOf(att.act);
     const hy = kind === "sweep" ? 220 : kind === "air" ? 1250 : kind === "throw" ? 1150 : 1320;
-    const x = def.x - def.facing * 120;
+    // the spark sits on the side the attacker is on (a cross-up comes from behind the defender's facing)
+    const from = att.x !== def.x ? Math.sign(att.x - def.x) : def.facing;
+    const x = def.x + from * 120;
     const y = def.y + hy;
     const color = blocked ? paper : sun;
     bursts.push({ x, y, life: 1, color, blocked });
+    if (blocked) tags.push({ x, y: y + 380, life: 1 });
     const n = opts.reduceMotion ? 0 : blocked ? 6 : 12;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + i * 0.37;
@@ -337,11 +347,11 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     ctx.stroke();
   }
 
-  function fighter(f: RFighter, j: Joints, av0: AvatarCfg, hurt: number, accent: string, flash: boolean) {
+  /** `face` is the drawn facing, from -1 to 1 through a turn (the figure narrows as it turns). */
+  function fighter(f: RFighter, j: Joints, av0: AvatarCfg, hurt: number, accent: string, flash: boolean, face: number) {
     const s = scale();
     const ox = sx(f.x);
     const oy = sy(f.y);
-    const face = f.facing;
     const w = Math.max(big ? 9 : 5, 105 * s);
     const av = flash ? { ...av0, shirt: paper, pants: paper, skin: paper, hatColor: paper } : av0;
     // floor shadow with the side's accent ring
@@ -384,7 +394,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       ctx.fill();
       ctx.stroke();
     }
-    head(ox + j.head[0] * face * s, oy - j.head[1] * s, 175 * s, av, face, hurt, Math.max(big ? 3 : 2, w * 0.24));
+    head(ox + j.head[0] * face * s, oy - j.head[1] * s, 175 * s, av, face >= 0 ? 1 : -1, hurt, Math.max(big ? 3 : 2, w * 0.24));
   }
 
   /** An avatar head: skin, face, hat. Also used for the HUD chips. */
@@ -632,7 +642,8 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       fs.forEach((x) => Object.assign(x, { comboShown: 0, comboFade: 0, comboPop: 0 }));
     }
     for (const side of [0, 1] as const) {
-      if (v.pause > 0) break;
+      // hidden during the round intro and once the match is over (the result card takes over)
+      if (v.pause > 0 || v.over) break;
       const st = fs[side];
       const c = v.f[side].combo;
       if (c >= 2 && c !== st.comboShown) {
@@ -718,9 +729,12 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       const f = v.f[side];
       const st = fs[side];
       const kind = kindOf(f.act);
-      if (st.seenHp !== null && (f.hp < st.seenHp || (kind === "bstun" && st.lastKind !== "bstun"))) spawnHit(v, side, kind === "bstun");
+      // a block is a fresh blockstun, or blockstun whose timer went back up (a second blocked hit inside the first)
+      const blockedNow = kind === "bstun" && (st.lastKind !== "bstun" || f.frame > st.lastFrame);
+      if (st.seenHp !== null && (f.hp < st.seenHp || blockedNow)) spawnHit(v, side, kind === "bstun");
       st.seenHp = f.hp;
       st.lastKind = kind;
+      st.lastFrame = f.frame;
     }
     // camera: centre on the pair, zoom to fit them with room for reach
     const mid = (v.f[0].x + v.f[1].x) / 2;
@@ -730,11 +744,15 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     const wantW = big && v.over && v.quietEnd ? full : Math.max(big ? 5200 : 2900, Math.min(full, span + (big ? 3800 : 2200)));
     const k = 1 - Math.exp(-dt * 6);
     cam.w += (wantW - cam.w) * k;
-    cam.top += (Math.max(v.f[0].y, v.f[1].y, 0) - cam.top) * (1 - Math.exp(-dt * 8));
-    // keep the view on the deck: never past the posts
+    // the camera rises with a jump at once (a lagging camera lets the head run under the HUD) and settles back slowly
+    const topWant = Math.max(v.f[0].y, v.f[1].y, 0);
+    cam.top = topWant > cam.top ? topWant : cam.top + (topWant - cam.top) * (1 - Math.exp(-dt * 8));
+    // keep the view on the deck, stopping a little past the posts: on a phone the margin is wide enough that a fighter
+    // pinned to a wall (recoiling, knocked down, a BLOCK word over it) stays whole on screen
+    const margin = big ? 300 : W < 640 ? 1100 : 600;
     const half = W / 2 / scale();
-    const lo = STAGE_MIN - 300 + half,
-      hi = STAGE_MAX + 300 - half;
+    const lo = STAGE_MIN - margin + half,
+      hi = STAGE_MAX + margin - half;
     const wantX = lo > hi ? (STAGE_MIN + STAGE_MAX) / 2 : Math.max(lo, Math.min(hi, mid));
     cam.x += (wantX - cam.x) * k;
     if (lo <= hi) cam.x = Math.max(lo, Math.min(hi, cam.x));
@@ -757,7 +775,11 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       if (!held) st.j = st.j ? mix(st.j, target, opts.reduceMotion ? 1 : 1 - Math.exp(-dt * 38)) : target;
       else st.j = st.j ?? target;
       const kind = kindOf(f.act);
-      fighter(f, st.j, avs[side], kind === "hstun" || kind === "down" || f.hp <= 0 ? 1 : 0, SIDE[side], st.flash > 0);
+      // the drawn facing eases toward the rules' facing: a turn after a cross-up takes ~80 ms, never a one-frame flip
+      st.face = st.face === null || opts.reduceMotion ? f.facing : st.face + (f.facing - st.face) * (1 - Math.exp(-dt * 30));
+      if (Math.abs(st.face - f.facing) < 0.02) st.face = f.facing;
+      const face = Math.sign(st.face || f.facing) * Math.max(0.12, Math.abs(st.face));
+      fighter(f, st.j, avs[side], kind === "hstun" || kind === "down" || f.hp <= 0 ? 1 : 0, SIDE[side], st.flash > 0, face);
       if (st.flash > 0) st.flash--;
     }
     // sparks and hit bursts (world units)
@@ -804,6 +826,31 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       ctx.arc(sx(p.x), sy(p.y), p.size * s * p.life, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
+    }
+    // "BLOCK" over every blocked hit
+    for (let i = tags.length - 1; i >= 0; i--) {
+      const t = tags[i];
+      t.life -= dt * 1.6;
+      if (t.life <= 0) {
+        tags.splice(i, 1);
+        continue;
+      }
+      const rise = (1 - t.life) * 260;
+      const size = Math.max(big ? 22 : 13, 230 * s);
+      ctx.globalAlpha = Math.min(1, t.life * 2.5);
+      ctx.font = canvasFont("display", 900, size);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = size * 0.28;
+      ctx.strokeStyle = ink;
+      // the word stays whole inside the view, even over a fighter pinned to a wall
+      const tw = ctx.measureText("BLOCK").width / 2 + size * 0.2;
+      const bx = Math.max(tw, Math.min(W - tw, sx(t.x)));
+      ctx.strokeText("BLOCK", bx, sy(t.y + rise));
+      ctx.fillStyle = paper;
+      ctx.fillText("BLOCK", bx, sy(t.y + rise));
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
     if (opts.hud !== false) hud(v, dt);

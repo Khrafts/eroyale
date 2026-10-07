@@ -1,8 +1,16 @@
-// Stickman Duel rules, shared by the engine, the browser and the CRE workflow.
+// Stickman Duel rules, v2, shared by the engine, the browser and the CRE workflow.
 // Self-contained (depends on nothing), integers only, no randomness, no clock: every runtime must
-// give identical results for identical inputs. The table in CLAUDE.md "Rules: shared/duel.ts" is
-// the spec; this header settles everything it leaves open. Never change these after the duel-sim
-// gate first passes: a change rewrites the winner of every recorded match.
+// give identical results for identical inputs. CLAUDE.md "Stickman Duel" plus "Duel tuning
+// (Phase 14)" (which wins where they differ) is the spec; this header settles everything they
+// leave open. Never change these after the duel-sim gate first passes: a change rewrites the
+// winner of every recorded match.
+//
+// v2 replaced v1 on 2026-10-07, while ranked play was off (every v1 ranked duel was already
+// settled on chain and nothing pending replays under v1). What v2 changed: jab hitstun 14 -> 12
+// (no jab loop); push-apart only when both fighters are grounded (a jump passes over the
+// opponent); landing resolution and its equal-x tie-break; air attacks hit on either side, and
+// blocking one needs the hold away from the attacker's position (cross-ups); the bots. No other
+// number in the move table changed.
 //
 // Tick order. step() returns a fresh state. If `over`, it returns an unchanged copy. Otherwise
 // `tick` += 1. During a pause, `pause` -= 1 and nothing else happens (inputs ignored). In a
@@ -16,10 +24,13 @@
 // relative to `facing`.
 //
 // Free to act: act is idle, walk, back, crouch or cblock (or any unknown act string). A free,
-// grounded fighter first turns to face the opponent, then takes the first that applies:
+// grounded fighter first turns to face the opponent (no turn at equal x), then takes the first
+// that applies:
 //   A+B -> throw; down+B -> sweep; B -> heavy; A -> jab; up -> jump; down+back -> cblock
 //   (crouching block, no movement); down -> crouch; back -> back (moves 50 away and is a
 //   standing block); forward -> walk (moves 70 toward); nothing -> idle.
+// The turn is what makes a cross-up work: once the opponent is on the other side, the defender
+// faces it, and "back" is away from it again.
 // Side symmetry: both fighters update against a snapshot of the opponent taken before either
 // update, and hits are found from one state and applied without touching the other hit's
 // inputs, so swapping the sides and mirroring left and right gives the mirrored match exactly.
@@ -33,38 +44,61 @@
 // blockstun, knockdown, land) store the ticks remaining in `frame`, counting down; at 0 the
 // fighter is free and acts on that same tick. Hitstun N set on tick T ends on tick T+N.
 //
+// No loops (v2). A jab that hits on its frame 4 leaves the defender in hitstun until frame 16,
+// where it acts; a held A restarts the jab on frame 13, active on frame 17. So a defender
+// holding back from its first free tick blocks the re-jab. Every other move leaves the attacker
+// busy at least as long as the defender is stunned (heavy: hit on 9, free on 29, attacker's next
+// move active no sooner than 32; sweep and throw knock down for 40 and the downed fighter cannot
+// be hit, and it acts before the hits are found on the tick it gets up). Jab into heavy and jab
+// into sweep are cancels and still combo (heavy active on 15, sweep on 14, defender stunned to
+// 16). An air attack that hits in the last 5 ticks before its landing leaves time for a jab after
+// the 6 landing ticks. Longest true combo: air, jab, then the heavy or sweep cancel (3 hits).
+//
 // Jumping: up sets act jump, vy 200, vx +60 if right is held, -60 if left, else 0. Every tick
 // while airborne (y > 0 or vy > 0, any act): x += vx, y += vy, vy -= 14. On reaching y <= 0:
 // y = 0, vx = vy = 0, and a jump or air attack becomes land for 6 ticks; any other act (a fighter
-// hit in the air) keeps its act and timer. Air attack: A or B while in act jump with airUsed
-// false; startup 5, active from frame 5 until landing, landing recovery 6 (the land act). One
-// air attack per jump; `airUsed` resets on landing.
+// hit in the air) keeps its act and timer. A jump is in the air for 29 ticks and lands on the
+// 30th, 1740 from where it started. Air attack: A or B while in act jump with airUsed false;
+// startup 5, active from frame 5 until landing, landing recovery 6 (the land act). One air
+// attack per jump; `airUsed` resets on landing. The jumper keeps its facing in the air.
 //
 // Hurtbox and reach. Only horizontal reach and the rules below decide a hit; the attacker's
-// height does not matter (a fighter's hurtbox is its whole column). A move connects if the
-// defender's x is in front of the attacker (same side as `facing`) and at most the move's reach
-// away. A move connects at most once (`hit` set on hit or block). A defender in knockdown cannot
-// be hit. An airborne defender (y > 0): low moves and throws miss; mid and high hit only if
-// y < 900. Throws need the attacker grounded (they are only started grounded anyway).
+// height does not matter (a fighter's hurtbox is its whole column). A ground move connects if
+// the defender's x is in front of the attacker (same side as `facing`, or equal x) and at most
+// the move's reach away. An air attack connects on either side: |dx| <= 900 (v2, cross-ups). A
+// move connects at most once (`hit` set on hit or block). A defender in knockdown cannot be hit.
+// An airborne defender (y > 0): low moves and throws miss; mid and high hit only if y < 900.
+// Throws need the attacker grounded (they are only started grounded anyway).
 //
 // Blocking. Only a grounded defender blocks. A defender blocks if its act is back (standing),
 // cblock (crouching) or blockstun (standing, or crouching if down is held this tick). Standing
-// block stops mid and high; crouching block stops mid and low; nothing stops a throw. A blocked
-// move deals its chip damage and sets blockstun; the defender holds its position. A hit deals
-// damage and sets hitstun (or knockdown for 40 ticks on a sweep or throw); a hit interrupts any
-// act, including the defender's own move. Heavy pushes the defender 400 in the attacker's facing
-// direction on hit and on block (stopped by the wall).
+// block stops mid and high; crouching block stops mid and low; nothing stops a throw. Against an
+// air attack (v2) the defender must also hold away from the attacker's position on that tick
+// (after physics, so after the defender's own turn): left held when the attacker's x is greater,
+// right when smaller, back relative to its own facing at equal x. So a defender holding the old
+// back against a cross-up has turned into a walk and is hit; one holding away from the attacker
+// blocks. A blocked move deals its chip damage and sets blockstun; the defender holds its
+// position. A hit deals damage and sets hitstun (or knockdown for 40 ticks on a sweep or throw);
+// a hit interrupts any act, including the defender's own move. Heavy pushes the defender 400 in
+// the attacker's facing direction on hit and on block (stopped by the wall).
 //
 // Combo. `combo` lives on the attacker: the number of hits in its current combo. Before hits are
 // applied each tick, an attacker whose opponent is not in hitstun has combo reset to 0. A hit
 // that connects (not a block) makes it combo + 1 = n; for n >= 2 damage is
 // floor(dmg * max(4, 12 - 2n) / 10). A block leaves combo unchanged. hp never goes below 0.
 //
-// Push-apart. Positions clamp to [500, 11500]. The fighter with the smaller x is the left one
-// (equal x: fighter 0 is left; unreachable in play, since fighters never pass each other). If
-// they are less than 600 apart, with gap g = 600 - distance, each moves ceil(g/2) away from the
-// other (so they end 600 or 601 apart, exactly symmetric); if that puts one past a wall it stops
-// at the wall and the other moves the rest. Applies in the air too.
+// Push-apart (v2). Positions clamp to [500, 11500] every time. Push-apart applies only when both
+// fighters are grounded (y = 0), so an airborne fighter passes over a grounded one and they may
+// overlap while one is in the air. When both are grounded and less than 600 apart (always the
+// case on the tick a jumper lands close), they are separated by their order at that tick: the
+// fighter with the smaller x is the left one. Equal x: the fighter facing right is the left one;
+// if both face the same way, fighter 0 is the left one. Both rules give the mirrored result when
+// the sides are swapped and left and right mirrored (mirroring flips both facings, and swapping
+// the indices maps "fighter 0 left" onto the mirror of "fighter 1 right"), so the symmetry above
+// holds. With gap g = 600 - distance, each moves ceil(g/2) away from the other (so they end 600
+// or 601 apart, exactly symmetric); if that puts one past a wall it stops at the wall and the
+// other moves the rest. A forward jump from 600 to 1100 apart therefore lands on the far side of
+// an idle opponent and ends at least 600 from it; near a wall the clamp can stop the crossing.
 //
 // Rounds. initDuel(): round 1, pause 90. Each round: fighter 0 at x 4000 facing right, fighter 1
 // at 8000 facing left, hp 100, idle; round wins carry over. A round ends the tick a fighter's hp
@@ -81,6 +115,50 @@
 // roundTick, pause, over, winner, then per fighter x, y, vx, vy, hp, facing, act, frame, combo,
 // hit, airUsed, rounds. Lowercase hex, 8 characters.
 // encodeInputs(): base64url alphabet A-Z a-z 0-9 - _, one character per tick, bits & 63.
+//
+// Bots (v2), botInput(): deterministic from the state alone, no history. The returned bits are
+// for the next step, so "now" below means roundTick + 1.
+// Pacing. Each level cuts the round into cycles of P ticks (by roundTick); a string (attacks
+// fewer than 10 non-attack ticks apart) may start only in the first W ticks of a cycle. Inside a
+// string the bot only continues: the jab cancel, an air attack in its own jump, and a jab after
+// landing while the opponent still has 6 or more hitstun ticks left (so it is a true combo).
+// Every string ends at least the level's gap before the next window opens, and the shortest
+// attack (13) outlasts W, so two strings never start in one window. The choices inside a window
+// (which move, which cancel, whether to jump) come from mix(): a hash of the round, the cycle
+// index and the side.
+//   Level 1 Sparring: P 90, W 12. Walks in during the last third of the cycle, throws one jab or
+//     heavy (heavy one cycle in four) in the window, hops back (a backward jump, never "back",
+//     so it never blocks) if still close, then waits. Never cancels, never air attacks. Longest
+//     string 1 attack (28 ticks), gap >= 90 - 12 - 28 = 50.
+//   Level 2 Fighter: P 64, W 8. Reacts to a move from its frame 5: crouch-blocks a ground move
+//     (no retreat), stands against an air attack holding away from the attacker, so it blocks
+//     heavy, sweep and late air attacks but not a fresh jab (active on 4); in blockstun it keeps
+//     the same guard. Guard after stun: on its last hitstun or blockstun tick, and while its act is
+//     back or cblock (it is already guarding), it holds a standing guard ("back", so it drifts 50
+//     a tick away) against any move of the opponent that has not connected and is before frame 5;
+//     from frame 5 the reaction above takes over. All of it is read from the state: its own act
+//     and frame, and the opponent's act, frame and hit. The window ends with the opponent's move
+//     (or when it connects), so a jab started while it already guards is blocked, a fresh jab
+//     from neutral is not; throws and cross-ups beat the guard (only a sweep it sees from frame 5
+//     is crouch-blocked). Counter: an opponent's jab in recovery that was blocked or whiffed is
+//     punished at any time, outside the window too: a jab within 950 if it is active before the
+//     jab ends, else a step in from up to 1100 first; the jab then cancels as below. Counters are
+//     reactions like Master's punishes, never seen against an idle or walking opponent. In the
+//     window: meets a walk-in with a heavy, punishes a move in recovery, otherwise jabs in range
+//     and cancels into heavy or sweep on hit or block. Longest string jab into a cancel (35
+//     ticks), gap >= 64 - 8 - 35 = 21 between its own window strings.
+//   Level 3 Master: P 56, W 12, reacts from frame 2, so it also blocks a fresh jab. A throw
+//     started on a jab's frame 2 is active after the jab, so "throw breaks a fresh jab" works on
+//     the jab's end instead: Master blocks the jab, closes in to throw range (780), and throws on
+//     the tick the jabber gets free (a throw is active on 3, a new jab on 4). Punishes any move in
+//     recovery the same way, or with a jab if there is time; punishes run outside the window (a
+//     reaction to the opponent's attack, never seen against an idle or walking opponent). It
+//     cancels a jab only if it hit. Window mix-ups inside 780: throw (two cycles in four), sweep
+//     or jab; in even cycles a forward jump from 700 to 1100 (a cross-up) with a late air attack,
+//     then the jab and its cancel if the air attack combos. Jumps start only in even cycles, so a
+//     jump string (up to 81 ticks) ends before the next even window and the odd window passes
+//     while it is still going. Gap >= 8.
+// Every level KOs an idle opponent; level 1 takes more than 1200 round ticks to do it.
 
 export type Bits = number; // per tick: 1 left, 2 right, 4 up, 8 down, 16 A, 32 B
 export type Fighter = { x: number; y: number; vx: number; vy: number; hp: number; facing: 1 | -1; act: string; frame: number; combo: number; hit: boolean; airUsed: boolean; rounds: number };
@@ -94,7 +172,7 @@ const FWD = 70, BACK = 50, JUMP_VY = 200, JUMP_VX = 60, GRAVITY = 14, AIR_HIT_Y 
 type Height = "mid" | "low" | "high" | "throw";
 type Move = { s: number; a: number; r: number; dmg: number; reach: number; h: Height; hs: number; bs: number; chip: number };
 const MOVES: Record<string, Move> = {
-  jab: { s: 4, a: 2, r: 7, dmg: 5, reach: 1000, h: "mid", hs: 14, bs: 9, chip: 0 },
+  jab: { s: 4, a: 2, r: 7, dmg: 5, reach: 1000, h: "mid", hs: 12, bs: 9, chip: 0 },
   heavy: { s: 9, a: 3, r: 16, dmg: 12, reach: 1250, h: "mid", hs: 20, bs: 12, chip: 2 },
   sweep: { s: 8, a: 3, r: 18, dmg: 9, reach: 1300, h: "low", hs: 18, bs: 12, chip: 1 },
   air: { s: 5, a: 0, r: 0, dmg: 8, reach: 900, h: "high", hs: 16, bs: 8, chip: 1 },
@@ -190,7 +268,10 @@ function clampX(x: number): number {
 function separate(s: DuelState): void {
   const a = s.f[0], b = s.f[1];
   a.x = clampX(a.x); b.x = clampX(b.x);
-  const L = b.x < a.x ? b : a, R = L === a ? b : a;
+  if (a.y > 0 || b.y > 0) return; // v2: only when both are grounded
+  let L = a, R = b;
+  if (b.x < a.x) { L = b; R = a; }
+  else if (b.x === a.x && b.facing === 1 && a.facing === -1) { L = b; R = a; }
   const d = R.x - L.x;
   if (d >= MIN_GAP) return;
   const half = Math.floor((MIN_GAP - d + 1) / 2);
@@ -205,10 +286,12 @@ function findHit(s: DuelState, i: 0 | 1, defBits: Bits): Hit | null {
   const f = s.f[i], d = s.f[1 - i];
   if (!isMove(f.act) || f.hit) return null;
   const m = MOVES[f.act];
-  const active = f.act === "air" ? f.frame >= m.s : f.frame >= m.s && f.frame < m.s + m.a;
+  const isAir = f.act === "air";
+  const active = isAir ? f.frame >= m.s : f.frame >= m.s && f.frame < m.s + m.a;
   if (!active) return null;
   const dx = (d.x - f.x) * f.facing;
-  if (dx < 0 || dx > m.reach) return null;
+  if (isAir) { if (dx > m.reach || -dx > m.reach) return null; }
+  else if (dx < 0 || dx > m.reach) return null;
   if (d.act === "knockdown") return null;
   if (d.y > 0) {
     if (m.h === "low" || m.h === "throw") return null;
@@ -223,6 +306,11 @@ function findHit(s: DuelState, i: 0 | 1, defBits: Bits): Hit | null {
     else if (d.act === "blockstun") { if (defBits & DOWN) crouch = true; else stand = true; }
     if (stand && (m.h === "mid" || m.h === "high")) blocked = true;
     if (crouch && (m.h === "mid" || m.h === "low")) blocked = true;
+    if (blocked && isAir) {
+      // Cross-ups: hold away from the attacker's position on this tick.
+      const away = f.x > d.x ? -1 : f.x < d.x ? 1 : -d.facing;
+      if (horiz(defBits) !== away) blocked = false;
+    }
   }
   return { def: (1 - i) as 0 | 1, m, name: f.act, blocked };
 }
@@ -331,16 +419,14 @@ export function replay(a: string, b: string): { winner: 0 | 1 | null; rounds: [n
   return { winner: s.winner, rounds: [s.f[0].rounds, s.f[1].rounds], ticks: s.tick, hash: stateHash(s) };
 }
 
-// Bots (practice and free bot fights). Deterministic from the state only.
-// Level 1 walks in to 950 and jabs; it never blocks.
-// Level 2 keeps a longer spacing (waits around 1150 while the opponent walks in), meets a walk-in
-// with a heavy, blocks on reaction (crouching against a sweep), punishes a blocked or whiffed move
-// in range with jab into heavy, and throws a jab restarted point blank.
-// Level 3 plays like level 2 and, against a standing, crouching or blocking opponent, mixes high
-// (jump-in air attack), low (sweep) and throw, chosen by a hash of the round and a coarse time
-// bucket.
-function mix(s: DuelState, side: number): number {
-  let h = Math.imul(s.round * 7919 + Math.floor(s.roundTick / 40) * 104729 + side * 31337, 0x9e3779b1) >>> 0;
+// Bots: see the header. Index by level.
+const BOT_P = [0, 90, 64, 56];
+const BOT_W = [0, 12, 8, 12];
+const BOT_REACT = [0, 9999, 5, 2];
+
+// A hash of the round, a key (the cycle index) and the side, 0..3.
+function mix(s: DuelState, side: number, key: number): number {
+  let h = Math.imul(s.round * 7919 + key * 104729 + side * 31337, 0x9e3779b1) >>> 0;
   h ^= h >>> 15;
   return h % 4;
 }
@@ -348,39 +434,91 @@ function mix(s: DuelState, side: number): number {
 export function botInput(s: DuelState, side: 0 | 1, level: 1 | 2 | 3): Bits {
   if (s.over || s.pause > 0) return 0;
   const me = s.f[side], op = s.f[1 - side];
-  const dir = op.x > me.x ? 1 : -1;
+  const dir = op.x > me.x ? 1 : op.x < me.x ? -1 : me.facing;
   const toward = dir === 1 ? RIGHT : LEFT, away = dir === 1 ? LEFT : RIGHT;
   const dist = op.x > me.x ? op.x - me.x : me.x - op.x;
+  const now = s.roundTick + 1;
+  const P = BOT_P[level], cyc = Math.floor(now / P), phase = now % P;
+  const open = phase < BOT_W[level];
+  const r = mix(s, side, cyc), r2 = mix(s, side + 2, cyc);
+
+  // In the air: only Master attacks, late in its jump so the air attack can combo.
+  if (me.act === "jump") return level === 3 && me.vy < 0 && me.y <= 1300 && dist <= 900 ? BA : 0;
+  if (me.act === "air") return 0;
+  // The jab cancel (levels 2 and 3).
+  if (me.act === "jab" && me.hit) {
+    if (level === 1 || (level === 3 && op.act !== "hitstun")) return 0; // Master cancels only a jab that hit
+    return (r2 & 1) ? BB | DOWN : BB;
+  }
+  // Keep guarding: crouching against ground moves (it does not retreat), standing against air.
+  if (me.act === "blockstun" && me.frame > 1) return away | (op.act === "air" || op.act === "jump" ? 0 : DOWN);
+
+  // Can the bot act on the next step?
   const grounded = me.y === 0 && me.vy <= 0;
-  const free = grounded && isFree(me.act);
+  let ready = grounded && isFree(me.act);
+  if (grounded && COUNTDOWN.indexOf(me.act) >= 0 && me.frame <= 1) ready = true;
+  if (isMove(me.act)) { const m = MOVES[me.act]; if (me.frame + 1 >= m.s + m.a + m.r) ready = true; }
+  if (!ready) return 0;
 
-  if (me.act === "jump") return dist <= 900 && me.y < 1200 ? BA : 0;
-  if (level === 1) return dist <= 950 ? BA : toward;
+  // Continue a true combo: a jab lands while the opponent has 6+ hitstun ticks left.
+  if (level === 3 && me.combo > 0 && op.act === "hitstun" && op.frame >= 6 && dist <= 950) return BA;
 
-  // Levels 2 and 3.
-  if (me.act === "jab" && me.hit) return BB; // jab into heavy (or keeps the heavy if blocked)
-  if (me.act === "blockstun") return away;
-  if (!free) return 0;
+  if (level === 1) {
+    if (open) {
+      if (r === 0 && dist <= 1200) return BB;
+      if (dist <= 950) return BA;
+      return toward;
+    }
+    if (phase < 40) return dist < 1000 ? UP | away : 0; // hop back, then wait
+    if (phase < P - 30) return 0;
+    return dist > 900 ? toward : 0; // walk in for the next window
+  }
+
+  // Fighter's guard: up from its first free tick after hitstun or blockstun, kept while it is
+  // standing guard, against a move that has not connected and is still before its active end.
+  if (level === 2 && isMove(op.act) && op.act !== "throw" && !op.hit) {
+    const m = MOVES[op.act];
+    const guarding = me.act === "back" || me.act === "cblock" || me.act === "hitstun" || me.act === "blockstun";
+    const threat = op.act === "air" || op.frame < m.s + m.a;
+    if (guarding && threat && op.frame < BOT_REACT[2] && dist <= m.reach + 200) return away;
+  }
+
+  // Levels 2 and 3: react to the opponent's move.
   if (isMove(op.act) && op.act !== "throw") {
     const m = MOVES[op.act];
+    const end = m.s + m.a + m.r;
     const recovering = op.act !== "air" && op.frame >= m.s + m.a;
     if (recovering) {
-      if (dist <= 950) return BA; // punish
-    } else if (!op.hit && dist <= m.reach + 150) {
-      if (op.act === "jab" && op.frame <= 1 && dist <= 780) return BA | BB; // throw beats a fresh jab
-      return op.act === "sweep" ? away | DOWN : away; // block on reaction
+      if (level === 2 && !open && op.act === "jab") {
+        // Fighter counters a blocked or whiffed jab at any time: walk in, then jab (and cancel).
+        if (dist <= 950 && op.frame + 4 < end) return BA;
+        if (dist <= 1100 && op.frame + 5 < end) return toward;
+      }
+      if (open || level === 3) {
+        // Punish: a throw lands before the opponent's next jab if it starts as the opponent gets free.
+        if (level === 3 && dist <= 780 && op.frame + 1 >= end - 1) return BA | BB;
+        if (dist <= 950 && op.frame + 4 < end) return BA;
+        if (level === 3 && dist > 780) return toward; // close in for the throw
+      }
+    } else if (!op.hit && op.frame >= BOT_REACT[level] && dist <= m.reach + 200) {
+      return op.act === "air" ? away : away | DOWN; // block on reaction: crouching, standing against air
     }
   }
   if (op.act === "knockdown") return dist > 1000 ? toward : 0; // wait to meet the wake-up
-  if (op.act === "walk" && dist >= 1300 && dist <= 1500) return BB; // heavy meets the walk-in
-  if (level === 3 && op.act !== "walk" && isFree(op.act)) {
-    const r = mix(s, side);
-    if (r === 1 && dist <= 780) return BA | BB;
-    if (r === 2 && dist <= 1250) return DOWN | BB;
-    if (r === 3 && dist > 1100 && dist <= 1500) return UP | toward;
+  if (op.act === "jump" || op.act === "air") return 0;
+  if (level === 3) {
+    if (open) {
+      if (r === 3 && (cyc & 1) === 0 && dist >= 700 && dist <= 1100) return UP | toward; // cross-up
+      if (dist <= 780) return r === 2 ? DOWN | BB : r === 3 ? BA : BA | BB; // throw, sweep or jab
+    }
+    return dist > 780 ? toward : 0; // close in to throw range
   }
-  if (dist <= 1000) return BA;
-  // Hold the spacing for a while to make the opponent commit, then walk in.
-  if (dist <= 1600 && isFree(op.act) && mix(s, side + 2) !== 0) return 0;
-  return toward;
+  if (open) {
+    if (op.act === "walk" && dist >= 1100 && dist <= 1250) return BB; // heavy meets the walk-in
+    if (dist <= 1000) return BA;
+    return toward;
+  }
+  // Outside the window: keep a spacing, walk in late in the cycle.
+  if (dist > 1600 || (phase >= P - 15 && dist > 1000)) return toward;
+  return 0;
 }

@@ -29,25 +29,34 @@
 .strip .fig{color:var(--ink);font-weight:600}
 .overlay{position:absolute;left:12px;right:12px;bottom:12px}
 
-.controls{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px calc(env(safe-area-inset-bottom,0px) + 18px);touch-action:none}
-.pad{position:relative;width:156px;height:156px;border-radius:50%;background:var(--island-white);border:var(--stroke) solid var(--ink);box-shadow:var(--shadow-chip);touch-action:none;cursor:pointer}
+.controls{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 10px calc(env(safe-area-inset-bottom,0px) + 16px);touch-action:none}
+.pad{position:relative;flex:none;width:min(156px,36vw);height:min(156px,36vw);border-radius:50%;background:var(--island-white);border:var(--stroke) solid var(--ink);box-shadow:var(--shadow-chip);touch-action:none;cursor:pointer}
 .arr{position:absolute;width:0;height:0;border:11px solid transparent}
 .up{left:50%;top:12px;margin-left:-11px;border-bottom:14px solid var(--line);border-top-width:0}
 .down{left:50%;bottom:12px;margin-left:-11px;border-top:14px solid var(--line);border-bottom-width:0}
 .left{top:50%;left:12px;margin-top:-11px;border-right:14px solid var(--line);border-left-width:0}
 .right{top:50%;right:12px;margin-top:-11px;border-left:14px solid var(--line);border-right-width:0}
 .up.on{border-bottom-color:var(--ink)}.down.on{border-top-color:var(--ink)}.left.on{border-right-color:var(--ink)}.right.on{border-left-color:var(--ink)}
-.nub{position:absolute;left:50%;top:50%;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;background:var(--tang);border:var(--stroke) solid var(--ink);box-shadow:var(--shadow-chip);transition:transform .06s;pointer-events:none}
+.nub{position:absolute;left:50%;top:50%;width:37%;height:37%;transform-origin:center;margin:-18.5% 0 0 -18.5%;border-radius:50%;background:var(--tang);border:var(--stroke) solid var(--ink);box-shadow:var(--shadow-chip);transition:transform .06s;pointer-events:none}
 
-.buttons{display:grid;grid-template-columns:auto auto;grid-template-rows:auto auto;gap:10px 14px;align-items:end}
+.buttons{flex:none;display:grid;grid-template-columns:auto auto;grid-template-rows:auto auto;gap:10px;align-items:end}
 .btn{border:var(--stroke) solid var(--ink);border-radius:50%;box-shadow:var(--shadow-chip);font:800 22px/1 var(--display);color:var(--ink);cursor:pointer;touch-action:none;-webkit-tap-highlight-color:transparent;transition:transform .05s, box-shadow .05s}
 .btn[aria-pressed="true"]{transform:translateY(3px);box-shadow:0 0 0 var(--ink)}
 .btn:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:3px}
-.a{width:72px;height:72px;background:var(--tang);grid-column:1;grid-row:2;margin-bottom:18px}
-.b{width:80px;height:80px;background:var(--sun);grid-column:2;grid-row:2}
+.a{width:min(72px,17vw);height:min(72px,17vw);background:var(--tang);grid-column:1;grid-row:2;margin-bottom:18px}
+.b{width:min(80px,19vw);height:min(80px,19vw);background:var(--sun);grid-column:2;grid-row:2}
 .throw{grid-column:1 / span 2;grid-row:1;justify-self:center;width:auto;height:auto;min-height:44px;min-width:64px;padding:7px 16px;border-radius:var(--radius-round);font:700 12px/1 var(--mono);background:var(--paper)}
+/* Block: a tall paper pill between the pad and A/B, a shield that fills ink while held */
+.block{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;width:min(60px,15vw);height:min(96px,24vw);padding:0;border:var(--stroke) solid var(--ink);border-radius:var(--radius-card);background:var(--paper);box-shadow:var(--shadow-chip);color:var(--ink);font:700 11px/1 var(--mono);cursor:pointer;touch-action:none;-webkit-tap-highlight-color:transparent;transition:transform .05s, box-shadow .05s, background .08s}
+.block svg{width:22px;height:26px;fill:var(--paper);stroke:var(--ink);stroke-width:2.2;stroke-linejoin:round}
+.block[aria-pressed="true"]{transform:translateY(3px);box-shadow:0 0 0 var(--ink);background:var(--ink);color:var(--paper)}
+.block[aria-pressed="true"] svg{fill:var(--paper);stroke:var(--paper)}
+.block:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:3px}
 .keys{display:none}
 @media (hover:hover) and (pointer:fine){.keys{display:block}}
+/* the one-line hint over the controls, until you have blocked once and jumped over once */
+.tip{margin:0;padding:8px 14px 0;text-align:center;font:600 12.5px/1.35 var(--body);color:var(--ink2)}
+.tip kbd{display:inline-block;min-width:1.4em;padding:0 5px;border:1.5px solid var(--ink);border-radius:6px;background:var(--island-white);font:700 11.5px/1.45 var(--mono);color:var(--ink);text-align:center}
 
 /* queue */
 .waiting{display:flex;align-items:center;gap:14px}
@@ -67,17 +76,23 @@
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
 /* practice level */
-.levelRow{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:var(--stroke) solid var(--line)}
+.levelRow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 12px;border-bottom:var(--stroke) solid var(--line)}
 .levelRow > span{font:600 12.5px/1 var(--body);color:var(--ink2)}
-.levelRow > div{flex:0 1 auto}
+.levelRow > div{flex:1 1 100%;display:flex}
+.levelRow > div > button{flex:1;padding-left:4px;padding-right:4px}
+.levelRow > .guard{flex-basis:auto;align-self:flex-start}
+.levelRow > .guard > button{flex:none;font-size:12px}
 
-@media (prefers-reduced-motion: reduce){.mode,.btn,.nub{transition:none}}
+@media (prefers-reduced-motion: reduce){.mode,.btn,.nub,.block{transition:none}}
 
 /* below 420 px the brand chip keeps its mark only, so a game chip and the wallet chip fit in the top bar */
 @media (max-width: 420px){.top > a:first-child > span{display:none}.top > a:first-child{padding-right:5px}}
 
-/* navigation (Phase 12): the Practice/Ranked switch (links in the kit's .seg), the live duels on the menu, the
-   practice end block */
+/* ranked: "Coming soon" (CLAUDE.md "Duel tuning"), a card that is not a button */
+.mode.soon{cursor:default;opacity:.62;box-shadow:none;background:var(--paper);border-style:dashed}
+.mode.soon:hover{transform:none}
+
+/* navigation (Phase 12): the live duels list, the practice end block */
 .modeSwitch{flex:none}
 .modeSwitch a{display:inline-flex;align-items:center;padding:6px 12px;border-radius:var(--radius-round);font:600 13px/1.2 var(--body);color:var(--ink2);text-decoration:none;transition:background .2s,color .2s}
 .modeSwitch a[aria-current="page"]{background:var(--ink);color:var(--paper)}
@@ -91,3 +106,15 @@
 .endBox{top:12px;overflow:auto;display:flex;flex-direction:column;justify-content:flex-end}
 .endBox > div{max-height:100%;overflow:auto}
 @media (prefers-reduced-motion: reduce){.modeSwitch a{transition:none}}
+
+/* ranked's "Coming soon" chip (the Dojo panel's label, as a chip) */
+.soonChip{display:table;margin:0 0 5px;font-style:normal;padding:2px 8px;border:var(--stroke) solid var(--ink);border-radius:var(--radius-round);background:var(--sun);color:var(--ink);font:600 11.5px/1.3 var(--mono);vertical-align:2px;white-space:nowrap}
+
+/* no touch screen (mouse and keyboard only): the pad, Block, A and B go, and the stage takes their height; the hint
+   names the arrow keys instead of the Block button */
+.keysOnly{display:none}
+@media not (any-pointer: coarse){
+  .controls{display:none}
+  .touchOnly{display:none}
+  .keysOnly{display:inline}
+}
