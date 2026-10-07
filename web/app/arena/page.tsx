@@ -11,6 +11,7 @@ import { useUrlState } from "@/lib/useUrlState";
 import { docTitle } from "@/lib/nav";
 import Storm from "@/components/arena/VariantB";
 import Overlay from "@/components/arena/Overlay";
+import { useDocTitle } from "@/components/arena/title";
 
 // ?duel=:id (or ?mock=duel) is the Stickman Duel big screen, in its own lazily loaded chunk (React.lazy: /arena's
 // first-load JS stays as it was).
@@ -68,9 +69,7 @@ function ArenaRoute() {
       clearInterval(id);
     };
   }, []);
-  useEffect(() => {
-    if (duel) document.title = docTitle("duel", duel.id ? `Duel #${duel.id} on the big screen` : "Big screen");
-  }, [duel]);
+  useDocTitle(duel ? docTitle("duel", duel.id ? `Duel #${duel.id} on the big screen` : "Big screen") : null);
   if (duel)
     return (
       <>
@@ -112,10 +111,8 @@ function Arena({ predict, lobby, mock }: { predict: boolean; lobby: number | nul
     }, 1000);
     return () => clearInterval(id);
   }, [lobby]);
-  useEffect(() => {
-    const id = match.state.lobbyId ?? lobby;
-    document.title = docTitle(game, id ? `${game === "predict" ? "Round" : "Lobby"} #${id} on the big screen` : "Big screen");
-  }, [game, match.state.lobbyId, lobby]);
+  const shown = match.state.lobbyId ?? lobby;
+  useDocTitle(docTitle(game, shown ? `${game === "predict" ? "Round" : "Lobby"} #${shown} on the big screen` : "Big screen"));
   return (
     <>
       <Storm match={match} pinned={lobby !== null} />

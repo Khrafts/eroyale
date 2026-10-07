@@ -1,11 +1,10 @@
 /* The /arena overlay (nav.tsx): the kit app bar as a floating chip cluster in the top-left corner, the picker menu and
    the move-on card. Composes the kit's .chip/.panel/.btn; every value from app/theme.css. */
-.bar{position:absolute;top:20px;left:24px;width:min(1100px, calc(100vw - 48px));box-sizing:border-box;padding:0;background:transparent;box-shadow:none;pointer-events:auto}
+.bar{position:absolute;top:18px;left:24px;width:min(664px, calc(100vw - 48px));box-sizing:border-box;padding:8px 10px;background:var(--paper);border:var(--stroke) solid var(--ink);border-radius:var(--radius-panel);box-shadow:var(--shadow-panel);pointer-events:auto}
 .pick{position:relative;flex:none}
 .pickBtn{cursor:pointer;font-weight:600;gap:8px;padding:7px 12px}
 .pickBtn:focus-visible, .item:focus-visible{outline:var(--stroke) solid var(--ink);outline-offset:2px}
-.eye{width:9px;height:9px;border-radius:50%;background:var(--coral);border:1.5px solid var(--ink);box-sizing:border-box;animation:pulse 1.6s ease-in-out infinite}
-@keyframes pulse{50%{opacity:.35}}
+.eye{width:9px;height:9px;border-radius:50%;background:var(--c);border:1.5px solid var(--ink);box-sizing:border-box}
 .caret{width:10px;height:6px;transition:transform .15s}
 .pickBtn[aria-expanded="true"] .caret{transform:rotate(180deg)}
 .menu{position:absolute;top:calc(100% + 8px);left:0;width:300px;max-height:min(560px, calc(100vh - 120px));overflow:auto;display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--paper);border:var(--stroke) solid var(--ink);border-radius:var(--radius-card);box-shadow:var(--shadow-panel);z-index:30}
@@ -20,4 +19,4 @@
 .next{position:absolute;top:20px;right:24px;width:400px;box-sizing:border-box;padding:22px 24px 24px;display:grid;gap:12px;pointer-events:auto;border-top:14px solid var(--c)}
 .next h2{margin:0;font:800 26px/1.1 var(--display);letter-spacing:-.01em}
 .next p{margin:0;font:400 16px/1.45 var(--body);color:var(--ink2)}
-@media (prefers-reduced-motion: reduce){.eye{animation:none}.caret{transition:none}}
+@media (prefers-reduced-motion: reduce){.caret{transition:none}}

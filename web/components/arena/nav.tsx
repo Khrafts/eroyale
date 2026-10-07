@@ -95,7 +95,7 @@ export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavPro
     <>
       <TopBar game={game} watch={null} className={n.bar}>
         <div className={n.pick} ref={pop.box}>
-          <button ref={pop.btn} type="button" className={`${kit.chip} ${n.pickBtn}`} aria-haspopup="true" aria-expanded={pop.open} aria-controls="arena-pick" aria-label={`Watching ${watching}. Pick what to watch`} onClick={() => pop.setOpen((o) => !o)}>
+          <button ref={pop.btn} type="button" className={`${kit.chip} ${n.pickBtn}`} aria-haspopup="true" aria-expanded={pop.open} aria-controls="arena-pick" aria-label={`Watching ${watching}. Pick what to watch`} style={{ ["--c" as string]: game === "duel" ? tang : game === "predict" ? violet : coral }} onClick={() => pop.setOpen((o) => !o)}>
             <span className={n.eye} aria-hidden="true" />
             {watching}
             <svg viewBox="0 0 10 6" aria-hidden="true" className={n.caret}>
