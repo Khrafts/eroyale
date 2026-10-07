@@ -221,7 +221,10 @@ function RoyaleActions({ match, primary, watch = true }: { match: Match; primary
   const main: Action =
     primary ??
     (match.pinned
-      ? { label: "Go to the current lobby", onClick: () => replace({ lobby: null }) }
+      ? // pin straight to the engine's current lobby once it is known (its join screen), else unpin and find it
+        next !== null
+        ? { label: "Join the current lobby", onClick: () => replace({ lobby: String(next) }) }
+        : { label: "Go to the current lobby", onClick: () => replace({ lobby: null }) }
       : next !== null
         ? { label: "Play the next lobby", onClick: followNext }
         : { label: asked ? "Opening the next lobby" : "Play the next lobby", onClick: () => setAsked(true) });

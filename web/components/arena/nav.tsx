@@ -11,7 +11,7 @@ import "@/components/kit/switcher";
 import Link from "@/components/kit/link";
 import { usePopover } from "@/components/kit/popover";
 import { engineHttp } from "@/lib/engineUrl";
-import { island, watchLobby, watchRound } from "@/lib/nav";
+import { island, playRoyale, watchLobby, watchRound } from "@/lib/nav";
 import { coral, tang, violet } from "@/lib/theme";
 import n from "./nav.module.css";
 
@@ -158,12 +158,20 @@ export default function ArenaNav({ game, lobby, duel, ended, mock }: ArenaNavPro
 
 /** The move-on offer for a pinned screen whose lobby, round or duel is over (rule 8): never a surprise, one press. */
 function Next({ game, lobby, duel, lists }: { game: ArenaGame; lobby: number | null; duel: number | null; lists: Lists }) {
-  const offer =
+  const cur = lists.current && lists.current !== lobby ? lists.current : null;
+  const offer: { title: string; line: string; href: string; label: string; color: string; watch?: { href: string; label: string } } =
     game === "duel"
       ? { title: `Duel #${duel} is over`, line: "Practice against the dojo bot while ranked duels are coming soon.", href: island("dojo"), label: "Back to the Dojo", color: tang }
       : game === "predict"
         ? { title: `Round #${lobby} is over`, line: "The protocol round keeps running: follow it and the screen moves on by itself.", href: watchRound(), label: "Follow the protocol round", color: violet }
-        : { title: `Lobby #${lobby} is over`, line: lists.current && lists.current !== lobby ? `Lobby #${lists.current} is the current one.` : "Follow the current lobby and the screen moves on by itself.", href: "/arena?mode=royale", label: "Go to the current lobby", color: coral };
+        : {
+            title: `Lobby #${lobby} is over`,
+            line: cur ? `Lobby #${cur} is the current one.` : "Join the current lobby on your phone, or follow it here.",
+            href: playRoyale(cur ?? undefined),
+            label: "Join the current lobby",
+            color: coral,
+            watch: { href: cur ? watchLobby(cur) : "/arena?mode=royale", label: "Watch the current lobby" },
+          };
   return (
     <section className={`${kit.panel} ${n.next}`} aria-label="What to watch next" style={{ ["--c" as string]: offer.color }}>
       <h2>{offer.title}</h2>
@@ -171,6 +179,11 @@ function Next({ game, lobby, duel, lists }: { game: ArenaGame; lobby: number | n
       <Link href={offer.href} className={kit.btn} style={{ ["--c" as string]: offer.color }}>
         {offer.label}
       </Link>
+      {offer.watch && (
+        <Link href={offer.watch.href} className={kit.ghost}>
+          {offer.watch.label}
+        </Link>
+      )}
     </section>
   );
 }

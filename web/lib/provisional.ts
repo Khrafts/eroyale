@@ -7,9 +7,11 @@ import type { MatchState } from "./useMatch";
 
 const FEE_BPS = 500n;
 
-/** The match is over (clock at or past its length) but `final` has not arrived. */
+/** The match is over but `final` has not arrived: the engine already says `settling` (sent at the end tick), or the
+ *  clock is at or past the match's length while the status still reads `live`. */
 export function hasEnded(s: MatchState, clock: number): boolean {
-  return !s.final && s.status === "live" && s.startsAt !== null && clock >= s.duration;
+  if (s.final) return false;
+  return s.status === "settling" || (s.status === "live" && s.startsAt !== null && clock >= s.duration);
 }
 
 /** A FinalEvent built from the latest leaderboard: alive rows as finalists, cash = their live equity. */

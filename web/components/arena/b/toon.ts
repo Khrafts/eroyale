@@ -480,10 +480,11 @@ export function settlingChip(
   reduced: boolean,
   fade: number,
   detail: string,
+  title = "Settling on Base Sepolia",
+  lead = "Chainlink CRE report",
 ) {
   if (fade <= 0) return;
-  const title = "Settling on Base Sepolia";
-  const line2 = `Chainlink CRE report · ${Math.floor(Math.max(0, wait))} s`;
+  const line2 = `${lead} · ${Math.floor(Math.max(0, wait))} s`;
   const tf = T.font("d", 700, 19);
   const lf = T.font("c", 600, 19);
   const df = T.font("c", 600, 17);

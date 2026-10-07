@@ -5,6 +5,7 @@
 import type { EliminatedEvent, Market, Side } from "@/lib/events";
 import { MARKETS, STAGE, START_BALANCE, isTxHash, num, presetOf, unitsToUsd } from "@/lib/events";
 import type { MatchState } from "@/lib/useMatch";
+import { hasEnded, provisionalFinal } from "@/lib/provisional";
 import type { AvatarCfg } from "@/lib/island/avatar";
 import { GAME, ISLAND, MEANING, coral, coralText, ink, ink2, line as hair, mint, muted, paper, seaDeep, seaFoam, seaMid, seaShallow, sun, violet } from "@/lib/theme";
 import { Type, clamp, commas, easeIn, easeOut, easeOutBack, hash, lerp, mmss, rgba, rng, shortHash, smooth, spring, stamp } from "./draw";
@@ -275,7 +276,21 @@ export class Scene {
   // ---------- frame ----------
   dtNow = 0;
   reducedNow = false;
-  frame(ctx: CanvasRenderingContext2D, s: MatchState, now: number, dt: number, reduced: boolean) {
+  /** Provisional result between the end time and `final` (the closing candle), cached per leaderboard. */
+  private early: { board: MatchState["board"]; fin: MatchState["final"] } | null = null;
+  private earlyNow = false;
+  frame(ctx: CanvasRenderingContext2D, s0: MatchState, now: number, dt: number, reduced: boolean) {
+    // At the end time the arena shows the result at once, ranked from the latest leaderboard and priced at live
+    // marks with the shared settle(); `final` replaces it when the closing candle is in.
+    let s = s0;
+    this.earlyNow = false;
+    if (hasEnded(s0, now)) {
+      if (!this.early || this.early.board !== s0.board) this.early = { board: s0.board, fin: provisionalFinal(s0) };
+      if (this.early.fin) {
+        s = { ...s0, final: this.early.fin, finalT: Math.min(now, s0.duration) };
+        this.earlyNow = true;
+      }
+    } else this.early = null;
     this.real += dt;
     this.dtNow = dt;
     this.reducedNow = reduced;
@@ -1283,7 +1298,9 @@ export class Scene {
         ? `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Settled offline (no chain), nothing paid.`
         : settled
           ? `${who} ${paid === 1 ? "was" : "were"} paid ${usd} from the pot.`
-          : `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Payouts are provisional until settlement.`;
+          : this.earlyNow
+            ? `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Provisional · live prices.`
+            : `${who} ${paid === 1 ? "takes" : "split"} ${usd}. Payouts are provisional until settlement.`;
     ctx.translate(0, HUD_Y);
     const tf = T.font("d", 800, 44);
     const sf = T.font("c", 600, 24);
@@ -1291,12 +1308,25 @@ export class Scene {
     panel(ctx, T, 960, w, 196, "Final", GAME.royale);
     T.text(ctx, title, 960, 116, tf, ink, "center");
     T.text(ctx, sub, 960, 156, sf, ink2, "center");
-    T.text(ctx, `Book ${shortHash(fin.bookHash)}`, 960, 190, T.font("x", 600, 18), muted, "center");
+    T.text(ctx, this.earlyNow ? "Final book after the closing candle" : `Book ${shortHash(fin.bookHash)}`, 960, 190, T.font("x", 600, 18), muted, "center");
     ctx.restore();
 
     // between final and settled: the report is on its way; it cross-fades out as the seal lands in its place
     const pend = !settled ? 1 : settledDt >= 0 ? 1 - settledDt / (reduced ? 0.4 : 0.25) : 1;
-    if (!s.cancelled) settlingChip(ctx, T, 1888, 366, finalDt, this.real, reduced, pend * hA, "Payouts are provisional until it lands");
+    if (!s.cancelled)
+      settlingChip(
+        ctx,
+        T,
+        1888,
+        366,
+        finalDt,
+        this.real,
+        reduced,
+        pend * hA,
+        this.earlyNow ? "Payouts at live prices until then" : "Payouts are provisional until it lands",
+        this.earlyNow ? "Waiting for the closing price" : "Chainlink CRE is running the settlement",
+        this.earlyNow ? "Last one-minute Coinbase candle" : "Report to Base Sepolia",
+      );
     if (settled && settledDt >= 0) stamp(ctx, T, settled.txHash, settled.mode, settledDt, reduced, 1700, 420);
   }
 }
