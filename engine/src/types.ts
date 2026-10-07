@@ -22,9 +22,9 @@ export const PRESETS: Record<Preset["name"], Preset> = {
 
 /**
  * How the displayed and enforced zone moves. `linear` (the spec, the default): a straight line from 9800.00 to each
- * checkpoint's zone line. `relative` (ZONE_MODE=relative): each tick the target is the alive players' average equity
- * less a gap that falls linearly from startBps at t=0 to endBps at the last checkpoint, then holds; the zone never
- * goes down, and a checkpoint enforces the zone at that tick.
+ * checkpoint's zone line. `relative` (ZONE_MODE=relative): each tick the zone is the alive players' median equity
+ * less a gap that falls linearly from startBps at t=0 to endBps at the last checkpoint, then holds; it rises and falls
+ * with the field, is capped at the 3rd-ranked alive equity, and a checkpoint enforces the zone at that tick.
  */
 export type ZoneConfig = { mode: "linear" } | { mode: "relative"; startBps: bigint; endBps: bigint };
 export const LINEAR_ZONE: ZoneConfig = { mode: "linear" };
