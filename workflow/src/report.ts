@@ -3,6 +3,7 @@
 import { encodeAbiParameters, keccak256 } from "viem";
 
 import { predictSettle, settle, type FinalBook, type PredictBook, type Prices } from "../../shared/scoring.ts";
+import { replay } from "../../shared/duel.ts";
 
 export type SettlementReport = {
   lobbyId: bigint;
@@ -64,6 +65,7 @@ export function buildReport(
   // Also enforced at runtime for untyped or stale callers (e.g. a 5-argument call compiled elsewhere).
   if (onchain === undefined) throw new Error("buildReport: pass the on-chain lobby, or null only when offline");
   const parsed = JSON.parse(new TextDecoder().decode(rawBook)) as FinalBook | PredictBook;
+  if ((parsed as { mode?: unknown }).mode === "duel") throw new Error("duel book: use buildDuelReport");
   if (!Number.isSafeInteger(parsed.lobbyId) || parsed.lobbyId < 1) throw new Error(`bad lobbyId ${parsed.lobbyId}`);
   const bookHash = keccak256(rawBook);
 
@@ -102,4 +104,94 @@ export function buildReport(
     bookHash,
     report,
   };
+}
+
+// ---- Stickman Duel ----
+
+// The book served at GET /duels/:id/final. players and inputs in side order; inputs from encodeInputs.
+export type DuelBook = {
+  mode: "duel";
+  duelId: number;
+  players: [string, string];
+  stakeUnits: string;
+  feeBps: number;
+  inputs: [string, string];
+  ticks: number;
+  logHash: string;
+};
+
+// The on-chain duel as DuelEscrow.getDuel returns it (playerA / playerB in join order).
+export type OnchainDuel = { playerA: string; playerB: string; stake: bigint };
+
+export type DuelSettlementReport = {
+  duelId: bigint;
+  winner: `0x${string}`; // zero address for a draw
+  winnerIndex: 0 | 1 | null;
+  rounds: [number, number];
+  ticks: number;
+  payoutUnits: bigint; // to the winner; 0 for a draw (each player gets their stake back)
+  feeUnits: bigint; // to the treasury; 0 for a draw
+  bookHash: `0x${string}`;
+  report: `0x${string}`;
+};
+
+// DuelEscrow.FEE_BPS: the contract takes floor(pot * 500 / 10000) from a won pot.
+const DUEL_FEE_BPS = 500n;
+
+const DUEL_REPORT_PARAMS = [
+  { type: "uint64", name: "chainSelector" },
+  { type: "uint256", name: "duelId" },
+  { type: "bytes32", name: "bookHash" },
+  { type: "address", name: "winner" },
+] as const;
+
+const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+
+// rawBook is the exact body served at GET /duels/:id/final; bookHash is keccak256 of those bytes. Replays both input
+// strings with shared/duel.ts and refuses unless each input string has exactly `ticks` characters and the
+// replay's tick count equals the book's. The winner index maps to
+// the book's player address (zero address for a draw). Unless `onchain` is null (offline score-fixture only), refuses
+// unless the book's players (as a set) and stake equal the on-chain duel's. Also refuses a book whose feeBps is not
+// the contract's 500.
+export function buildDuelReport(rawBook: Uint8Array, chainSelector: bigint, onchain: OnchainDuel | null): DuelSettlementReport {
+  if (onchain === undefined) throw new Error("buildDuelReport: pass the on-chain duel, or null only when offline");
+  const book = JSON.parse(new TextDecoder().decode(rawBook)) as DuelBook;
+  if (book.mode !== "duel") throw new Error(`not a duel book (mode ${String(book.mode)})`);
+  if (!Number.isSafeInteger(book.duelId) || book.duelId < 1) throw new Error(`bad duelId ${book.duelId}`);
+  if (!Array.isArray(book.players) || book.players.length !== 2) throw new Error("a duel book needs exactly two players");
+  const [a, b] = book.players;
+  if (!ADDRESS_RE.test(a) || !ADDRESS_RE.test(b)) throw new Error(`bad player address ${a} / ${b}`);
+  if (a === b) throw new Error(`both sides are ${a}`);
+  if (!Array.isArray(book.inputs) || book.inputs.length !== 2) throw new Error("a duel book needs two input strings");
+  if (typeof book.inputs[0] !== "string" || typeof book.inputs[1] !== "string") throw new Error("inputs must be strings");
+  if (!Number.isSafeInteger(book.ticks) || book.ticks < 1) throw new Error(`bad ticks ${book.ticks}`);
+  // The engine records one input per applied tick for each side, so each string is exactly `ticks` long.
+  for (const side of [0, 1] as const) {
+    if (book.inputs[side].length !== book.ticks) {
+      throw new Error(`inputs[${side}] has ${book.inputs[side].length} ticks, book says ${book.ticks}`);
+    }
+  }
+  if (typeof book.stakeUnits !== "string" || !/^[1-9]\d*$/.test(book.stakeUnits)) throw new Error(`bad stakeUnits ${book.stakeUnits}`);
+  if (BigInt(book.feeBps) !== DUEL_FEE_BPS) throw new Error(`book feeBps ${book.feeBps} vs DuelEscrow ${DUEL_FEE_BPS}`);
+  const stake = BigInt(book.stakeUnits);
+
+  if (onchain !== null) {
+    const chainPlayers = [onchain.playerA.toLowerCase(), onchain.playerB.toLowerCase()];
+    if (!(chainPlayers.includes(a) && chainPlayers.includes(b))) {
+      throw new Error(`book players ${a},${b} vs onchain ${chainPlayers.join(",")}`);
+    }
+    if (stake !== onchain.stake) throw new Error(`book stakeUnits ${stake} vs onchain stake ${onchain.stake}`);
+  }
+
+  const r = replay(book.inputs[0], book.inputs[1]);
+  if (r.ticks !== book.ticks) throw new Error(`replay ran ${r.ticks} ticks, book says ${book.ticks}`);
+
+  const winner = (r.winner === null ? ZERO_ADDRESS : book.players[r.winner]) as `0x${string}`;
+  const pot = 2n * stake;
+  const feeUnits = r.winner === null ? 0n : (pot * DUEL_FEE_BPS) / 10000n;
+  const payoutUnits = r.winner === null ? 0n : pot - feeUnits;
+  const bookHash = keccak256(rawBook);
+  const duelId = BigInt(book.duelId);
+  const report = encodeAbiParameters(DUEL_REPORT_PARAMS, [chainSelector, duelId, bookHash, winner]);
+  return { duelId, winner, winnerIndex: r.winner, rounds: r.rounds, ticks: r.ticks, payoutUnits, feeUnits, bookHash, report };
 }

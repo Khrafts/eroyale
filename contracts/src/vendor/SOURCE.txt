@@ -1,4 +1,6 @@
 Vendored verbatim; do not edit.
+One local change: ReceiverTemplate.setForwarderAddress is `public virtual` instead of `external` (no behaviour change), so
+DuelEscrow can override it to refuse address(0).
 
 IReceiver.sol, ReceiverTemplate.sol, IERC165.sol
   Chainlink "Building Consumer Contracts" page
