@@ -1,7 +1,7 @@
 ## Status
-- Step: DELETE /duels/queue/:ticket (leave the queue) for the duel-ui; CORS allows DELETE.
-- Last check: duel-engine, engine, predict-engine, island-engine GATE PASS (run one after another); duel-client PvP + --bot PASS with the DELETE checks.
-- Next: lead's live Base Sepolia run. Blockers: none.
+- Step: feat/duel = feat/island (main's round-loop fixes merged) + duels (queue, 60 Hz loop, book, settlement, DELETE /duels/queue/:ticket).
+- Last check: duel-engine, engine, predict-engine, island-engine GATE PASS on feat/duel; Base Sepolia PvP settled through the CRE simulator (lead, 11d).
+- Next: hosted engine runs main with SETTLE_MODE=cre; duels go live on the hosted URL after the PRs merge and DUEL_ESCROW_ADDRESS is set. Blockers: none.
 
 # Engine notes
 
