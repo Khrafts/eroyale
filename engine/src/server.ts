@@ -1,6 +1,7 @@
 // Live engine: real clock, exchange prices, HTTP + WebSocket, bots, relayer, append-only log per lobby.
 // npm run dev -- --bots 20 --preset stage [--port 8787] [--open 15] [--countdown 10] [--seed S] [--loop] [--resume]
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs, parseEnv } from "node:util";
@@ -12,6 +13,7 @@ import { Driver, PredictDriver, realClock } from "./driver.ts";
 import { PredictRound, checkUserSpec, protocolSpec, type RoundSpec } from "./predict.ts";
 import { PredictBots } from "./predict-bots.ts";
 import { Stats, playersInLog } from "./stats.ts";
+import { mountDuels } from "./duel-server.ts";
 import { LOBBY_CANCELLED, LOBBY_LIVE, LOBBY_OPEN, LOBBY_SETTLED, failReason, makeChain, redact } from "./chain.ts";
 import { buildReport } from "../../workflow/src/report.ts";
 import { parseOrderRequest, verifyCreateRound, verifyJoin, verifyOrder, verifyPrediction, type CreateRoundParams } from "./orders.ts";
@@ -226,7 +228,7 @@ async function join(m: Match, player: string, callsign: string, botIndex: number
   if (!String(callsign ?? "").trim()) return { error: "callsign required" };
   m.pendingJoins.add(player);
   try {
-    const txHash = await chain.joinFor(l.id, player);
+    const txHash = await chain.joinFor(l.id, player, l.startsAt !== null ? l.startsAt * 1000 - JOIN_CLOSE_MS : undefined);
     const r = l.join(player, callsign, bot);
     if (!r.ok) return { error: r.error };
     record(m, { in: "join", player, callsign, bot, botIndex });
@@ -442,28 +444,48 @@ async function settle(m: { chainError: string | null }, l: Settles, marks: Price
 }
 
 /**
- * Watches for Settled(id) until `until`: every 10 s scans the blocks it has not scanned yet (the RPC caps eth_getLogs
- * at a few blocks per call, so each block is read once) and checks the lobby status. Errors are logged, not swallowed.
+ * Watches for Settled(id) until `until`. One shared watcher serves every pending lobby, so the RPC load does not grow
+ * with the number of lobbies waiting for settlement (with SETTLE_MODE=cre that is every lobby of the last CRE_WAIT_MS):
+ * every 10 s it reads the head, scans the new blocks once for Settled of any id (the RPC caps eth_getLogs at a few
+ * blocks per call), and checks one pending lobby's status (round robin) in case a log was missed. Blocks before the
+ * watch started are covered by that status check: settle() already checked the status before watching.
  */
-async function watchSettled(id: number, from: bigint, until: number): Promise<string | null> {
-  let next = from;
-  while (Date.now() < until) {
+type SettledWatch = { id: number; from: bigint; until: number; checked: number; done: (hash: string | null) => void };
+const settledWatches = new Map<number, SettledWatch>();
+let settledCursor: bigint | null = null; // next block the shared watcher scans
+let settledLoop = false;
+function watchSettled(id: number, from: bigint, until: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    settledWatches.get(id)?.done(null);
+    const w: SettledWatch = { id, from, until, checked: 0, done: (h) => { if (settledWatches.get(id) === w) settledWatches.delete(id); resolve(h); } };
+    settledWatches.set(id, w);
+    if (!settledLoop) { settledLoop = true; void runSettledWatcher(); }
+  });
+}
+async function runSettledWatcher() {
+  while (settledWatches.size) {
+    for (const w of [...settledWatches.values()]) if (Date.now() >= w.until) w.done(null);
+    if (!settledWatches.size) break;
     try {
       const top = await chain.blockNumber();
-      if (top >= next) {
-        const hash = await chain.findSettled(id, next, top);
-        if (hash) return hash;
-        next = top + 1n;
+      if (settledCursor === null || settledCursor > top + 1n) settledCursor = top;
+      if (top >= settledCursor) {
+        for (const x of await chain.settledBetween(settledCursor, top)) settledWatches.get(x.id)?.done(x.hash);
+        settledCursor = top + 1n;
       }
-      if ((await chain.getLobby(id)).status === LOBBY_SETTLED) {
-        const hash = await chain.findSettled(id, from, next - 1n);
-        if (hash) return hash;
-        log(`[lobby ${id}] escrow says Settled but no Settled log since block ${from}`);
+      const w = [...settledWatches.values()].sort((a, b) => a.checked - b.checked)[0];
+      if (w) {
+        w.checked = Date.now();
+        if ((await chain.getLobby(w.id)).status === LOBBY_SETTLED) {
+          const hash = await chain.findSettled(w.id, w.from, settledCursor - 1n);
+          if (hash) w.done(hash);
+          else log(`[lobby ${w.id}] escrow says Settled but no Settled log since block ${w.from}`);
+        }
       }
-    } catch (e) { log(`[lobby ${id}] watching for Settled: ${failReason(e)}`); }
+    } catch (e) { log(`[chain] watching for Settled (${settledWatches.size} lobbies): ${failReason(e)}`); }
     await sleep(10_000);
   }
-  return null;
+  settledLoop = false;
 }
 
 // ---------- prediction rounds (the spec "Prediction mode")
@@ -477,6 +499,23 @@ const rounds = new Map<number, RoundMatch>();
 let protocolRound: RoundMatch | null = null;
 let protocolCount = 0; // markets rotate BTC, ETH, SOL
 const PRECREATE_MS = 20_000; // create the next protocol round's on-chain lobby this long before the current lock
+// A protocol round that can only open more than this long after the previous lock (the engine fell behind: a stalled
+// tx queue, a slow createLobby, a paused process) opens at now instead, with its full lockAfter. Never backdated.
+const PROTOCOL_LATE_MS = 2_000;
+// The lock waits at most this long past the lock time for joins still in flight; then it goes ahead without them
+// (a join that lands later makes the escrow disagree with the book, and finishRound refunds the round).
+const LOCK_HOLD_MAX_MS = 15_000;
+// The one protocol-round createLobby in flight (the early one for the next round, or the one at the lock). Protocol
+// lobbies are interchangeable on chain (same duration, entry and max), so whoever asks next shares it.
+let protocolCreate: Promise<number | null> | null = null;
+function createProtocolLobby(): Promise<number | null> {
+  if (!protocolCreate) {
+    const spec = protocolSpec(MARKETS[0]);
+    protocolCreate = chain.createLobby(spec.resolveAfter, spec.entryUnits, spec.maxPlayers).finally(() => { protocolCreate = null; });
+  }
+  return protocolCreate;
+}
+let openingProtocol = false; // openProtocolRound is running
 const MAX_USER_ROUNDS = 5; // open user rounds at once, globally
 const creating = new Set<string>(); // creators whose createRound is in flight
 // CreateRound nonces, persisted so a signed create cannot be replayed after a restart.
@@ -538,7 +577,7 @@ function openRound(id: number, spec: RoundSpec, protocol: boolean, openTime: num
   };
   m.bots = new PredictBots(seed, (player, price) => void submitPrediction(m, player, price));
   m.driver = new PredictDriver(round, realClock, prices, m.bots);
-  m.driver.holdLock = () => m.pendingJoins.size > 0;
+  m.driver.holdLock = () => m.pendingJoins.size > 0 && Date.now() < m.round.lockTime * 1000 + LOCK_HOLD_MAX_MS;
   m.driver.onTick = (k, mark) => record(m, { in: "tick", k, mark });
   if (existsSync(m.logFile)) renameSync(m.logFile, m.logFile.replace(/\.jsonl$/, `.${Date.now()}.jsonl.old`));
   if (books.has(id) || existsSync(bookFile(id))) {
@@ -579,7 +618,7 @@ async function joinRound(m: RoundMatch, player: string, callsign: string, botInd
   if (!String(callsign ?? "").trim()) return { error: "callsign required" };
   m.pendingJoins.add(player);
   try {
-    const txHash = await chain.joinFor(r.id, player);
+    const txHash = await chain.joinFor(r.id, player, r.lockTime * 1000 - JOIN_CLOSE_MS);
     const j = r.join(player, callsign, botIndex !== null);
     if (!j.ok) {
       // Paid on chain but the round moved on: the on-chain pot is what final and the report use; say so loudly.
@@ -610,26 +649,37 @@ function submitPrediction(m: RoundMatch, player: string, price: string): { ok: t
   return out;
 }
 
-/** The next protocol round opens when the current one locks (or at boot); markets rotate. */
+/**
+ * The next protocol round opens when the current one locks (or at boot); markets rotate. Back to back it opens at the
+ * previous lock time, so it locks one lockAfter later on a minute boundary. If it cannot open within PROTOCOL_LATE_MS
+ * of that (the engine fell behind), it opens at now with its full join window: one fresh round, never a chain of
+ * backdated catch-up rounds that lock (and cancel) as soon as they open. One call at a time; one createLobby at a time.
+ */
 async function openProtocolRound(openAt: number | null, pre: Promise<number | null> | null = null) {
-  const market = MARKETS[protocolCount++ % MARKETS.length];
-  const spec = protocolSpec(market);
-  for (;;) {
-    try {
-      const preId = pre ? await pre : null;
-      pre = null;
-      const chainId = preId ?? (await chain.createLobby(spec.resolveAfter, spec.entryUnits, spec.maxPlayers));
-      const id = chainId ?? ++localId;
-      // Back to back: open at the previous lock time, so this round locks one lockAfter later on a minute boundary.
-      const openTime = openAt ?? Math.floor(Date.now() / 1000);
-      protocolRound = openRound(id, spec, true, openTime, chain.on ? Math.min(PREDICT_BOTS, MAX_CHAIN_PROTOCOL_BOTS) : PREDICT_BOTS, null);
-      return;
-    } catch (e) {
-      log(`[chain] protocol round createLobby failed, retrying in 10 s: ${failReason(e)}`);
-      openAt = null;
-      await sleep(10_000);
+  if (openingProtocol) return log("[round] a protocol round is already being opened");
+  openingProtocol = true;
+  try {
+    const market = MARKETS[protocolCount++ % MARKETS.length];
+    const spec = protocolSpec(market);
+    for (;;) {
+      try {
+        const preId = pre ? await pre : null;
+        pre = null;
+        const chainId = preId ?? (await createProtocolLobby());
+        const id = chainId ?? ++localId;
+        const now = Date.now();
+        let openTime = Math.floor(now / 1000);
+        if (openAt !== null && now <= openAt * 1000 + PROTOCOL_LATE_MS) openTime = openAt;
+        else if (openAt !== null) log(`[round ${id}] the previous protocol round locked ${Math.round((now - openAt * 1000) / 1000)} s ago; opening at now with the full join window`);
+        protocolRound = openRound(id, spec, true, openTime, chain.on ? Math.min(PREDICT_BOTS, MAX_CHAIN_PROTOCOL_BOTS) : PREDICT_BOTS, null);
+        return;
+      } catch (e) {
+        log(`[chain] protocol round createLobby failed, retrying in 10 s: ${failReason(e)}`);
+        openAt = null;
+        await sleep(10_000);
+      }
     }
-  }
+  } finally { openingProtocol = false; }
 }
 
 /**
@@ -721,7 +771,41 @@ async function finishRound(m: RoundMatch) {
   }
 }
 
+// Finished rounds kept in memory (each holds its whole event log for logHash and catch-up). Older ones are dropped and
+// served from their log file by GET /lobbies/:id; the protocol loop opens about 1,440 rounds a day.
+const KEEP_FINISHED_ROUNDS = 40;
+function pruneRounds() {
+  const finished = [...rounds.values()].filter((m) => m !== protocolRound && (m.round.status === "settled" || m.round.status === "cancelled"));
+  if (finished.length <= KEEP_FINISHED_ROUNDS) return;
+  finished.sort((a, b) => a.round.endTime - b.round.endTime || a.round.id - b.round.id);
+  for (const m of finished.slice(0, finished.length - KEEP_FINISHED_ROUNDS)) {
+    for (const c of m.clients) c.close();
+    rounds.delete(m.round.id);
+  }
+}
+
+/** GET /lobbies/:id for a lobby or round no longer in memory (pruned, or from before a restart): rebuilt from its log. */
+async function archivedSnapshot(id: number): Promise<unknown | null> {
+  for (const [file, mode] of [[`round-${id}.jsonl`, "predict"], [`lobby-${id}.jsonl`, "royale"]] as const) {
+    const text = await readFile(resolve(DATA, file), "utf8").catch(() => null);
+    if (text === null) continue;
+    const ev: Record<string, any> = {};
+    for (const line of text.split("\n")) {
+      if (!line.startsWith('{"type"')) continue; // events only; input lines start with {"in"
+      try { const e = JSON.parse(line); ev[e.type] = e; } catch { /* a torn last line */ }
+    }
+    const lobby = ev.lobby ?? {};
+    const status = ev.settled ? "settled" : ev.cancelled ? "cancelled" : lobby.status ?? "unknown";
+    return {
+      ...lobby, lobbyId: id, mode, archived: true, status, protocol: ev.round?.protocol, params: ev.round?.params,
+      cancelReason: ev.cancelled?.reason ?? null, locked: ev.locked ?? null, final: ev.final ?? null, settled: ev.settled ?? null, now: Date.now(),
+    };
+  }
+  return null;
+}
+
 function roundsLoop() {
+  pruneRounds();
   for (const m of rounds.values()) {
     const r = m.round;
     let done = false;
@@ -730,9 +814,8 @@ function roundsLoop() {
         m.startSent = true;
         if (r.players.length + m.pendingJoins.size >= 4) m.starting = startRoundOnChain(m);
       }
-      if (chain.on && PREDICT_ON && m === protocolRound && !m.nextLobby && moreProtocolRounds() && Date.now() >= r.lockTime * 1000 - PRECREATE_MS) {
-        const next = protocolSpec(MARKETS[protocolCount % MARKETS.length]);
-        m.nextLobby = chain.createLobby(next.resolveAfter, next.entryUnits, next.maxPlayers).catch((e) => {
+      if (chain.on && PREDICT_ON && m === protocolRound && !m.nextLobby && !protocolCreate && moreProtocolRounds() && Date.now() >= r.lockTime * 1000 - PRECREATE_MS) {
+        m.nextLobby = createProtocolLobby().catch((e) => {
           log(`[chain] early createLobby for the next protocol round failed: ${failReason(e)}`);
           return null;
         });
@@ -889,6 +972,7 @@ function playingNow(): number {
   const counts = (status: string, chainError: string | null) => status !== "settled" && status !== "cancelled" && !(status === "settling" && chainError);
   for (const m of matches.values()) if (counts(m.lobby.status, m.chainError)) for (const p of m.lobby.players) who.add(p.player);
   for (const m of rounds.values()) if (counts(m.round.status, m.chainError)) for (const p of m.round.players) who.add(p.player);
+  for (const p of duels.playing()) who.add(p);
   return who.size;
 }
 function send(res: ServerResponse, code: number, body: unknown, raw = false) {
@@ -934,7 +1018,10 @@ const server = createServer(async (req, res) => {
         return send(res, 404, { error: "not found" });
       }
       const m = matches.get(id);
-      if (!m) return send(res, 404, { error: "no such lobby" });
+      if (!m) {
+        const old = req.method === "GET" && parts.length === 2 && Number.isSafeInteger(id) && id > 0 ? await archivedSnapshot(id) : null;
+        return old ? send(res, 200, old) : send(res, 404, { error: "no such lobby" });
+      }
       if (req.method === "GET" && parts.length === 2) {
         return send(res, 200, { ...m.lobby.snapshot(), now: Date.now(), pricesStale: prices.ageMs(Date.now()) > STALE_MS, chainError: m.chainError, startTx: m.startTx });
       }
@@ -1012,13 +1099,17 @@ const server = createServer(async (req, res) => {
       record(m, { in: "order", player: r.player, nonce: String(r.nonce), order: r.order, marks, t });
       return send(res, 200, { ok: true, t, price: marks[r.order.market] });
     }
+    if (await duels.handle(req, res, parts)) return;
     send(res, 404, { error: "not found" });
   } catch (e) {
     send(res, 400, { error: failReason(e) });
   }
 });
 
-const wss = new WebSocketServer({ noServer: true });
+// Clients only send small duel inputs; anything larger is refused by ws (connection closed).
+const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+// Stickman Duel: queue, 60 Hz matches, books, settlement (src/duel-server.ts), on the same chain client and data dir.
+const duels = mountDuels({ chain, dataDir: DATA, log, stats, sigOff: SIG_OFF, settleMode: SETTLE_MODE, chainSelector: CHAIN_SELECTOR, send, readJson, wss });
 const markClients = new Set<WebSocket>();
 setInterval(() => {
   if (!markClients.size) return;
@@ -1029,6 +1120,8 @@ server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://x");
   if (url.pathname !== "/ws") return socket.destroy();
   const q = url.searchParams.get("lobby");
+  const dq = url.searchParams.get("duel");
+  if (dq) return duels.upgrade(req, socket, head, dq);
   if (url.searchParams.get("feed") === "marks") {
     // Live marks for the predict screen before the lock (no lobby events carry a price until then).
     return wss.handleUpgrade(req, socket, head, (ws) => { markClients.add(ws); ws.on("close", () => markClients.delete(ws)); });
@@ -1055,6 +1148,8 @@ server.on("upgrade", (req, socket, head) => {
 server.listen(PORT, async () => {
   log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
+  setInterval(duels.loop, 4);
+  void duels.recover().catch((e) => log(`duel recovery failed: ${failReason(e)}`));
   void recoverRounds().catch((e) => log(`round recovery failed: ${failReason(e)}`));
   if (PREDICT_ON) void openProtocolRound(null);
   if (ROYALE_ON && !(args.resume && resume())) await createLobbyRetrying();
