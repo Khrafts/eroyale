@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 12 nav-island: island app bar (kit brand mark, switcher, you chip + stats chips and Island/List toggle), ?place= and ?view=list in the URL, intro skipped on return, panel links via nav.ts + AppLink, tag/toggle names, panel focus.
-- Last check: typecheck clean; GATE PASS island-ui, look-ui, duel-ui; nav-ui parts appbar/place/viewlist/names/bundle/notfound/practice ok (terminal/arena/predictback/titles belong to nav-play/nav-arena).
-- Next: lead merges nav-island into feat/nav and runs 12e live. Blockers: none.
+- Step: Phase 12 feat/nav: nav-kit, nav-island, nav-play merged; nav-arena (/arena overlay, /duel) still running.
+- Last check: per track: island-ui, look-ui, duel-ui, ui, predict-ui GATE PASS; nav-ui parts for island and /play ok; arena overlay part waits for nav-arena.
+- Next: merge nav-arena, judge pass (12d), live walk (12e), full gates (12f). Blockers: none.
 
 ## Running
 
@@ -167,3 +167,5 @@ Phase 12 kit (CLAUDE.md "Navigation"). Tracks use these; do not hand-roll anothe
 - Titles: layout template `"%s · Royale Isle"`; route titles `Trading Royale` (/play), `Stickman Duel` (/duel), `Big screen` (/arena, via app/arena/layout.tsx), `Page not found`; `/` is absolute "Royale Isle". Screens set finer titles with `docTitle`.
 - 404: `app/not-found.tsx`: `AutoTopBar` (components/kit/auto-bar.tsx: the app bar with the you chip from `burner()`, lib/engine imported after mount) and `EndActions game="island"`.
 - Island (nav-island): `?place=<id>` is the open panel (any building, billboard, `studio`): a click pushes it from the bare island and replaces it panel-to-panel; the close button, Escape and Back close it (`useUrlState().back`); a deep link or a link such as the you chip's "My avatar" (`/?place=studio`) opens it (Island.tsx follows `useSearchParams`). Mock moments (`at=studio|dojo`) open their panel without writing the URL. The toggle replaces `?view=list`. The world skips the intro swoop and pop-in (`createWorld(..., skipIntro)`) when the island was already shown in this document, the document started on another route, or `?place=` is set. The brand chip on the island closes the panel, leaves the list and resets the camera. Panels move focus to their heading and back on close, and set `document.title` to `<place> · Royale Isle`. The switcher's container query needs `.isle .top` as the `appbar` container (island.css); the wordmark hides under 1500 px of bar and the stats chips under 1240.
+- Follow policy (lib/useMatch.ts, rule 8): `useMatch({hold: true})` keeps a finished match on screen; the returned `next` is the engine's current lobby (protocol round in predict) once this one has ended and differs, `pinned` is true for `opts.lobby`/`?lobby=`, `followNext()` moves a held match on. Pinned and held matches only offer `next`; without `hold` an unpinned match still follows by itself (the big screen). /play royale uses `hold`.
+- /play shell: `Shell` in components/play/Bar.tsx (app bar full width, the 520 px phone column under it, document.title kept over Next's streamed metadata title). Modes and screens read the URL with `useSearchParams` (so router pushes from AppLink and useUrlState writes both re-render); the predict screens move with useUrlState (`?lock=` keeps a created round's lock time over a refresh).

@@ -1,8 +1,18 @@
 /* The phone, as the island's panel at full screen. Every colour, font, radius, stroke and shadow is a theme.css
    variable; the kit (components/kit) supplies the top bar, buttons and bot tag. Sea colours are the zone and only the
    zone: the gauge's flood and the water on the eliminated screen. */
-.root {
+/* The page shell (N23): the app bar full width, the phone column centred under it. */
+.shell {
   min-height: 100dvh;
+  background: var(--paper);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+.bar { flex: none; }
+.root {
+  flex: 1 0 auto;
+  width: 100%;
   background: var(--paper);
   color: var(--ink);
   font: 400 16px/1.45 var(--body);
@@ -14,6 +24,13 @@
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
+@media (min-width: 560px) {
+  .root { border-left: var(--stroke) solid var(--line); border-right: var(--stroke) solid var(--line); }
+}
+/* An end-state action block under a screen's content. */
+.actions { margin-top: 22px; }
+.nextChip { align-self: flex-start; margin: 0 0 12px; }
+.needs { color: var(--ink2); font-size: 15px; margin: 6px 0 14px; }
 :where(.root) button { font: inherit; color: inherit; }
 .root button:focus-visible, .root a:focus-visible, .root input:focus-visible { outline: var(--stroke) solid var(--ink); outline-offset: 2px; }
 

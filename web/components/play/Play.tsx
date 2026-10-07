@@ -2,17 +2,22 @@
 // The phone: join, lobby, trade, eliminated, result, as states of one screen.
 // The island's panel at full screen: paper, the kit's top bar back to the island, coral heads for Trading Royale,
 // mint long, violet short, profit and loss as sun and coral chips, the island's sea only for the zone.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { BotTag as KitBotTag, Button, Chip, GhostButton, TopBar } from "@/components/kit";
+import { AppLink, BotTag as KitBotTag, Button, Chip, GhostButton } from "@/components/kit";
+import { EndActions, type Action } from "@/components/kit/actions";
 import { MARKETS, START_BALANCE, STAGE, isTxHash, num, unitsToUsd } from "@/lib/events";
 import type { EliminatedEvent, FillEvent, Market, Side } from "@/lib/events";
 import { burner, join, sendOrder, signOrder, type Order } from "@/lib/engine";
 import { useMatch, type Match } from "@/lib/useMatch";
+import { PANEL, docTitle, island, predictRounds, watchGame, watchLobby, type GameId } from "@/lib/nav";
+import { useUrlState } from "@/lib/useUrlState";
 import { useRolling } from "@/lib/useRolling";
 import { MEANING } from "@/lib/theme";
 import { AvatarHead, PlayerHead, useMyAvatar } from "./Avatar";
 import { Head, Pennant, figs } from "./parts";
+import { EmptyShell, Shell } from "./Bar";
 import s from "./play.module.css";
 import PredictPhone from "./Predict";
 
@@ -62,85 +67,194 @@ function Gauge({ equity, cut, zone }: { equity: number; cut: number; zone: numbe
 
 type Toast = { text: string; tone: "ok" | "bad" } | null;
 
-/** Royale or prediction mode, from ?mode=predict or ?mock=predict (read after mount: the page is prerendered). */
+/** Royale or prediction mode, from ?mode=predict or ?mock=predict. The URL is read with useSearchParams so an in-app
+ *  link (the switcher, an action block) that changes it re-renders the right mode without a reload. */
 export default function Play() {
-  const [mode, setMode] = useState<"royale" | "predict" | null>(null);
-  useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    setMode(q.get("mock") === "predict" || q.get("mode") === "predict" ? "predict" : "royale");
-  }, []);
-  if (mode === "predict") return <PredictPhone />;
-  if (mode === "royale") return <RoyalePhone />;
-  return <main className={s.root} />;
+  return (
+    <Suspense fallback={<EmptyShell />}>
+      <Modes />
+    </Suspense>
+  );
+}
+
+function Modes() {
+  const q = useSearchParams();
+  if (q.get("mock") === "predict" || q.get("mode") === "predict") return <PredictPhone />;
+  // A pinned ?lobby= and the followed lobby are different matches: remount when it changes.
+  return <RoyalePhone key={q.get("lobby") ?? ""} />;
+}
+
+type Kind = "error" | "finding" | "cancelled" | "eliminated" | "result" | "join" | "lobby" | "spectate" | "trade";
+const TITLES: Record<Kind, string> = {
+  error: "Not connected",
+  finding: "Finding the lobby",
+  cancelled: "Called off",
+  eliminated: "You went under",
+  result: "Result",
+  join: "Join",
+  lobby: "Lobby",
+  spectate: "Watching",
+  trade: "Trade",
+};
+
+type MyElim = { ev: EliminatedEvent; p: EliminatedEvent["players"][number] } | null;
+
+function kindOf(match: Match, inLobby: boolean, myElim: MyElim): Kind {
+  const { state } = match;
+  if (state.error) return "error";
+  if (!state.status) return "finding";
+  if (state.status === "cancelled") return "cancelled";
+  if (state.final || state.status === "settling" || state.status === "settled") return myElim ? "eliminated" : "result";
+  if (!inLobby && (state.status === "open" || state.status === "countdown")) return "join";
+  if (state.status === "open" || state.status === "countdown") return "lobby";
+  if (myElim) return "eliminated";
+  if (!inLobby) return "spectate";
+  return "trade";
 }
 
 function RoyalePhone() {
-  const match = useMatch();
+  const match = useMatch({ hold: true });
   const { state, source } = match;
   const [acct, setAcct] = useState<PrivateKeyAccount | null>(null);
   const [joinedAs, setJoinedAs] = useState<string | null>(null);
   useEffect(() => setAcct(burner()), []);
 
   const me = source === "mock" ? match.me : (acct?.address.toLowerCase() ?? null);
-  const inLobby = !!me && state.players.some((p) => p.player === me);
-
-  return (
-    <main className={s.root}>
-      <TopBar wallet={acct?.address ?? null} />
-      <Body match={match} me={me} inLobby={inLobby || !!joinedAs} acct={acct} onJoined={setJoinedAs} />
-    </main>
-  );
-}
-
-function Body({
-  match,
-  me,
-  inLobby,
-  acct,
-  onJoined,
-}: {
-  match: Match;
-  me: string | null;
-  inLobby: boolean;
-  acct: PrivateKeyAccount | null;
-  onJoined: (c: string) => void;
-}) {
-  const { state } = match;
-  const myElim = useMemo(() => {
+  const inLobby = (!!me && state.players.some((p) => p.player === me)) || !!joinedAs;
+  const myElim = useMemo<MyElim>(() => {
     for (const e of state.eliminations) {
       const p = e.players.find((x) => x.player === me);
       if (p) return { ev: e, p };
     }
     return null;
   }, [state.eliminations, me]);
+  const kind = kindOf(match, inLobby, myElim);
+  // "you're in" (N35): alive in a lobby that has not ended.
+  const live: GameId[] | undefined = kind === "lobby" || kind === "trade" ? ["royale"] : undefined;
+  const id = state.lobbyId;
 
-  if (state.error) return <Notice title="Not connected" body={state.error} />;
-  if (!state.status) return <p className={s.waiting}>Finding the lobby</p>;
-  if (state.status === "cancelled")
-    return (
-      <Notice
-        title="This match was called off"
-        body="Not enough players made it in. Every entry is refunded on chain. Keep this page open; the next lobby shows up here."
-      />
-    );
-  if (state.final || state.status === "settling" || state.status === "settled") {
-    if (myElim) return <Eliminated match={match} me={me!} elim={myElim} />;
-    return <Result match={match} me={me} />;
-  }
-  if (!inLobby && (state.status === "open" || state.status === "countdown"))
-    return <Join match={match} acct={acct} onJoined={onJoined} />;
-  if (state.status === "open" || state.status === "countdown") return <Lobby match={match} />;
-  if (myElim) return <Eliminated match={match} me={me!} elim={myElim} />;
-  if (!inLobby) return <Spectate match={match} />;
-  return <Trade match={match} me={me!} acct={acct} />;
+  return (
+    <Shell
+      game="royale"
+      back={{ to: "The Arena", href: island(PANEL.royale) }}
+      live={live}
+      watch={id !== null && source === "live" ? watchLobby(id) : watchGame("royale")}
+      title={docTitle("royale", id !== null && kind !== "join" ? `${TITLES[kind]}, lobby ${id}` : TITLES[kind])}
+    >
+      <Body match={match} me={me} kind={kind} myElim={myElim} acct={acct} onJoined={setJoinedAs} />
+    </Shell>
+  );
 }
 
-function Notice({ title, body }: { title: string; body: string }) {
+function Body({
+  match,
+  me,
+  kind,
+  myElim,
+  acct,
+  onJoined,
+}: {
+  match: Match;
+  me: string | null;
+  kind: Kind;
+  myElim: MyElim;
+  acct: PrivateKeyAccount | null;
+  onJoined: (c: string) => void;
+}) {
+  const { state } = match;
+  switch (kind) {
+    case "error":
+      return <Notice title="Not connected" body={state.error!} actions={<Retry />} />;
+    case "finding":
+      return <Notice title="Finding the lobby" body="Asking the engine which lobby is open. This takes a second or two." actions={<Retry label="Try again" />} />;
+    case "cancelled":
+      return (
+        <Notice
+          title="This match was called off"
+          body={
+            match.pinned
+              ? "Not enough players made it in. Every entry is refunded on chain."
+              : "Not enough players made it in. Every entry is refunded on chain. The next lobby opens here as soon as the engine has one."
+          }
+          actions={<RoyaleActions match={match} />}
+        />
+      );
+    case "eliminated":
+      return <Eliminated match={match} me={me!} elim={myElim!} />;
+    case "result":
+      return <Result match={match} me={me} />;
+    case "join":
+      return <Join match={match} acct={acct} onJoined={onJoined} />;
+    case "lobby":
+      return <Lobby match={match} />;
+    case "spectate":
+      return <Spectate match={match} />;
+    default:
+      return <Trade match={match} me={me!} acct={acct} />;
+  }
+}
+
+/** The big screen on this lobby (live), else following royale. */
+const watchHref = (match: Match): string => (match.state.lobbyId !== null && match.source === "live" ? watchLobby(match.state.lobbyId) : (watchGame("royale") ?? "/arena"));
+
+/**
+ * The royale end-state block (rule 5, rule 8). Primary: on a pinned lobby "Go to the current lobby" (drops ?lobby);
+ * on the followed lobby "Play the next lobby", which moves on to the engine's next lobby once it is open (the screen
+ * holds the result until then). `primary` overrides it (spectate, lobby).
+ */
+function RoyaleActions({ match, primary, watch = true }: { match: Match; primary?: Action; watch?: boolean }) {
+  const { replace } = useUrlState();
+  // Asked to move on before the engine has opened the next lobby: move as soon as it has.
+  const [asked, setAsked] = useState(false);
+  const { next, followNext } = match;
+  useEffect(() => {
+    if (asked && next !== null) followNext();
+  }, [asked, next, followNext]);
+  const main: Action =
+    primary ??
+    (match.pinned
+      ? { label: "Go to the current lobby", onClick: () => replace({ lobby: null }) }
+      : next !== null
+        ? { label: "Play the next lobby", onClick: followNext }
+        : { label: asked ? "Opening the next lobby" : "Play the next lobby", onClick: () => setAsked(true) });
+  return (
+    <EndActions
+      game="royale"
+      className={s.actions}
+      primary={main}
+      watch={watch ? watchHref(match) : null}
+    />
+  );
+}
+
+/** "The next lobby is open" (rule 8): the held screen says so instead of moving on by itself. */
+function NextChip({ match }: { match: Match }) {
+  if (match.next === null) return null;
+  return (
+    <Chip className={s.nextChip} role="status">
+      Lobby <b className={s.fig}>{match.next}</b> is open
+    </Chip>
+  );
+}
+
+/** Reload the page: the connection and the lobby are found again from scratch. */
+function Retry({ label = "Try again" }: { label?: string }) {
+  return (
+    <EndActions
+      game="royale"
+      className={s.actions}
+      primary={{ label, onClick: () => window.location.reload() }}
+    />
+  );
+}
+
+function Notice({ title, body, actions }: { title: string; body: string; actions?: React.ReactNode }) {
   return (
     <section className={s.out} role="alert">
       <Head game="royale" eyebrow="The Arena" title={title} />
       <div className={s.body}>
         <p className={s.lede}>{body}</p>
+        {actions}
       </div>
     </section>
   );
@@ -247,9 +361,9 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
         </Button>
         {err && <p className={s.error}>{err}</p>}
         <p className={s.fine}>The <span className={s.fig}>$5.00</span> entry is paid for you. Your game key stays in this browser.</p>
-        <a className={s.link} href={source === "mock" ? "?mock=predict&screen=rounds" : "?mode=predict&screen=rounds"}>
+        <AppLink className={s.link} href={source === "mock" ? "/play?mock=predict&screen=rounds" : predictRounds()}>
           Or call a price in a prediction round
-        </a>
+        </AppLink>
       </div>
     </section>
   );
@@ -292,6 +406,10 @@ function Lobby({ match }: { match: Match }) {
             </li>
           ))}
         </ul>
+        {state.status === "open" && state.players.length < 4 && (
+          <p className={s.needs}>{figs(`Needs 4 players to start, ${4 - state.players.length} more to go.`)}</p>
+        )}
+        <GhostButton className={s.actions} href={watchHref(match)}>Watch on the big screen</GhostButton>
       </div>
     </section>
   );
@@ -589,6 +707,7 @@ function Eliminated({
         title="You went under"
       />
       <div className={s.outBody}>
+        <NextChip match={match} />
         <p className={s.lede}>{REASON[elim.p.reason]}</p>
         <dl className={s.facts}>
           <div>
@@ -605,7 +724,7 @@ function Eliminated({
           </div>
         </dl>
         <p className={s.watch}>
-          {figs(finalists ? `${finalists.length} made it to the end.` : `${alive.length} still standing. Watch the big screen.`)}
+          {figs(finalists ? `${finalists.length} made it to the end.` : `${alive.length} still standing.`)}
         </p>
         <ul className={s.standing}>
           {(finalists
@@ -618,6 +737,11 @@ function Eliminated({
             </li>
           ))}
         </ul>
+        <RoyaleActions
+          match={match}
+          primary={finalists ? undefined : { label: "Watch the rest on the big screen", href: watchHref(match) }}
+          watch={!!finalists}
+        />
       </div>
     </section>
   );
@@ -655,6 +779,7 @@ function Result({ match, me }: { match: Match; me: string | null }) {
         )}
       </Head>
       <div className={s.body}>
+        <NextChip match={match} />
         {mine && (
           <>
             <p className={s.payout}>${unitsToUsd(myUnits ?? "0")}</p>
@@ -690,6 +815,7 @@ function Result({ match, me }: { match: Match; me: string | null }) {
         ) : (
           <p className={s.fine}>Payouts are provisional until the Chainlink report settles the pot.</p>
         )}
+        <RoyaleActions match={match} />
       </div>
     </section>
   );
@@ -702,6 +828,7 @@ function Spectate({ match }: { match: Match }) {
       <Head game="royale" eyebrow="The Arena" title="The match has started" />
       <div className={s.body}>
         <p className={s.lede}>This lobby is closed to new players. <span className={s.fig}>{alive.length}</span> still standing.</p>
+        <RoyaleActions match={match} primary={{ label: "Watch live", href: watchHref(match) }} watch={false} />
       </div>
     </section>
   );

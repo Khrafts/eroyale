@@ -3,8 +3,12 @@
 // The island's kit with violet heads: the sea is only the losing water outside the winners' band, sun the winners and
 // payouts, ink the live price.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { BotTag, Button, Chip, GhostButton, TopBar } from "@/components/kit";
+import { AppLink, BotTag, Button, Chip } from "@/components/kit";
+import { EndActions, type Action } from "@/components/kit/actions";
+import { PANEL, docTitle, island, playRoyale, watchGame, watchRound, type GameId } from "@/lib/nav";
+import { useUrlState, type ParamSet } from "@/lib/useUrlState";
 import { MARKETS, isTxHash, unitsToUsd } from "@/lib/events";
 import type { RoundInfo } from "@/lib/events";
 import { cfgFor } from "@/lib/island/avatar";
@@ -31,6 +35,7 @@ import {
 import { PROTOCOL_LOBBY, mockMine } from "@/mocks/predict";
 import { useRolling } from "@/lib/useRolling";
 import { AvatarHead, useMyAvatar } from "./Avatar";
+import { Shell } from "./Bar";
 import { Head, figs } from "./parts";
 import s from "./play.module.css";
 import p from "./predict.module.css";
@@ -77,67 +82,123 @@ function useTick() {
   }, []);
 }
 
+/** Moves between the predict screens (CLAUDE.md "Navigation" rule 4, N11): drill down pushes, "Rounds" and Escape go
+ *  back to the list (history.back() when the list is the previous entry), a move between rounds replaces. */
+type Go = {
+  round: (lobby: number) => void;
+  create: () => void;
+  list: () => void;
+  /** Another round from a round's screen, or the round just created: a lateral move, so Back still goes to the list. */
+  swap: (lobby: number, lock?: number) => void;
+};
+
+/** The screen, from the URL: ?screen=create|rounds, ?lobby= (and ?lock= after creating it), else the list (live) or
+ *  the protocol round (?mock=predict). */
+function viewOf(q: URLSearchParams): View {
+  const screen = q.get("screen");
+  const lobby = Number(q.get("lobby")) || null;
+  if (screen === "create") return { kind: "create" };
+  if (screen === "rounds") return { kind: "rounds" };
+  if (lobby) return { kind: "round", lobby, createdLock: Number(q.get("lock")) || undefined };
+  if (q.get("mock") === "predict") return { kind: "round", lobby: PROTOCOL_LOBBY };
+  return { kind: "rounds" };
+}
+
 export default function PredictPhone() {
-  const [view, setView] = useState<View | null>(null);
-  useEffect(() => {
-    const read = () => {
-      const q = new URLSearchParams(window.location.search);
-      const screen = q.get("screen");
-      const lobby = Number(q.get("lobby")) || null;
-      if (screen === "create") setView({ kind: "create" });
-      else if (screen === "rounds") setView({ kind: "rounds" });
-      else if (lobby) setView({ kind: "round", lobby });
-      else if (q.get("mock") === "predict") setView({ kind: "round", lobby: PROTOCOL_LOBBY });
-      else setView({ kind: "rounds" });
+  const q = useSearchParams();
+  const { push, replace, back } = useUrlState();
+  const mock = q.get("mock") === "predict";
+  const view = viewOf(new URLSearchParams(q.toString()));
+  const go = useMemo<Go>(() => {
+    // The list's own URL: ?mode=predict live; ?mock=predict needs ?screen=rounds (without it the mock opens a round).
+    const list: ParamSet = { screen: mock ? "rounds" : null, lobby: null, lock: null };
+    const at = (set: ParamSet): ParamSet => (mock ? set : { ...set, mode: "predict" });
+    const top = () => window.scrollTo(0, 0);
+    return {
+      round: (lobby) => (push(at({ screen: null, lobby, lock: null })), top()),
+      create: () => (push(at({ screen: "create", lobby: null, lock: null })), top()),
+      list: () => (back(at(list)), top()),
+      swap: (lobby, lock) => (replace(at({ screen: null, lobby, lock: lock ?? null })), top()),
     };
-    read();
-    // Back and forward move between the rounds list, the create screen and round views.
-    window.addEventListener("popstate", read);
-    return () => window.removeEventListener("popstate", read);
-  }, []);
-  const go = (v: View) => {
-    setView(v);
-    const q = new URLSearchParams(window.location.search);
-    q.delete("screen");
-    q.delete("lobby");
-    if (v.kind === "round") q.set("lobby", String(v.lobby));
-    else q.set("screen", v.kind);
-    if (!q.get("mock")) q.set("mode", "predict");
-    window.history.pushState(null, "", `${window.location.pathname}?${q}`);
-    window.scrollTo(0, 0);
-  };
-  return (
-    <main className={s.root}>
-      <WalletBar />
-      {view && <Screens view={view} go={go} />}
-    </main>
-  );
+  }, [mock, push, replace, back]);
+  // Escape goes to the parent, like the back control (the kit's menus capture their own Escape first).
+  useEffect(() => {
+    if (view.kind === "rounds") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) go.list();
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [view.kind, go]);
+  return <Screens view={view} go={go} />;
 }
 
-function WalletBar() {
-  const [addr, setAddr] = useState<string | null>(null);
-  useEffect(() => setAddr(burner().address), []);
-  return <TopBar wallet={addr} />;
-}
-
-function Screens({ view, go }: { view: View; go: (v: View) => void }) {
+function Screens({ view, go }: { view: View; go: Go }) {
   const match = useMatch({ predict: true, lobby: view.kind === "round" ? view.lobby : null });
   const [acct, setAcct] = useState<PrivateKeyAccount | null>(null);
   useEffect(() => setAcct(burner()), []);
   const me = match.source === "mock" ? match.me : (acct?.address.toLowerCase() ?? null);
-  if (view.kind === "rounds") return <Rounds match={match} go={go} />;
-  if (view.kind === "create") return <Create match={match} acct={acct} go={go} />;
-  return <Round match={match} me={me} acct={acct} go={go} createdLock={view.createdLock} />;
+  const st = match.state;
+  const round = view.kind === "round";
+  // "you're in": joined a round that has not resolved or been called off.
+  const inRound = round && !!me && st.players.some((x) => x.player === me) && !st.pfinal && !st.cancelled && st.status !== "cancelled";
+  const live: GameId[] | undefined = inRound ? ["predict"] : undefined;
+  const title =
+    view.kind === "rounds"
+      ? docTitle("predict", "Rounds")
+      : view.kind === "create"
+        ? docTitle("predict", "Create a round")
+        : docTitle("predict", `${st.pfinal ? "Result" : st.locked ? "Locked" : "Call"}, round ${view.lobby}`);
+  return (
+    <Shell
+      game="predict"
+      back={view.kind === "rounds" ? { to: "The Observatory", href: island(PANEL.predict) } : { to: "rounds", onClick: go.list }}
+      live={live}
+      watch={round && match.source === "live" ? watchRound(view.lobby) : watchGame("predict")}
+      title={title}
+    >
+      {view.kind === "rounds" ? (
+        <Rounds match={match} go={go} />
+      ) : view.kind === "create" ? (
+        <Create match={match} acct={acct} go={go} />
+      ) : (
+        <Round match={match} me={me} acct={acct} go={go} createdLock={view.createdLock} />
+      )}
+    </Shell>
+  );
+}
+
+/** The big screen on this round (live), else following the protocol round. */
+const watchHref = (match: Match): string =>
+  match.source === "live" && match.state.lobbyId !== null ? watchRound(match.state.lobbyId) : (watchGame("predict") ?? watchRound());
+
+/**
+ * The predict end-state block (rule 5). "Next round" (N26) opens the protocol round taking calls now, not the list;
+ * with none known yet (or it is this one) it falls back to the list.
+ */
+function RoundActions({ match, go, label = "Next round" }: { match: Match; go: Go; label?: string }) {
+  const { rounds } = useRounds(match);
+  const proto = rounds.find((r) => r.protocol && r.lobbyId !== match.state.lobbyId);
+  const primary: Action = proto ? { label, onClick: () => go.swap(proto.lobbyId) } : { label: "See open rounds", onClick: go.list };
+  return (
+    <EndActions
+      game="predict"
+      className={s.actions}
+      primary={primary}
+      watch={watchHref(match)}
+      more={proto ? [{ label: "See open rounds", onClick: go.list }] : undefined}
+    />
+  );
 }
 
 // ---------- rounds list ----------
-function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
+function Rounds({ match, go }: { match: Match; go: Go }) {
   useTick();
   const { rounds, mine, error, loaded } = useRounds(match);
   const now = match.clock();
   const proto = rounds.find((r) => r.protocol);
   const users = rounds.filter((r) => !r.protocol);
-  const royale = match.source === "mock" ? "?mock=1" : "?";
+  const royale = match.source === "mock" ? "/play?mock=1" : playRoyale();
   return (
     <>
     <Head game="predict" eyebrow="The Observatory" title="Call the price" />
@@ -146,7 +207,7 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
       {error && <p className={s.error}>{error}</p>}
       {!loaded && <p className={s.fine}>Finding open rounds</p>}
       {proto && (
-        <button className={p.proto} onClick={() => go({ kind: "round", lobby: proto.lobbyId })}>
+        <button className={p.proto} onClick={() => go.round(proto.lobbyId)}>
           <span className={p.protoTop}>
             <span>
               <span className={p.protoMarket}>{proto.params.market}</span>
@@ -171,7 +232,7 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
           <ul className={p.list}>
             {mine.map((r) => (
               <li key={r.lobbyId}>
-                <button className={p.row} onClick={() => go({ kind: "round", lobby: r.lobbyId })}>
+                <button className={p.row} onClick={() => go.round(r.lobbyId)}>
                   <span className={p.rowMarket}>{r.params.market}</span>
                   <span className={p.rowBody}>
                     <span className={p.rowLine}>
@@ -207,17 +268,17 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
         <ul className={p.list}>
           {users.map((r) => (
             <li key={r.lobbyId}>
-              <UserRound r={r} now={now} onOpen={() => go({ kind: "round", lobby: r.lobbyId })} />
+              <UserRound r={r} now={now} onOpen={() => go.round(r.lobbyId)} />
             </li>
           ))}
         </ul>
       )}
-      <Button color="predict" className={p.cta} onClick={() => go({ kind: "create" })}>
+      <Button color="predict" className={p.cta} onClick={go.create}>
         Create a round
       </Button>
-      <a className={s.link} href={`/play${royale}`}>
+      <AppLink className={s.link} href={royale}>
         Play Trading Royale instead
-      </a>
+      </AppLink>
     </section>
     </>
   );
@@ -262,7 +323,7 @@ const LABELS: Record<RangeKey, string> = {
   creatorFeeBps: "Your fee",
 };
 
-function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | null; go: (v: View) => void }) {
+function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | null; go: Go }) {
   const [d, setD] = useState<Draft>(DEFAULT_DRAFT);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
@@ -305,7 +366,7 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
         if (!r.ok) throw new Error(String(r.data.error ?? `The engine refused the round (${r.status}).`));
         const id = Number(r.data.lobbyId);
         const lock = Number(r.data.lockTime);
-        if (id) go({ kind: "round", lobby: id, createdLock: lock > 0 ? lock : undefined });
+        if (id) go.swap(id, lock > 0 ? lock : undefined);
       }
     } catch (e) {
       setMsg({ tone: "bad", text: e instanceof Error ? e.message : "The round was not created." });
@@ -319,7 +380,7 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
       <Head
         game="predict"
         top={
-          <button className={p.back} onClick={() => go({ kind: "rounds" })}>
+          <button className={p.back} onClick={go.list}>
             Rounds
           </button>
         }
@@ -418,6 +479,7 @@ function Slider({
         max={r.max}
         step={r.step}
         value={value}
+        aria-valuetext={show(k, value)}
         onChange={(e) => set(k, Number(e.target.value))}
       />
     </label>
@@ -435,15 +497,16 @@ function Round({
   match: Match;
   me: string | null;
   acct: PrivateKeyAccount | null;
-  go: (v: View) => void;
+  go: Go;
   createdLock?: number;
 }) {
   const st = match.state;
-  if (st.error) return <Notice title="Not connected" body={st.error} go={go} />;
+  if (st.error) return <Notice match={match} title="Not connected" body={st.error} go={go} />;
   if (!st.round) return <p className={s.waiting}>Finding the round</p>;
   if (st.cancelled || st.status === "cancelled")
     return (
       <Notice
+        match={match}
         title="This round was called off"
         body={`${st.cancelReason ? `${sentenceCase(st.cancelReason)}. ` : ""}Every entry is refunded on chain.`}
         go={go}
@@ -456,22 +519,20 @@ function Round({
   return <Call match={match} me={me!} acct={acct} go={go} />;
 }
 
-function Notice({ title, body, go }: { title: string; body: string; go: (v: View) => void }) {
+function Notice({ match, title, body, go }: { match: Match; title: string; body: string; go: Go }) {
   return (
     <section className={s.out} role="alert">
       <Head game="predict" eyebrow="The Observatory" title={title} />
       <div className={p.page}>
         <p className={s.lede}>{body}</p>
-        <Button color="predict" onClick={() => go({ kind: "rounds" })}>
-          See open rounds
-        </Button>
+        <RoundActions match={match} go={go} />
       </div>
     </section>
   );
 }
 
 /** The round's head: back to the rounds and the round's clock, the round as the title, then whatever the screen adds. */
-function RoundBar({ match, go, right, urgent, children }: { match: Match; go: (v: View) => void; right: React.ReactNode; urgent?: boolean; children?: React.ReactNode }) {
+function RoundBar({ match, go, right, urgent, children }: { match: Match; go: Go; right: React.ReactNode; urgent?: boolean; children?: React.ReactNode }) {
   const r = match.state.round!;
   return (
     <Head
@@ -479,7 +540,7 @@ function RoundBar({ match, go, right, urgent, children }: { match: Match; go: (v
       className={p.roundHead}
       top={
         <>
-          <button className={p.back} onClick={() => go({ kind: "rounds" })}>
+          <button className={p.back} onClick={go.list}>
             Rounds
           </button>
           <Chip className={`${p.barRight} ${urgent ? p.urgentChip : ""}`}>{right}</Chip>
@@ -545,7 +606,7 @@ function JoinRound({
   match: Match;
   acct: PrivateKeyAccount | null;
   me: string | null;
-  go: (v: View) => void;
+  go: Go;
   createdLock?: number;
 }) {
   useTick();
@@ -620,7 +681,7 @@ function CallsignHead({ me, callsign }: { me: string | null; callsign: string })
 }
 
 /** The predict screen: live price, your call, a tape to drag and buttons to nudge it, the lock countdown. */
-function Call({ match, me, acct, go }: { match: Match; me: string; acct: PrivateKeyAccount | null; go: (v: View) => void }) {
+function Call({ match, me, acct, go }: { match: Match; me: string; acct: PrivateKeyAccount | null; go: Go }) {
   useTick();
   const st = match.state;
   const r = st.round!;
@@ -862,7 +923,7 @@ function Tape({ value, mark, px, onChange }: { value: bigint | null; mark: bigin
 }
 
 /** After the lock: where the player sits against the live price, the storm and the winning band. */
-function Locked({ match, me, go }: { match: Match; me: string | null; go: (v: View) => void }) {
+function Locked({ match, me, go }: { match: Match; me: string | null; go: Go }) {
   useTick();
   const st = match.state;
   const r = st.round!;
@@ -917,6 +978,7 @@ function Locked({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
           </li>
         ))}
       </ol>
+      <RoundActions match={match} go={go} label="Call the next round" />
       </div>
     </section>
   );
@@ -996,7 +1058,7 @@ function Strip({ match, me }: { match: Match; me: string | null }) {
   );
 }
 
-function Result({ match, me, go }: { match: Match; me: string | null; go: (v: View) => void }) {
+function Result({ match, me, go }: { match: Match; me: string | null; go: Go }) {
   const st = match.state;
   const r = st.round!;
   const fin = st.pfinal!;
@@ -1068,9 +1130,7 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
       ) : (
         <p className={s.fine}>Payouts are provisional until the Chainlink report settles the pot.</p>
       )}
-      <GhostButton className={p.cta} onClick={() => go({ kind: "rounds" })}>
-        Next round
-      </GhostButton>
+      <RoundActions match={match} go={go} />
       </div>
     </section>
   );
