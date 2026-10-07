@@ -1,8 +1,8 @@
 ## Status
-- Step: look-theme (Phase 10): lib/theme.ts + app/theme.css tokens, self-hosted fonts (app/fonts.ts), island on shared tokens, components/kit/.
-- Last check: typecheck clean; ui, predict-ui GATE PASS; island pixel diff vs feat/island within run-to-run noise (motion=reduce shots).
-- Next: island-ui and look-ui gate runs, then hand to look-play and look-arena.
-- Blockers: none.
+- Step: look-theme done (tokens lib/theme.ts + app/theme.css, fonts app/fonts.ts, island on shared tokens, components/kit/).
+- Last check: GATE PASS ui, predict-ui, island-ui; typecheck clean; island shots vs feat/island within run-to-run noise.
+- look-ui: tokens, Google Fonts, font files, fonts loaded, :root tokens, island body font pass; play/arena colours, Sofia, play background/brand link, arena sky/sea are look-play/look-arena work.
+- Next: look-play and look-arena build on the kit. Blockers: none.
 
 ## Running
 
