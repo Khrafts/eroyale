@@ -97,7 +97,9 @@ function useTips() {
 function Tip() {
   return (
     <p className={s.tip} role="note">
-      Hold Block or <kbd>←</kbd> to guard · jump over with <kbd>↑</kbd> + <kbd>→</kbd>
+      {/* always right, whichever side the opponent is on (a cross-up swaps them) */}
+      Hold <span className={s.touchOnly}>Block</span>
+      <span className={s.keysOnly}>the arrow away from them</span> to guard · <kbd>↑</kbd> toward them jumps over
     </p>
   );
 }
@@ -277,7 +279,10 @@ function Menu({ me, url }: { me: Me; url: Url }) {
             <b>
               Ranked <span className={s.price}>5 USDC</span>
             </b>
-            <span>Fight another player for a stake, paid out after a replay of the match. Coming soon.</span>
+            <span>
+              <i className={s.soonChip}>Coming soon</i>
+              Fight another player for a stake, paid out after a replay of the match.
+            </span>
           </div>
         </div>
       </div>
@@ -346,6 +351,8 @@ function Practice({ me, url }: { me: Me; url: Url }) {
     // draw between the last two ticks
     const t = g.acc / TICK_MS;
     const v = toView(g.st, [name, oppName], [false, level !== "dummy"], avatars, 0);
+    // the result card covers the stage: no K.O. or "wins" banner peeking out behind it
+    if (done) v.quietEnd = true;
     for (const i of [0, 1] as const) {
       const p = g.prev.f[i],
         c = g.st.f[i];
