@@ -9,10 +9,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { keccak256, stringToBytes } from "viem";
-import { Button, GhostButton, PanelHead, Segmented, TopBar, kit, type Back } from "@/components/kit";
+import { Button, EarlyBadge, GhostButton, PanelHead, Segmented, TopBar, kit, type Back } from "@/components/kit";
 import { EndActions, type Action } from "@/components/kit/actions";
 import { AvatarHead } from "@/components/play/Avatar";
-import { PANEL, docTitle, duel as duelRoute, island } from "@/lib/nav";
+import { EARLY_NOTE, PANEL, docTitle, duel as duelRoute, island } from "@/lib/nav";
 import { useUrlState } from "@/lib/useUrlState";
 import { useDocTitle } from "@/components/arena/title";
 import { burner } from "@/lib/engine";
@@ -262,7 +262,9 @@ function Menu({ me, url }: { me: Me; url: Url }) {
   return (
     <main className={s.screen}>
       <Bar me={me} back={{ to: "the island", href: island(PANEL.duel) }} />
-      <PanelHead color="duel" eyebrow="The Dojo" title="Stickman Duel" />
+      <PanelHead color="duel" eyebrow={<>The Dojo <EarlyBadge /></>} title="Stickman Duel">
+        <p style={{ margin: 0, fontSize: 13 }}>{EARLY_NOTE}</p>
+      </PanelHead>
       <div style={{ height: 210, borderBottom: "var(--stroke) solid var(--ink)" }}>
         <Stage view={view} label="A bot match running in the dojo" />
       </div>

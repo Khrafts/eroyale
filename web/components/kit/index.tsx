@@ -8,6 +8,7 @@ import Link, { type AppLinkProps } from "./link";
 export { default as AppLink } from "./link";
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode } from "react";
 import { GAME } from "@/lib/theme";
+import { EARLY } from "@/lib/nav";
 import k from "./kit.module.css";
 
 export { k as kit };
@@ -49,6 +50,11 @@ export function Card({ raised, className, ...rest }: HTMLAttributes<HTMLDivEleme
 /** Paper panel with an ink outline and the panel shadow. */
 export function Panel({ className, ...rest }: HTMLAttributes<HTMLElement>) {
   return <section {...rest} className={cx(k.panel, className)} />;
+}
+
+/** The "Early access" label for a game still being polished (nav.ts `early`). */
+export function EarlyBadge({ className }: { className?: string }) {
+  return <span className={cx(k.early, className)}>{EARLY}</span>;
 }
 
 /** The game-coloured head with the island's two soft white circles: eyebrow, title, optional close and extra content. */

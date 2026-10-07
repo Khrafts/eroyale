@@ -61,3 +61,4 @@
 @media (max-width: 420px){.top{gap:6px;padding-left:12px;padding-right:12px}.top .right{gap:6px}}
 
 @media (prefers-reduced-motion: reduce){.chip,.brand,.btn,.ghost,.seg button{transition:none}}
+.early{display:inline-flex;align-items:center;background:var(--sun);color:var(--ink);border:1.5px solid var(--ink);border-radius:var(--radius-round);padding:2px 7px;font:700 10px/1.2 var(--body);letter-spacing:.02em;text-transform:uppercase;white-space:nowrap;vertical-align:middle;text-shadow:none}

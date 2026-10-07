@@ -4,14 +4,17 @@
 import { ISLAND, coral, mint, tang, violet } from "./theme";
 
 export type GameId = "island" | "royale" | "predict" | "duel";
-export type NavGame = { id: GameId; name: string; short: string; color: string; href: string };
+export type NavGame = { id: GameId; name: string; short: string; color: string; href: string; early?: boolean };
+/** Games that are playable but still being polished show this label (and EARLY_NOTE on their main screens). */
+export const EARLY = "Early access";
+export const EARLY_NOTE = "Early access: playable, still being polished.";
 
 /** The switcher's entries, in order. `href` is the game's own entry screen; `short` its label on mid-width bars. */
 export const NAV_GAMES: readonly NavGame[] = [
   { id: "island", name: "Island", short: "Island", color: ISLAND.sky, href: "/" },
   { id: "royale", name: "Trading Royale", short: "Royale", color: coral, href: "/play" },
-  { id: "predict", name: "Price Prediction", short: "Prediction", color: violet, href: "/play?mode=predict" },
-  { id: "duel", name: "Stickman Duel", short: "Duel", color: tang, href: "/duel" },
+  { id: "predict", name: "Price Prediction", short: "Prediction", color: violet, href: "/play?mode=predict", early: true },
+  { id: "duel", name: "Stickman Duel", short: "Duel", color: tang, href: "/duel", early: true },
 ];
 /** "Create a round" is a place on the island (the fountain's fourth jet), not a game in the switcher. */
 export const CREATE = { id: "create", name: "Create a round", short: "+", color: mint } as const;
