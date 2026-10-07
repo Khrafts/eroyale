@@ -1,2 +1,2 @@
-// The duel rules. Points at shared/duel.ts once the duel-sim track lands it; until then at a temporary stub.
-export * from "./duel-stub.ts";
+// The duel rules: shared/duel.ts (the same pure functions run in the browser and the CRE workflow).
+export * from "../../shared/duel.ts";

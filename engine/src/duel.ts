@@ -101,16 +101,28 @@ export class DuelMatch {
     return next.over;
   }
 
-  /** A move connecting (its `hit` flag rising) is a dhit; damage is the defender's hp loss on that tick. */
+  /**
+   * dhit: a move connecting, hit or blocked (shared/duel.ts sets the attacker's `hit` on either). Damage is the
+   * defender's hp loss that tick (chip on a block), combo the attacker's count. A KO that ends a round resets both
+   * fighters on the same tick, so that hit is rebuilt from the round result: the KO'd side lost its remaining hp.
+   */
   private emitHits(prev: DuelState, next: DuelState) {
-    if (next.round !== prev.round) return; // the round reset this tick; the KO hit shows in dround's hp
+    const reset = next.round !== prev.round;
     for (const by of [0, 1] as const) {
       const a0 = prev.f[by], a1 = next.f[by], d0 = prev.f[1 - by], d1 = next.f[1 - by];
+      if (reset) {
+        // Round over by KO (before the time limit): the round's winner hit the other; a double KO, both.
+        const ko = prev.roundTick + 1 < 1800;
+        const won = [next.f[0].rounds - prev.f[0].rounds, next.f[1].rounds - prev.f[1].rounds];
+        if (ko && (won[by] > 0 || (won[0] === 0 && won[1] === 0))) {
+          this.emit({ type: "dhit", duelId: this.id, tick: next.tick, by, move: a0.act, damage: d0.hp, combo: a0.combo + 1, blocked: false, ko: true });
+        }
+        continue;
+      }
       if (a0.hit || !a1.hit) continue;
-      const damage = Math.max(0, d0.hp - d1.hp);
       this.emit({
-        type: "dhit", duelId: this.id, tick: next.tick, by, move: a1.act, damage, combo: Math.max(a1.combo, d1.combo),
-        blocked: d1.act.startsWith("block"),
+        type: "dhit", duelId: this.id, tick: next.tick, by, move: a1.act, damage: Math.max(0, d0.hp - d1.hp), combo: a1.combo,
+        blocked: d1.act === "blockstun", ...(d1.hp === 0 ? { ko: true } : {}),
       });
     }
   }
