@@ -40,7 +40,7 @@
 .isle .top{container:appbar / inline-size}
 .isle .brand{text-decoration:none;color:var(--ink)}
 .isle .panel h2:focus{outline:none}
-@container appbar (max-width: 1240px){.isle .hide-md{display:none !important}}
+@container appbar (max-width: 1380px){.isle .hide-md{display:none !important}}
 @container appbar (max-width: 1500px){.isle .brand .word{display:none}.isle .brand{padding:5px}}
 @container appbar (max-width: 480px){.isle .you-slot [aria-controls="you-menu"] > span:last-child{display:none}.isle .you-slot [aria-controls="you-menu"]{padding:3px}.isle .right{gap:6px}}
 @media (max-width: 480px){.isle .top{gap:6px;padding-left:12px;padding-right:12px}}
