@@ -133,9 +133,20 @@
 //   Level 2 Fighter: P 64, W 8. Reacts to a move from its frame 5: crouch-blocks a ground move
 //     (no retreat), stands against an air attack holding away from the attacker, so it blocks
 //     heavy, sweep and late air attacks but not a fresh jab (active on 4); in blockstun it keeps
-//     the same guard. In the window: meets a walk-in with a heavy, punishes a move in recovery,
-//     otherwise jabs in range and cancels into heavy or sweep on hit or block. Longest string jab
-//     into a cancel (35 ticks), gap >= 64 - 8 - 35 = 21.
+//     the same guard. Guard after stun: on its last hitstun or blockstun tick, and while its act is
+//     back or cblock (it is already guarding), it holds a standing guard ("back", so it drifts 50
+//     a tick away) against any move of the opponent that has not connected and is before frame 5;
+//     from frame 5 the reaction above takes over. All of it is read from the state: its own act
+//     and frame, and the opponent's act, frame and hit. The window ends with the opponent's move
+//     (or when it connects), so a jab started while it already guards is blocked, a fresh jab
+//     from neutral is not; throws and cross-ups beat the guard (only a sweep it sees from frame 5
+//     is crouch-blocked). Counter: an opponent's jab in recovery that was blocked or whiffed is
+//     punished at any time, outside the window too: a jab within 950 if it is active before the
+//     jab ends, else a step in from up to 1100 first; the jab then cancels as below. Counters are
+//     reactions like Master's punishes, never seen against an idle or walking opponent. In the
+//     window: meets a walk-in with a heavy, punishes a move in recovery, otherwise jabs in range
+//     and cancels into heavy or sweep on hit or block. Longest string jab into a cancel (35
+//     ticks), gap >= 64 - 8 - 35 = 21 between its own window strings.
 //   Level 3 Master: P 56, W 12, reacts from frame 2, so it also blocks a fresh jab. A throw
 //     started on a jab's frame 2 is active after the jab, so "throw breaks a fresh jab" works on
 //     the jab's end instead: Master blocks the jab, closes in to throw range (780), and throws on
@@ -463,12 +474,26 @@ export function botInput(s: DuelState, side: 0 | 1, level: 1 | 2 | 3): Bits {
     return dist > 900 ? toward : 0; // walk in for the next window
   }
 
+  // Fighter's guard: up from its first free tick after hitstun or blockstun, kept while it is
+  // standing guard, against a move that has not connected and is still before its active end.
+  if (level === 2 && isMove(op.act) && op.act !== "throw" && !op.hit) {
+    const m = MOVES[op.act];
+    const guarding = me.act === "back" || me.act === "cblock" || me.act === "hitstun" || me.act === "blockstun";
+    const threat = op.act === "air" || op.frame < m.s + m.a;
+    if (guarding && threat && op.frame < BOT_REACT[2] && dist <= m.reach + 200) return away;
+  }
+
   // Levels 2 and 3: react to the opponent's move.
   if (isMove(op.act) && op.act !== "throw") {
     const m = MOVES[op.act];
     const end = m.s + m.a + m.r;
     const recovering = op.act !== "air" && op.frame >= m.s + m.a;
     if (recovering) {
+      if (level === 2 && !open && op.act === "jab") {
+        // Fighter counters a blocked or whiffed jab at any time: walk in, then jab (and cancel).
+        if (dist <= 950 && op.frame + 4 < end) return BA;
+        if (dist <= 1100 && op.frame + 5 < end) return toward;
+      }
       if (open || level === 3) {
         // Punish: a throw lands before the opponent's next jab if it starts as the opponent gets free.
         if (level === 3 && dist <= 780 && op.frame + 1 >= end - 1) return BA | BB;
