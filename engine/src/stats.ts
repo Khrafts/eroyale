@@ -6,7 +6,7 @@ import { PRESETS } from "./types.ts";
 
 export type Win = { player: string; callsign: string; bot: boolean; amountUnits: string };
 // bookHash identifies the match: a lobby id reused by a new escrow (same ENGINE_DATA_DIR) is a different settlement.
-export type Settlement = { lobbyId: number; mode: "royale" | "predict"; at: number; txHash: string; bookHash: string | null; winners: Win[] };
+export type Settlement = { lobbyId: number; mode: "royale" | "predict" | "duel"; at: number; txHash: string; bookHash: string | null; winners: Win[] };
 type Who = { callsign: string; bot: boolean };
 
 const DAY_MS = 86_400_000;
@@ -71,7 +71,7 @@ export class Stats {
   }
 
   /** Record one `settled` event (winners and amounts as paid). Once per match (mode, id, book); repeats are ignored. */
-  record(mode: "royale" | "predict", lobbyId: number, bookHash: string | null, e: { txHash: string; winners: string[]; amounts: string[] }, who: Map<string, Who>, at = Date.now()) {
+  record(mode: "royale" | "predict" | "duel", lobbyId: number, bookHash: string | null, e: { txHash: string; winners: string[]; amounts: string[] }, who: Map<string, Who>, at = Date.now()) {
     if (this.seen.has(keyOf(mode, lobbyId, bookHash, e.txHash))) return;
     const winners = e.winners.map((w, i) => {
       const player = w.toLowerCase();

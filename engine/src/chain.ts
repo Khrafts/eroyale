@@ -37,6 +37,22 @@ export interface Chain {
   settledBetween(from: bigint, to: bigint): Promise<{ id: number; hash: string }[]>;
   /** The settlement tx's receipt, checked: success, and the escrow emitted Settled(id). Null while not mined. */
   settlementReceipt(id: number, hash: Hex): Promise<SettlementReceipt | null>;
+  /** DuelEscrow (Stickman Duel), on the same queue and nonces. Null when DUEL_ESCROW_ADDRESS is unset or CHAIN=off. */
+  readonly duel: DuelChain | null;
+}
+
+export type OnchainDuel = { status: number; stake: bigint; playerA: string; playerB: string; pot: bigint; bookHash: string; winner: string };
+export interface DuelChain {
+  readonly address: string;
+  createDuel(stake: bigint): Promise<{ id: number; txHash: string }>;
+  /** `until` (unix ms): as for royale joinFor, a join still queued then is not sent. */
+  joinFor(id: number, player: string, until?: number): Promise<string | null>;
+  start(id: number): Promise<string>;
+  cancel(id: number): Promise<string>;
+  getDuel(id: number): Promise<OnchainDuel>;
+  settleFallback(report: Hex): Promise<string>;
+  /** Hash of the tx that emitted DuelEscrow Settled(id) in blocks [from, head], or null (windows of LOGS_BLOCK_SPAN). */
+  findSettled(id: number, from: bigint): Promise<string | null>;
 }
 
 export type SettlementReceipt = { ok: boolean; reason: string; bookHash: Hex | null; to: string | null; block: bigint };
@@ -121,6 +137,22 @@ const GET_LOBBY_V1 = parseAbi([
   "struct Lobby { uint8 status; uint16 maxPlayers; uint32 duration; uint64 startTime; uint64 endTime; uint96 entry; uint32 playerCount; uint256 pot; bytes32 bookHash; }",
   "function getLobby(uint256 id) view returns (Lobby)",
 ]);
+// From contracts/src/interfaces/IDuelEscrow.sol (duel-contracts track).
+const DUEL_ABI = parseAbi([
+  "function createDuel(uint96 stake) returns (uint256 id)",
+  "function joinFor(uint256 id, address player)",
+  "function start(uint256 id)",
+  "function cancel(uint256 id)",
+  "function settleFallback(bytes report)",
+  "struct Duel { uint8 status; uint96 stake; address playerA; address playerB; uint256 pot; bytes32 bookHash; address winner; }",
+  "function getDuel(uint256 id) view returns (Duel)",
+  "error ZeroAddress()", "error ZeroStake()", "error DuelNotOpen(uint256 id)", "error DuelNotLive(uint256 id)",
+  "error DuelNotCancellable(uint256 id)", "error AlreadyJoined(uint256 id, address player)", "error DuelFull(uint256 id)",
+  "error NotEnoughPlayers(uint256 id)", "error NotRelayer(address caller)", "error WrongChainSelector(uint64 expected, uint64 actual)",
+  "error NotPlayer(uint256 id, address winner)", "error TransferFailed()", "error OwnableUnauthorizedAccount(address account)",
+]);
+const DUEL_SETTLED_EVENT = parseAbiItem("event Settled(uint256 indexed id, bytes32 bookHash, address winner)");
+export const DUEL_OPEN = 1, DUEL_LIVE = 2, DUEL_SETTLED = 3, DUEL_CANCELLED = 4; // IDuelEscrow.Status
 const SETTLED_EVENT = parseAbiItem("event Settled(uint256 indexed id, bytes32 bookHash)");
 const ERC20_ABI = parseAbi([
   "function approve(address spender, uint256 amount) returns (bool)",
@@ -186,6 +218,7 @@ export const offChain: Chain = {
   findSettled: async () => null,
   settledBetween: async () => [],
   settlementReceipt: async () => null,
+  duel: null,
 };
 
 function need(env: NodeJS.ProcessEnv, k: string): string {
@@ -258,6 +291,8 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
     }
   }
   const escrow = need(env, "ESCROW_ADDRESS") as Address;
+  const duelAddr = (env.DUEL_ESCROW_ADDRESS ?? "").trim() as Address | "";
+  if (duelAddr && !/^0x[0-9a-fA-F]{40}$/.test(duelAddr)) throw new Error("DUEL_ESCROW_ADDRESS must be an address");
   const token = need(env, "TOKEN_ADDRESS") as Address;
   let approved = false;
   // One transaction at a time, so the relayer and owner nonces never race.
@@ -330,39 +365,10 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
       const closed = () => until !== undefined && Date.now() > until;
       if (closed()) throw new Error("join window closed while the join waited for the relayer");
       if (!approved) {
-        const bal = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [relayer.account.address] });
-        if (bal < RELAYER_FLOOR) {
-          const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "mint", args: [relayer.account.address, RELAYER_MINT] } as never);
-          const rc = await receipt(relayer, hash);
-          if (rc.status !== "success") throw new Error(`mint reverted: ${hash}`);
-          log(`[chain] relayer minted ${RELAYER_MINT} MockUSDC units ${hash}`);
-          await confirmRead("the relayer's minted balance", async () =>
-            (await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [relayer.account.address] })) >= RELAYER_FLOOR);
-        }
-        const have = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, escrow] });
-        if (have < 10n ** 30n) {
-          const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "approve", args: [escrow, maxUint256] } as never);
-          const rc = await receipt(relayer, hash);
-          if (rc.status !== "success") throw new Error(`approve reverted: ${hash}`);
-          log(`[chain] relayer approved escrow ${hash}`);
-          await confirmRead("the relayer's allowance", async () =>
-            (await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, escrow] })) >= 10n ** 30n);
-        }
+        await fundRelayer(escrow);
         approved = true;
       }
-      // Up to 3 resends on nonce or transport errors. If an earlier attempt did land, the resend reverts with
-      // AlreadyJoined, which counts as joined.
-      let lastErr: unknown;
-      for (let attempt = 1; attempt <= JOIN_TRIES; attempt++) {
-        try { return (await send(relayer, "joinFor", [BigInt(id), player as Address])).hash; } catch (e) {
-          lastErr = e;
-          if (failReason(e).startsWith("AlreadyJoined(")) { log(`[chain] joinFor(${id}, ${player}): already joined on chain`); return null; }
-          if (!retryable(e) || attempt === JOIN_TRIES || closed()) throw e;
-          log(`[chain] joinFor(${id}, ${player}) attempt ${attempt} failed, resending: ${failReason(e)}`);
-          await new Promise((r) => setTimeout(r, 1000 * attempt));
-        }
-      }
-      throw lastErr;
+      return joinWithRetries(() => send(relayer, "joinFor", [BigInt(id), player as Address]), id, player, closed);
     }),
     start: (id) => serial(async () => {
       const { hash } = await send(owner, "start", [BigInt(id)]);
@@ -372,7 +378,107 @@ export async function makeChain(env: NodeJS.ProcessEnv, log: (m: string) => void
     cancel: (id) => serial(async () => (await send(owner, "cancel", [BigInt(id)])).hash),
     settleFallback: (report) => serial(async () => (await send(owner, "settleFallback", [report])).hash),
     ...reads,
+    duel: duelAddr ? duelChain(duelAddr) : null,
   };
+
+  /** Mint the relayer MockUSDC when low and approve `spender` (an escrow) once. Runs inside the serial queue. */
+  async function fundRelayer(spender: Address) {
+    const bal = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [relayer.account.address] });
+    if (bal < RELAYER_FLOOR) {
+      const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "mint", args: [relayer.account.address, RELAYER_MINT] } as never);
+      const rc = await receipt(relayer, hash);
+      if (rc.status !== "success") throw new Error(`mint reverted: ${hash}`);
+      log(`[chain] relayer minted ${RELAYER_MINT} MockUSDC units ${hash}`);
+      await confirmRead("the relayer's minted balance", async () =>
+        (await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [relayer.account.address] })) >= RELAYER_FLOOR);
+    }
+    const have = await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, spender] });
+    if (have < 10n ** 30n) {
+      const hash = await write(relayer, { address: token, abi: ERC20_ABI, functionName: "approve", args: [spender, maxUint256] } as never);
+      const rc = await receipt(relayer, hash);
+      if (rc.status !== "success") throw new Error(`approve reverted: ${hash}`);
+      log(`[chain] relayer approved ${spender} ${hash}`);
+      await confirmRead("the relayer's allowance", async () =>
+        (await pub.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [relayer.account.address, spender] })) >= 10n ** 30n);
+    }
+  }
+
+  /** Up to 3 resends on nonce or transport errors. If an earlier attempt landed, the resend reverts AlreadyJoined: joined. */
+  async function joinWithRetries(go: () => Promise<{ hash: Hex }>, id: number, player: string, closed: () => boolean): Promise<string | null> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= JOIN_TRIES; attempt++) {
+      try { return (await go()).hash; } catch (e) {
+        lastErr = e;
+        if (failReason(e).startsWith("AlreadyJoined(")) { log(`[chain] joinFor(${id}, ${player}): already joined on chain`); return null; }
+        if (!retryable(e) || attempt === JOIN_TRIES || closed()) throw e;
+        log(`[chain] joinFor(${id}, ${player}) attempt ${attempt} failed, resending: ${failReason(e)}`);
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+    throw lastErr;
+  }
+
+  /** DuelEscrow calls: same owner and relayer keys, same serial queue and local nonces as the royale escrow. */
+  function duelChain(addr: Address): DuelChain {
+    type DuelFn = "createDuel" | "joinFor" | "start" | "cancel" | "settleFallback";
+    const DUEL_LAG: Record<DuelFn, string[]> = {
+      joinFor: ["DuelNotOpen("], start: ["DuelNotOpen(", "NotEnoughPlayers("], settleFallback: ["DuelNotLive("], createDuel: [], cancel: [],
+    };
+    let duelApproved = false;
+    const readDuel = async (id: number): Promise<OnchainDuel> => {
+      const d = await pub.readContract({ address: addr, abi: DUEL_ABI, functionName: "getDuel", args: [BigInt(id)] });
+      return { status: d.status, stake: d.stake, playerA: d.playerA.toLowerCase(), playerB: d.playerB.toLowerCase(), pot: d.pot, bookHash: d.bookHash, winner: d.winner.toLowerCase() };
+    };
+    async function dsend(wallet: typeof owner, fn: DuelFn, args: readonly unknown[]) {
+      let sim;
+      for (let attempt = 1; ; attempt++) {
+        try { sim = await pub.simulateContract({ address: addr, abi: DUEL_ABI, functionName: fn, args: args as never, account: wallet.account }); break; } catch (e) {
+          const why = failReason(e);
+          if (attempt >= LAG_TRIES || !DUEL_LAG[fn].some((p) => why.startsWith(p))) throw e;
+          log(`[chain] duel ${fn} simulation reverted ${why}; RPC may lag, retry ${attempt}/${LAG_TRIES - 1} in ${LAG_WAIT_MS} ms`);
+          await sleep(LAG_WAIT_MS);
+        }
+      }
+      const hash = await write(wallet, sim.request as never);
+      const rc = await receipt(wallet, hash);
+      if (rc.status !== "success") throw new Error(`duel ${fn} reverted: ${hash}`);
+      log(`[chain] duel ${fn}(${fn === "settleFallback" ? "report" : args.join(", ")}) ${hash}`);
+      return { hash, result: sim.result };
+    }
+    const LOGS_SPAN = BigInt(env.LOGS_BLOCK_SPAN ?? 10);
+    return {
+      address: addr.toLowerCase(),
+      createDuel: (stake) => serial(async () => {
+        const { hash, result } = await dsend(owner, "createDuel", [stake]);
+        const id = Number(result as bigint);
+        await confirmRead(`duel ${id} Open`, async () => (await readDuel(id)).status === DUEL_OPEN);
+        return { id, txHash: hash };
+      }),
+      joinFor: (id, player, until) => serial(async () => {
+        const closed = () => until !== undefined && Date.now() > until;
+        if (closed()) throw new Error("join window closed while the join waited for the relayer");
+        if (!duelApproved) { await fundRelayer(addr); duelApproved = true; }
+        return joinWithRetries(() => dsend(relayer, "joinFor", [BigInt(id), player as Address]), id, player, closed);
+      }),
+      start: (id) => serial(async () => {
+        const { hash } = await dsend(owner, "start", [BigInt(id)]);
+        await confirmRead(`duel ${id} Live`, async () => (await readDuel(id)).status === DUEL_LIVE);
+        return hash;
+      }),
+      cancel: (id) => serial(async () => (await dsend(owner, "cancel", [BigInt(id)])).hash),
+      settleFallback: (report) => serial(async () => (await dsend(owner, "settleFallback", [report])).hash),
+      getDuel: readDuel,
+      findSettled: async (id, from) => {
+        const head = await pub.getBlockNumber();
+        for (let hi = head; hi >= from && hi >= 0n; hi -= LOGS_SPAN) {
+          const lo = hi - LOGS_SPAN + 1n > from ? hi - LOGS_SPAN + 1n : from;
+          const logs = await pub.getLogs({ address: addr, event: DUEL_SETTLED_EVENT, args: { id: BigInt(id) }, fromBlock: lo, toBlock: hi });
+          if (logs.length) return logs[logs.length - 1].transactionHash;
+        }
+        return null;
+      },
+    };
+  }
 }
 
 export type EscrowReads = Pick<Chain, "getLobby" | "blockTime" | "blockNumber" | "findSettled" | "settledBetween" | "settlementReceipt">;

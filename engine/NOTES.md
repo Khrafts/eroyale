@@ -1,7 +1,7 @@
 ## Status
-- Step: duel-engine (Phase 11) starting; merged main's round-loop fixes into duel-engine.
-- Last check: none yet on this branch.
-- Next: duel queue, loop, book, routes. Blockers: shared/duel.ts (duel-sim) and gates.next-duel/duel-engine.sh not landed yet.
+- Step: duel queue, pairing, free bot fight, 60 Hz loop, WS, book, offline/on-chain settle, scripts/duel-client.mts, on a stub of shared/duel.ts.
+- Last check: gates/engine.sh, predict-engine.sh, island-engine.sh GATE PASS; duel-client two players + --bot DUEL CLIENT PASS (CHAIN=off).
+- Next: merge feat/duel (shared/duel.ts landed), delete the stub, run gates.next-duel/duel-engine.sh. Blockers: none.
 
 # Engine notes
 
