@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 14 duel-feel: steps 1-4 done on v1 rules (ranked "Coming soon", practice levels in ?level=, Block button, BLOCK spark and hint); canvas draws crossing (smoothed facing turn).
-- Last check: ui, look-ui, duel-ui (v1), nav-ui GATE PASS; typecheck clean.
-- Next: merge feat/duel2 (rules v2), verify crossing, run gates.next-duel2 duel-ui. Blockers: none.
+- Step: Phase 14 duel-feel done: ranked "Coming soon" (menu, Dojo, no duel in /arena picker or Big screen, jet fixed low), practice Sparring/Fighter/Master/Dummy in ?level= (?guard=block), Block button, BLOCK spark and tips hint, crossing drawn with a smoothed facing turn.
+- Last check: on the merge with feat/duel2 (rules v2): ui, look-ui, nav-ui, gates.next-duel2 duel-ui GATE PASS; typecheck clean; a forward jump over the dummy crosses and turns with no snap.
+- Next: feel check (11.3). Blockers: none.
 
 ## Running
 
