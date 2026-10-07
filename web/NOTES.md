@@ -1,7 +1,7 @@
 ## Status
-- Step: Phase 12 nav-kit: lib/nav.ts, lib/useUrlState.ts, the kit app bar (bar/switcher/you/link.tsx), EndActions, app/not-found.tsx, route titles.
-- Last check: typecheck clean; GATE PASS ui, duel-ui, look-ui; nav-ui parts bundle/notfound/practice/names ok (others belong to nav-play/arena/island); /arena 134332, /play 166101 gzip B (limit 140993 / 173810).
-- Next: nav-play, nav-arena, nav-island adopt the API below ("Navigation"). Blockers: none.
+- Step: Phase 12 nav-play: /play app bar + shell (components/play/Bar.tsx), action blocks, predict history on useUrlState, useMatch follow policy (hold/next/pinned/followNext), titles.
+- Last check: typecheck clean; nav-ui parts appbar(/play)/terminal/predictback/titles(play) ok on a local build; full gate runs pending.
+- Next: run ui, predict-ui, look-ui, nav-ui; measure first-load; push nav-play. Blockers: none.
 
 ## Running
 
@@ -166,3 +166,5 @@ Phase 12 kit (CLAUDE.md "Navigation"). Tracks use these; do not hand-roll anothe
 - URL state: `const { params, push, replace, back } = useUrlState()` from `@/lib/useUrlState`. `push(set, path?)` drill-down, `replace(set, path?)` lateral, `back(parentSet, path?)` = `history.back()` when the previous entry was pushed from that parent URL, else replaceState to it. `set` only changes the keys it names (`null` deletes), so `mock`, `at`, `speed`, `seed`, `me`, `motion` survive. `params` re-read on popstate and every move; empty during SSR/hydration. `withParams(set, path?, search?)` builds the same URL for an href.
 - Titles: layout template `"%s · Royale Isle"`; route titles `Trading Royale` (/play), `Stickman Duel` (/duel), `Big screen` (/arena, via app/arena/layout.tsx), `Page not found`; `/` is absolute "Royale Isle". Screens set finer titles with `docTitle`.
 - 404: `app/not-found.tsx`: `AutoTopBar` (components/kit/auto-bar.tsx: the app bar with the you chip from `burner()`, lib/engine imported after mount) and `EndActions game="island"`.
+- Follow policy (lib/useMatch.ts, rule 8): `useMatch({hold: true})` keeps a finished match on screen; the returned `next` is the engine's current lobby (protocol round in predict) once this one has ended and differs, `pinned` is true for `opts.lobby`/`?lobby=`, `followNext()` moves a held match on. Pinned and held matches only offer `next`; without `hold` an unpinned match still follows by itself (the big screen). /play royale uses `hold`.
+- /play shell: `Shell` in components/play/Bar.tsx (app bar full width, the 520 px phone column under it, document.title kept over Next's streamed metadata title). Modes and screens read the URL with `useSearchParams` (so router pushes from AppLink and useUrlState writes both re-render); the predict screens move with useUrlState (`?lock=` keeps a created round's lock time over a refresh).
