@@ -68,7 +68,7 @@ const N_BOTS = Number(args.bots);
 // Bots that join one by one after the first human joins a royale lobby (so a lone player gets a full match).
 const N_ON_JOIN = Number(args["bots-on-join"]);
 if (!Number.isInteger(N_ON_JOIN) || N_ON_JOIN < 0 || N_ON_JOIN > 49) throw new Error("--bots-on-join (BOTS_ON_JOIN) must be 0 to 49");
-const ON_JOIN_GAP_MS = 1000;
+const ON_JOIN_GAP_MS = 200;
 const PORT = Number(args.port ?? process.env.PORT ?? 8787);
 const OPEN_S = Number(args.open);
 const COUNTDOWN_S = Number(args.countdown);
@@ -226,6 +226,7 @@ async function createLobby(): Promise<Match> {
   const failed: number[] = [];
   for (let i = 0; i < N_BOTS; i++) if (!(await joinBot(m, i))) failed.push(i);
   if (failed.length) void retryBots(m, failed);
+  void fillOnJoin(m); // pre-fill: the on-join bots take their seats while the lobby waits for a human
   scheduleCountdown(m, Date.now() + OPEN_S * 1000);
   return m;
 }
@@ -238,19 +239,22 @@ async function joinBot(m: Match, i: number): Promise<boolean> {
   return true;
 }
 
-/** After the first human joins: N_ON_JOIN bots join one by one; the countdown waits until they are in. */
+/** N_ON_JOIN bots join one by one when the lobby opens; with N_ON_JOIN > 0 the countdown also waits for a human. */
 async function fillOnJoin(m: Match) {
   if (!N_ON_JOIN || m.fillStarted) return;
   m.fillStarted = true;
   m.filling = true;
   const l = m.lobby;
   try {
+    // Staggered starts, joins in flight together: the relayer's tx queue pipelines the nonces.
+    const joins: Promise<boolean>[] = [];
     for (let i = 0; i < N_ON_JOIN; i++) {
       if (l.status !== "open" && l.status !== "countdown") break;
       if (l.players.length + m.pendingJoins.size >= l.maxPlayers) break;
-      await joinBot(m, N_BOTS + i);
+      joins.push(joinBot(m, N_BOTS + i));
       await new Promise((r) => setTimeout(r, ON_JOIN_GAP_MS));
     }
+    await Promise.all(joins);
   } finally {
     m.filling = false;
   }
@@ -300,7 +304,7 @@ function scheduleCountdown(m: Match, at: number) {
   const check = () => {
     const l = m.lobby;
     if (l.status !== "open") return;
-    if (Date.now() < at || l.players.length < 4 || m.pendingJoins.size || m.filling || !prices.current()) return void setTimeout(check, 500);
+    if (Date.now() < at || l.players.length < 4 || m.pendingJoins.size || m.filling || (N_ON_JOIN > 0 && !l.players.some((p) => !p.bot)) || !prices.current()) return void setTimeout(check, 500);
     // Go live on a minute boundary so endTime % 60 == 0 and the settlement candle is the match's last minute.
     const startsAt = Math.ceil((Date.now() / 1000 + COUNTDOWN_S) / 60) * 60;
     l.countdown(startsAt);
