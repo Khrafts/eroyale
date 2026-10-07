@@ -976,7 +976,7 @@ function playingNow(): number {
   return who.size;
 }
 function send(res: ServerResponse, code: number, body: unknown, raw = false) {
-  res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" });
+  res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS" });
   res.end(raw ? (body as string) : JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
 }
 async function readJson(req: IncomingMessage): Promise<any> {

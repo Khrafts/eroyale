@@ -114,6 +114,12 @@ async function check(c: Client, ranked: boolean) {
 
 console.log(`duel-client against ${BASE} (${a.bot ? "bot fight" : "two players"}, seed ${SEED})`);
 if (a.bot) {
+  // Leaving the queue: removed at once, then unknown; nobody can be paired with it afterwards.
+  const gone = await queue("LEAVER");
+  const [lc, lo] = await call("DELETE", `/duels/queue/${gone.ticket}`);
+  ok(lc === 200 && lo.status === "left", "DELETE /duels/queue/:ticket leaves the queue");
+  const [lc2] = await call("DELETE", `/duels/queue/${gone.ticket}`);
+  ok(lc2 === 404, "the left ticket is unknown afterwards");
   const q = await queue("SOLO");
   const [early] = await call("POST", `/duels/queue/${q.ticket}/bot`);
   ok(early === 400, "bot fight refused before 10 s alone");
@@ -134,6 +140,8 @@ if (a.bot) {
   const qb = await queue("BRAVO");
   const [ta, tb] = await Promise.all([matched(qa), matched(qb)]);
   ok(ta.duelId === tb.duelId && ta.side !== tb.side && ta.ranked && tb.ranked, `paired into ranked duel ${ta.duelId}`);
+  const [dc, dv] = await call("DELETE", `/duels/queue/${qa.ticket}`);
+  ok(dc === 409 && dv.status === "matched" && dv.duelId === ta.duelId, "DELETE on a matched ticket is 409 with the ticket view");
   const [ca, cb] = await Promise.all([connect(qa, ta), connect(qb, tb)]);
   // A stranger's input (wrong token) is ignored; checked by the replay matching what the two clients could send.
   ca.ws.send(JSON.stringify({ type: "input", sessionToken: "nope", seq: 1, bits: 16 }));
@@ -147,7 +155,7 @@ if (a.bot) {
     ok(w && w.player === fin.winner && w.amountUnits === settled.amounts[0], `/stats has the duel win (${w?.amountUnits} to ${w?.callsign})`);
   }
   const [, list] = await call("GET", "/duels");
-  ok(list.recent.some((x: any) => x.duelId === ca.duelId), "GET /duels lists the duel in recent");
+  ok(list.recent.some((x: any) => x.duelId === ca.duelId && x.ranked === true && x.settled === true), "GET /duels lists the duel in recent (ranked, settled)");
   console.log(`ranked duel ${ca.duelId}: winner ${fin.winner ?? "draw"} rounds ${fin.rounds} ticks ${fin.ticks} settled ${settled.txHash}`);
 }
 console.log(`${checks.length} checks ok`);
