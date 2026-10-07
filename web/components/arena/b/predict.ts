@@ -535,7 +535,7 @@ export class PredictScene {
     want.forEach((y, i) => ys.push(i === 0 ? Math.max(y, PT - 20) : Math.max(y, ys[i - 1] + gap)));
     const over = ys.length ? ys[ys.length - 1] + h - (H - 12) : 0;
     if (over > 0) for (let i = ys.length - 1; i >= 0; i--) ys[i] = Math.min(ys[i] - over, i < ys.length - 1 ? ys[i + 1] - gap : Infinity);
-    const minY = 240;
+    const minY = fin ? 240 : PT - 22; // below the "Closest k win" caption
     if (ys.length && ys[0] < minY) {
       const d = minY - ys[0];
       for (let i = 0; i < ys.length; i++) ys[i] = i === 0 ? minY : Math.max(ys[i], ys[i - 1] + gap, ys[i] + d * (1 - i / ys.length));

@@ -562,7 +562,7 @@ export class Scene {
       ctx.lineTo(PEAK_R + 20, hy);
       ctx.stroke();
       ctx.restore();
-    } else if (s.status === "live" || s.final) note = "holding, checkpoints are over";
+    } else if (s.status === "live" || s.status === "settling" || s.status === "settled" || s.final) note = "holding, checkpoints are over";
     else note = "rises once the match starts";
 
     // one chip for the sea, at the right edge, kept clear of the cut-line chip
