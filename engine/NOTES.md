@@ -1,7 +1,7 @@
 ## Status
-- Step: feat/island review fixes (uncommitted, lead commits): `Stats.record` catches a failed `settlements.jsonl` append and logs it (E1); Stats note corrected to the `/play` offline text (E2); `playingNow` skipping failed settlements recorded as deliberate (E3).
-- Last check: `npm run typecheck`, `gates/engine.sh`, `gates/predict-engine.sh`, `gates/island-engine.sh` on these changes (results in the lead's record); CHAIN=off engine survived a settlement with a read-only `settlements.jsonl`.
-- Next: CRE live proof on Base Sepolia (Railway `SETTLE_MODE=cre`, `npm run cre-settler` with a funded `PRIVATE_KEY_CRE`). Blockers: none.
+- Step: main (2026-10-06 protocol-round loop fixes: nonce classification, receipt timeouts, join deadlines, rounds open at now when behind, one createLobby in flight, bounded lock hold, one shared Settled watcher, log-backed GET /lobbies/:id) merged into feat/island with the island stats (`/stats`, settlements.jsonl, a failed append logs and keeps the record in memory).
+- Last check: on main `bash gates/all.sh` 10/10, e2e and `scripts/check-round-loop.mts` PASS; on feat/island before this merge engine, predict-engine and island-engine PASS. Rerun on the merged tree in the lead's record.
+- Next: hosted engine runs main with SETTLE_MODE=cre; feat/island goes live after PR #1 merges. Blockers: none.
 
 # Engine notes
 
@@ -13,7 +13,7 @@
 
 `dev` flags: `--bots N` (fill the lobby), `--preset stage|standard`, `--open S` (seconds the lobby stays open before the countdown, default 15; it waits for 4+ players and live prices), `--countdown S` (minimum countdown, default 10; `startsAt` is then rounded up to the next whole minute so `endTime % 60 == 0`), `--seed S` (bot seed), `--max N` (max players, default 50), `--loop` (open the next lobby 5 s after `final`), `--resume` (rebuild the latest unfinished lobby from its log and carry on).
 
-The server reads `../.env` but never overrides a variable already set, so `CHAIN=off` on the command line wins. With `CHAIN` on, the server refuses to boot without `PRICE_SOURCE_URL`, and `final` waits (retrying every 5 s) for the settlement candle; with `CHAIN=off` it falls back to the last live mark after 6 failed tries. Env it uses: `CHAIN` (`off`, `base-sepolia`, `ethereum-sepolia`), `RPC_URL`, `PRIVATE_KEY_DEPLOYER`, `PRIVATE_KEY_RELAYER`, `ESCROW_ADDRESS`, `TOKEN_ADDRESS`, `PRICE_SOURCE_URL`, `ORDER_SIG=off` (accept unsigned orders: the hour-7 cut line), `PORT`, `SETTLE_MODE` (`simulated`, `cre`, `deployed`), `CRE_WAIT_MS`, `LOGS_BLOCK_SPAN`.
+The server reads `../.env` but never overrides a variable already set, so `CHAIN=off` on the command line wins. With `CHAIN` on, the server refuses to boot without `PRICE_SOURCE_URL`, and `final` waits (retrying every 5 s) for the settlement candle; with `CHAIN=off` it falls back to the last live mark after 6 failed tries. Env it uses: `CHAIN` (`off`, `base-sepolia`, `ethereum-sepolia`), `RPC_URL`, `PRIVATE_KEY_DEPLOYER`, `PRIVATE_KEY_RELAYER`, `ESCROW_ADDRESS`, `TOKEN_ADDRESS`, `PRICE_SOURCE_URL`, `ORDER_SIG=off` (accept unsigned orders: the hour-7 cut line), `PORT`, `SETTLE_MODE` (`simulated`, `cre`, `deployed`), `CRE_WAIT_MS`, `LOGS_BLOCK_SPAN`, `RECEIPT_TIMEOUT_MS` (per-tx receipt wait, default 60000).
 
 ## Layout
 
@@ -60,6 +60,21 @@ Seeds 1-30, 20 bots, stage: 27 end with 4-9 finalists, 28 have at least one liqu
 - Read lag: after `createLobby` the engine polls `getLobby` until it reads Open (30 s deadline) before any join; after `start`, until Live. The relayer's mint and approve are confirmed the same way. A simulation that reverts with a lag-shaped error (`LobbyNotOpen` on joinFor, `LobbyNotOpen`/`NotEnoughPlayers` on start, `LobbyNotLive`/`SettleBeforeEnd` on settleFallback) is retried 4 times, 1.5 s apart, before it counts. `AlreadyJoined` counts as joined. Bots whose join still failed are retried every 3 s until joins close. Receipts are polled every 1 s.
 - `ENGINE_READ_LAG_MS` (test only, off unless set): eth_call and eth_estimateGas answer at the head from that many ms ago. `scripts/e2e.mts` sets 6000 when `CHAIN=anvil` (so `e2e:local` runs with lag; `ENGINE_READ_LAG_MS=0` turns it off) and clears it on any other chain.
 - e2e: refuses a busy `E2E_PORT` (default 8799; `e2e:local` uses 8811). Historical `balanceOf` is retried 10 x 2 s, then the settlement receipt's Transfer logs give the deltas.
+
+## Incident 2026-10-06: protocol rounds 155-327 opened already locked
+
+What happened (hosted engine, Base Sepolia, `--predict-bots 5`, `SETTLE_MODE=cre`): at 20:03:08 a relayer joinFor for round 154 failed with "HTTP request failed" (the RPC was failing requests then; four Settled watchers logged "RPC Request failed" the same minute). `write()` treated any error whose message matched `/nonce/` as a used nonce, and viem prints the request arguments (`nonce: 837`) in every write error, so the local relayer nonce went to 838 while the chain stayed at 837 (still 0x345 on 2026-10-07). Every later relayer tx sat behind the gap; viem waited 180 s per receipt, four tries per bot, so round 154's joins held the serial tx queue (and the precreated createLobby behind them) for 45 minutes, and `holdLock` kept round 154 from locking until 20:48:36. Round 155 then opened at round 154's lock time (20:04), already past its own lock: 0 players, cancelled, next createLobby, lock one minute later. 173 rounds caught up a minute each until 22:56 (round 327, lock 22:57), which hit the same dead relayer nonce again.
+
+Fixes:
+- Nonce trouble is read from the node's answer only (`nonceProblem()` in `src/chain.ts`: NonceTooLow/High, "already known", "replacement transaction underpriced"); a transport error leaves the nonce unused.
+- Receipts wait `RECEIPT_TIMEOUT_MS` (default 60 s). Then: a tx the node knows and can mine (below its pending nonce) is waited on again, 3 times at most; an unknown tx, or one at or past the node's pending nonce (a gap), drops the local nonce, so the next send re-reads `pending` and fills the gap.
+- `joinFor(id, player, until)`: a join still queued when its window closes is not sent, and no resend starts after it.
+- A protocol round that cannot open within 2 s of the previous lock opens at now with its full lockAfter (60 to 119 s), never backdated. One protocol createLobby in flight (shared by the early create and the one at the lock), one `openProtocolRound` at a time. The lock waits at most 15 s past the lock time for joins in flight; a join landing later is refunded by the book-vs-escrow check in `finishRound`.
+- Settled watching is one shared loop for every pending lobby: every 10 s the head, the new blocks once for Settled of any id, and one pending lobby's status (round robin). About 3 RPC calls per 10 s whatever the backlog (was about 3 per lobby, plus a 300-block backfill per lobby).
+- Finished rounds beyond the newest 40 leave memory (each kept its whole event log; about 1,440 rounds a day). `GET /lobbies/:id` for a lobby or round not in memory (pruned, or from before a restart, which used to answer "no such lobby") is rebuilt from its `round-`/`lobby-<id>.jsonl` with `archived: true`.
+- HTTP was not blocked in the looping deployment: Railway's HTTP log for it has no slow request except a dial timeout while the container stopped (23:46). The hangs seen with curl line up with deploy transitions (19:13, 23:46).
+
+Check: `npx tsx scripts/check-round-loop.mts` (about 3 min; `--unit` for the classification part only). Part 1 checks `nonceProblem` against a stub JSON-RPC server. Part 2 freezes a CHAIN=off engine with SIGSTOP until 75 s past a protocol round's lock and requires one new round with its full window, no 0-player cancel, and `/health` at once; the pre-fix server fails it (rounds 2 and 3 opened, round 2 with -15 s to its lock and cancelled with 0 players). Part 3 (`--anvil`, run with the exports of `scripts/e2e-local.sh`) stops anvil mining from 25 s before a lock to 75 s after: `/rounds` answered within 14 ms throughout, one createLobby after mining resumed, one round with 105 s to its lock. Stale txs queued during such a stall still mine afterwards (here two empty protocol lobbies, ids 2 and 3; no money held).
 
 ## Settlement (Phase 6)
 
