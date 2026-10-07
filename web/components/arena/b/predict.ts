@@ -215,8 +215,9 @@ export class PredictScene {
     if (!reduced) {
       if (fin && sp !== null && !this.burst && fDt >= 0.3 && fDt < 6) {
         this.burst = true;
-        this.confetti.burst(PR, this.Y(sp), 120, 1.2);
-        this.confetti.burst(1700, Math.min(PB, this.Y(sp)), 80, 0.9);
+        // from the settlement mark on the post, up and over the chart, clear of the payout chips
+        this.confetti.burst(PR, this.Y(sp), 120, 0.7, -Math.PI * 0.72);
+        this.confetti.burst(960, Math.min(PB, this.Y(sp)), 80, 0.8);
       }
       if (s.settled && !this.burstSettled && settledDt >= 0 && settledDt < 6) {
         this.burstSettled = true;

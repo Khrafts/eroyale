@@ -296,10 +296,11 @@ type Bit = { x: number; y: number; vx: number; vy: number; a: number; va: number
 export class Confetti {
   bits: Bit[] = [];
   r = rng(5);
-  burst(x: number, y: number, n: number, spread = 1) {
+  /** A pop of confetti from (x, y), aimed at `dir` (radians, default straight up). */
+  burst(x: number, y: number, n: number, spread = 1, dir = -Math.PI / 2) {
     const r = this.r;
     for (let i = 0; i < n && this.bits.length < 600; i++) {
-      const ang = -Math.PI / 2 + (r() - 0.5) * 2.2 * spread;
+      const ang = dir + (r() - 0.5) * 2.2 * spread;
       const sp = 380 + r() * 620;
       this.bits.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, a: r() * 6, va: (r() - 0.5) * 14, w: 9 + r() * 8, h: 5 + r() * 5, c: CONFETTI[i % CONFETTI.length], life: 0 });
     }
