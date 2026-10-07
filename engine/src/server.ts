@@ -29,7 +29,7 @@ if (existsSync(envFile)) {
 }
 const { values: args } = parseArgs({
   options: {
-    bots: { type: "string", default: "0" }, preset: { type: "string", default: "stage" }, port: { type: "string" },
+    bots: { type: "string", default: "0" }, "bots-on-join": { type: "string", default: process.env.BOTS_ON_JOIN ?? "0" }, preset: { type: "string", default: "stage" }, port: { type: "string" },
     open: { type: "string", default: process.env.OPEN_S?.trim() || "15" }, countdown: { type: "string", default: process.env.COUNTDOWN_S?.trim() || "10" }, seed: { type: "string" },
     max: { type: "string", default: "50" }, loop: { type: "boolean", default: false }, resume: { type: "boolean", default: false },
     predict: { type: "boolean", default: false }, "predict-bots": { type: "string", default: "0" }, "predict-only": { type: "boolean", default: false },
@@ -65,6 +65,10 @@ const ZONE: ZoneConfig = ZONE_MODE === "relative"
   ? { mode: "relative", startBps: zoneBps("ZONE_GAP_START_BPS", 200), endBps: zoneBps("ZONE_GAP_END_BPS", 100) }
   : { mode: "linear" };
 const N_BOTS = Number(args.bots);
+// Bots that join one by one after the first human joins a royale lobby (so a lone player gets a full match).
+const N_ON_JOIN = Number(args["bots-on-join"]);
+if (!Number.isInteger(N_ON_JOIN) || N_ON_JOIN < 0 || N_ON_JOIN > 49) throw new Error("--bots-on-join (BOTS_ON_JOIN) must be 0 to 49");
+const ON_JOIN_GAP_MS = 1000;
 const PORT = Number(args.port ?? process.env.PORT ?? 8787);
 const OPEN_S = Number(args.open);
 const COUNTDOWN_S = Number(args.countdown);
@@ -122,6 +126,7 @@ const prices: PriceSource = new FallbackPrices(new CoinbaseFeed(log).start()!, n
 type Match = {
   lobby: Lobby; driver: Driver; bots: Bots; seed: number; nBots: number; logFile: string; clients: Set<WebSocket>;
   finishing: boolean; pendingJoins: Set<string>; chainError: string | null; startTx: string | null;
+  fillStarted?: boolean; filling?: boolean;
 };
 const matches = new Map<number, Match>();
 let localId = 0;
@@ -233,6 +238,24 @@ async function joinBot(m: Match, i: number): Promise<boolean> {
   return true;
 }
 
+/** After the first human joins: N_ON_JOIN bots join one by one; the countdown waits until they are in. */
+async function fillOnJoin(m: Match) {
+  if (!N_ON_JOIN || m.fillStarted) return;
+  m.fillStarted = true;
+  m.filling = true;
+  const l = m.lobby;
+  try {
+    for (let i = 0; i < N_ON_JOIN; i++) {
+      if (l.status !== "open" && l.status !== "countdown") break;
+      if (l.players.length + m.pendingJoins.size >= l.maxPlayers) break;
+      await joinBot(m, N_BOTS + i);
+      await new Promise((r) => setTimeout(r, ON_JOIN_GAP_MS));
+    }
+  } finally {
+    m.filling = false;
+  }
+}
+
 /** Bots whose join failed are retried every BOT_RETRY_MS while the lobby still takes joins, never dropped early. */
 async function retryBots(m: Match, failed: number[]) {
   const l = m.lobby;
@@ -277,7 +300,7 @@ function scheduleCountdown(m: Match, at: number) {
   const check = () => {
     const l = m.lobby;
     if (l.status !== "open") return;
-    if (Date.now() < at || l.players.length < 4 || m.pendingJoins.size || !prices.current()) return void setTimeout(check, 500);
+    if (Date.now() < at || l.players.length < 4 || m.pendingJoins.size || m.filling || !prices.current()) return void setTimeout(check, 500);
     // Go live on a minute boundary so endTime % 60 == 0 and the settlement candle is the match's last minute.
     const startsAt = Math.ceil((Date.now() / 1000 + COUNTDOWN_S) / 60) * 60;
     l.countdown(startsAt);
@@ -1076,6 +1099,7 @@ const server = createServer(async (req, res) => {
         if (!callsign.trim() || callsign.length > 24) return send(res, 400, { error: "callsign must be 1 to 24 characters" });
         if (!SIG_OFF && !(await verifyJoin(m.lobby.id, player, callsign, body.signature))) return send(res, 401, { error: "bad signature" });
         const r = await join(m, player, callsign, null);
+        if (!("error" in r)) void fillOnJoin(m);
         return "error" in r ? send(res, 400, r) : send(res, 200, r);
       }
     }
@@ -1189,7 +1213,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(PORT, async () => {
-  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} duration=${preset.duration}s checkpoints=${preset.checkpoints.join("/")} zone=${ZONE.mode === "relative" ? `relative(${ZONE.startBps}->${ZONE.endBps}bps)` : "linear"} open=${OPEN_S}s countdown=${COUNTDOWN_S}s protocolRound=${protocolSpec(MARKETS[0]).lockAfter}/${protocolSpec(MARKETS[0]).resolveAfter}s bots=${N_BOTS} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
+  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} duration=${preset.duration}s checkpoints=${preset.checkpoints.join("/")} zone=${ZONE.mode === "relative" ? `relative(${ZONE.startBps}->${ZONE.endBps}bps)` : "linear"} open=${OPEN_S}s countdown=${COUNTDOWN_S}s protocolRound=${protocolSpec(MARKETS[0]).lockAfter}/${protocolSpec(MARKETS[0]).resolveAfter}s bots=${N_BOTS} botsOnJoin=${N_ON_JOIN} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
   setInterval(duels.loop, 4);
   void duels.recover().catch((e) => log(`duel recovery failed: ${failReason(e)}`));
