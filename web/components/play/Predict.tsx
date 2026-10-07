@@ -31,7 +31,7 @@ import {
 import { PROTOCOL_LOBBY, mockMine } from "@/mocks/predict";
 import { useRolling } from "@/lib/useRolling";
 import { AvatarHead, useMyAvatar } from "./Avatar";
-import { Head } from "./parts";
+import { Head, figs } from "./parts";
 import s from "./play.module.css";
 import p from "./predict.module.css";
 
@@ -153,16 +153,16 @@ function Rounds({ match, go }: { match: Match; go: (v: View) => void }) {
               <span className={`${s.fig} ${p.protoMark}`}>{proto.mark ? commas(proto.mark) : "waiting"}</span>
             </span>
             <span className={p.protoClock}>
-              <span className={p.small}>Locks in</span>
+              <Chip className={p.lockChip}>Locks in</Chip>
               <span className={`${s.fig} ${p.protoCount}`}>{countdown(proto.lockTime - now)}</span>
             </span>
           </span>
           <span className={p.protoFacts}>
             <span className={s.fig}>{proto.players}</span> in, pot <span className={s.fig}>${unitsToUsd(proto.potUnits)}</span>. Closest{" "}
-            {winnersOf(Math.max(proto.players, 4), proto.params.winnerBps)} split it by rank, resolves{" "}
-            {durationStr(proto.endTime - proto.lockTime)} after the lock.
+            <span className={s.fig}>{winnersOf(Math.max(proto.players, 4), proto.params.winnerBps)}</span> split it by rank, resolves{" "}
+            {figs(durationStr(proto.endTime - proto.lockTime))} after the lock.
           </span>
-          <span className={p.protoCta}>Join for ${unitsToUsd(proto.params.entryUnits)}</span>
+          <span className={p.protoCta}>Join for <span className={s.fig}>${unitsToUsd(proto.params.entryUnits)}</span></span>
         </button>
       )}
       {mine.length > 0 && (
@@ -239,8 +239,13 @@ function UserRound({ r, now, onOpen }: { r: RoundInfo; now: number; onOpen: () =
           </span>
         </span>
         <span className={p.rowSub}>
-          Top {r.params.winnerBps / 100}% win, {r.params.split} split
-          {r.params.creator ? `, ${fee ? `${fee / 100}% to ` : "made by "}${shortAddr(r.params.creator)}` : ""}
+          Top <span className={s.fig}>{r.params.winnerBps / 100}%</span> win, {r.params.split} split
+          {r.params.creator ? (
+            <>
+              , {fee ? <><span className={s.fig}>{fee / 100}%</span> to </> : "made by "}
+              <span className={s.fig}>{shortAddr(r.params.creator)}</span>
+            </>
+          ) : null}
         </span>
       </span>
     </button>
@@ -332,7 +337,7 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
             {rows.map((a, i) =>
               a === null ? (
                 <li key="gap" className={p.barGap}>
-                  ranks {7} to {pv.byRank.length - 1}
+                  ranks <span className={s.fig}>7</span> to <span className={s.fig}>{pv.byRank.length - 1}</span>
                 </li>
               ) : (
                 <li key={i} className={p.bar}>
@@ -373,13 +378,12 @@ function Create({ match, acct, go }: { match: Match; acct: PrivateKeyAccount | n
         {(["lockAfter", "resolveAfter", "creatorFeeBps"] as RangeKey[]).map((key) => (
           <Slider key={key} k={key} label={LABELS[key]} value={d[key as keyof Draft] as number} show={show} set={set} />
         ))}
-        <Button color="predict" disabled={busy || !acct || !!pv.error} onClick={submit}>
+        <Button color="predict" className={s.go} disabled={busy || !acct || !!pv.error} onClick={submit}>
           {busy ? "Creating the round" : "Create round"}
         </Button>
-        {msg && <p className={msg.tone === "bad" ? s.error : s.fine}>{msg.text}</p>}
+        {msg && <p className={msg.tone === "bad" ? s.error : s.fine}>{figs(msg.text)}</p>}
         <p className={s.fine}>
-          Calls close on a whole minute, so the lock can land up to 59 s after the time you pick. The protocol keeps 5% of every
-          pot. You do not have to play your own round.
+          {figs("Calls close on a whole minute, so the lock can land up to 59 s after the time you pick. The protocol keeps 5% of every pot. You do not have to play your own round.")}
         </p>
       </div>
     </section>
@@ -590,8 +594,8 @@ function JoinRound({
       <LivePrice match={match} mark={mark} />
       <p className={s.lede}>
         <span className={s.fig}>{st.players.length}</span> in, pot <span className={s.fig}>${unitsToUsd(st.potUnits)}</span>. The closest{" "}
-        {r.params.winnerBps / 100}% of players split it {r.params.split === "equal" ? "evenly" : r.params.split === "steep" ? "steeply by rank" : "by rank"}, after
-        a 5% protocol fee{r.params.creator && r.params.creatorFeeBps ? ` and a ${r.params.creatorFeeBps / 100}% creator fee` : ""}.
+        <span className={s.fig}>{r.params.winnerBps / 100}%</span> of players split it {r.params.split === "equal" ? "evenly" : r.params.split === "steep" ? "steeply by rank" : "by rank"}, after
+        a <span className={s.fig}>5%</span> protocol fee{r.params.creator && r.params.creatorFeeBps ? <> and a <span className={s.fig}>{r.params.creatorFeeBps / 100}%</span> creator fee</> : ""}.
       </p>
       <label className={s.field}>
         <span>Your callsign</span>
@@ -600,8 +604,8 @@ function JoinRound({
           <input value={callsign} maxLength={24} autoComplete="off" onChange={(e) => setCallsign(e.target.value)} placeholder="A name for the big screen" />
         </span>
       </label>
-      <Button color="predict" disabled={!valid || busy || !acct || closedJoins} onClick={submit}>
-        {closedJoins ? "Joins are closed for this round" : busy ? "Joining" : `Join for $${unitsToUsd(r.params.entryUnits)}`}
+      <Button color="predict" className={s.go} disabled={!valid || busy || !acct || closedJoins} onClick={submit}>
+        {closedJoins ? "Joins are closed for this round" : busy ? "Joining" : figs(`Join for $${unitsToUsd(r.params.entryUnits)}`)}
       </Button>
       {err && <p className={s.error}>{err}</p>}
       <p className={s.fine}>The entry is paid for you. Your game key stays in this browser.</p>
@@ -711,7 +715,7 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
         <MeInline me={me} callsign={st.players.find((x) => x.player === me)?.callsign} />
         </div>
         <p className={`${s.fig} ${p.callFig}`}>{price !== null ? commas(price) : "—"}</p>
-        <p className={p.diff}>{sentence}</p>
+        <p className={p.diff}>{figs(sentence)}</p>
       </div>
       <p className={p.count}>
         <b>{st.predictedCount}</b> of <b>{st.players.length}</b> have called. Calls stay sealed until the lock.
@@ -735,13 +739,13 @@ function Call({ match, me, acct, go }: { match: Match; me: string; acct: Private
             Sent. Drag the tape or nudge it to move your call until the lock.
           </p>
         ) : (
-          <Button color="predict" big disabled={busy || !acct || left <= 0 || price === null} onClick={submit}>
-            {busy ? "Sending" : sent || elsewhere ? `Move my call to ${commas(price ?? "")}` : `Call ${price !== null ? commas(price) : ""}`}
+          <Button color="predict" big className={s.go} disabled={busy || !acct || left <= 0 || price === null} onClick={submit}>
+            {busy ? "Sending" : figs(sent || elsewhere ? `Move my call to ${commas(price ?? "")}` : `Call ${price !== null ? commas(price) : ""}`)}
           </Button>
         )}
       </div>
       </div>
-      {msg && <p className={`${s.toast} ${msg.tone === "bad" ? s.toastBad : ""}`}>{msg.text}</p>}
+      {msg && <p className={`${s.toast} ${msg.tone === "bad" ? s.toastBad : ""}`}>{figs(msg.text)}</p>}
     </section>
   );
 }
@@ -899,7 +903,7 @@ function Locked({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
       <p className={s.kicker}>{r.params.market} now</p>
       <LivePrice match={match} mark={mark} />
       <p className={`${s.sentence} ${mine && !inside ? s.sentenceDanger : ""}`} role="status">
-        {sentence}
+        {figs(sentence)}
       </p>
       <Strip match={match} me={me} />
       <h2 className={p.h2}>Winning now</h2>
@@ -978,7 +982,7 @@ function Strip({ match, me }: { match: Match; me: string | null }) {
         <>
           <line x1={0} x2={W} y1={y(Number(my.price))} y2={y(Number(my.price))} className={p.callMe} />
           <text x={6} y={y(Number(my.price)) - 6} className={p.stripMe}>
-            You {commas(my.price)}
+            You <tspan className={p.figT}>{commas(my.price)}</tspan>
           </text>
         </>
       )}
@@ -1018,7 +1022,7 @@ function Result({ match, me, go }: { match: Match; me: string | null; go: (v: Vi
       <p className={`${s.fig} ${p.settle}`}>{commas(fin.settlementPrice)}</p>
       {win ? (
         <>
-          <h2 className={p.resultTitle}>{win.rank === 1 ? "Closest call in the round" : `${ordinal(win.rank)} closest. You win.`}</h2>
+          <h2 className={p.resultTitle}>{win.rank === 1 ? "Closest call in the round" : figs(`${ordinal(win.rank)} closest. You win.`)}</h2>
           <p className={s.payout}>${unitsToUsd(units ?? "0")}</p>
           <p className={s.sub}>
             {settled ? (isTxHash(settled.txHash) ? "Paid to your address" : "Settled offline (no chain), nothing paid") : "Provisional, until the settlement report lands"}. You called{" "}

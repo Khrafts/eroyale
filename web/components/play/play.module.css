@@ -153,9 +153,12 @@
 .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .root .side { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 24px; padding: 20px 10px; }
 /* the island's toast: ink, under the top bar */
-.toast { position: absolute; left: 16px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 76px); z-index: 5; margin: 0; padding: 11px 16px; background: var(--ink); color: var(--paper); font-weight: 600; font-size: 15px; border-radius: var(--radius-card); box-shadow: var(--shadow-chip); animation: toastIn 0.35s cubic-bezier(0.3, 1.4, 0.5, 1); }
-@keyframes toastIn { from { transform: translateY(-10px) scale(0.96); opacity: 0; } }
+.toast { position: fixed; left: 50%; width: min(488px, calc(100% - 32px)); box-sizing: border-box; top: calc(env(safe-area-inset-top, 0px) + 76px); z-index: 5; margin: 0; padding: 11px 16px; background: var(--ink); color: var(--paper); font-weight: 600; font-size: 15px; border-radius: var(--radius-card); box-shadow: var(--shadow-chip); pointer-events: none; transform: translateX(-50%); animation: toastIn 0.35s cubic-bezier(0.3, 1.4, 0.5, 1); }
+@keyframes toastIn { from { transform: translate(-50%, -10px) scale(0.96); opacity: 0; } }
 .toastBad { background: var(--loss); color: var(--ink); border: var(--stroke) solid var(--ink); }
+
+/* Disabled primary buttons: ink text on the faded game colour, not white on pale */
+.root .go:disabled { opacity: 1; background: color-mix(in srgb, var(--c, var(--coral)) 28%, var(--paper)); color: var(--ink2); text-shadow: none; box-shadow: none; border-style: dashed; }
 
 /* Range inputs (leverage, create-round sliders): the island's track, a game-coloured thumb with the hard shadow. */
 .range { -webkit-appearance: none; appearance: none; width: 100%; height: 30px; margin: 0; background: transparent; cursor: pointer; --c: var(--coral); }

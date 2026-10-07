@@ -43,7 +43,8 @@
 .protoMarket { display: block; font: 800 26px/1 var(--display); text-shadow: 0 2px 0 color-mix(in srgb, var(--ink) 35%, transparent); }
 .protoMark { display: block; font-size: 17px; margin-top: 6px; }
 .protoClock { display: flex; flex-direction: column; align-items: flex-end; }
-.protoClock .small { color: var(--island-white); opacity: 0.9; }
+/* the caption on the violet band: an island chip, ink on glass */
+.protoClock .lockChip { padding: 3px 10px; font: 600 12px/1.2 var(--body); box-shadow: 0 2px 0 var(--ink); margin-bottom: 6px; text-shadow: none; }
 .protoCount { font: 800 52px/0.9 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; text-shadow: 0 2px 0 color-mix(in srgb, var(--ink) 35%, transparent); }
 .protoFacts { color: var(--ink2); font-size: 14px; }
 .protoCta { display: block; margin: 0 14px; padding: 13px 16px; text-align: center; font: 700 15px/1.2 var(--body); color: var(--island-white); background: var(--violet); border: var(--stroke) solid var(--ink); border-radius: var(--radius-card); box-shadow: var(--shadow-chip); text-shadow: 0 1px 0 color-mix(in srgb, var(--ink) 35%, transparent); }
@@ -117,6 +118,7 @@
 .callLose { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 5 5; opacity: 0.45; }
 .callWin { stroke: var(--sun); stroke-width: 3; }
 .callMe { stroke: var(--violet); stroke-width: 3.5; }
+.figT { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; }
 .stripMe { fill: var(--ink); font: 700 13px var(--body); paint-order: stroke; stroke: var(--island-white); stroke-width: 4px; }
 .markLine { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 2 4; }
 .markDot { fill: var(--ink); stroke: var(--island-white); stroke-width: 2; }

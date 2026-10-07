@@ -6,6 +6,14 @@ import type { Side } from "@/lib/events";
 import { GAME, ink } from "@/lib/theme";
 import s from "./play.module.css";
 
+/** Every figure in a sentence in the mono face: wraps each number (with its $, sign, %, x or ordinal) in `.fig`. */
+const FIG = /((?<![A-Za-z0-9])[+−-]?\$?\d[\d,]*(?:\.\d+)?(?::\d+)*(?:%|x|st|nd|rd|th)?(?![A-Za-z0-9]))/;
+export function figs(text: string): ReactNode {
+  const parts = text.split(FIG);
+  if (parts.length === 1) return text;
+  return parts.map((t, i) => (i % 2 ? <span key={i} className={s.fig}>{t}</span> : t));
+}
+
 const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
 
 /** The game-coloured head with the island's soft white circles: an eyebrow or a top row (back button, clock), the

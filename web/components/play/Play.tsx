@@ -12,7 +12,7 @@ import { useMatch, type Match } from "@/lib/useMatch";
 import { useRolling } from "@/lib/useRolling";
 import { MEANING } from "@/lib/theme";
 import { AvatarHead, PlayerHead, useMyAvatar } from "./Avatar";
-import { Head, Pennant } from "./parts";
+import { Head, Pennant, figs } from "./parts";
 import s from "./play.module.css";
 import PredictPhone from "./Predict";
 
@@ -218,7 +218,7 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
       <Head game="royale" eyebrow={state.lobbyId !== null ? `The Arena · Lobby #${state.lobbyId}` : "The Arena"} title="Trading Royale" />
       <div className={s.body}>
         <p className={s.lede}>
-          Everyone starts on $10,000 of play money. The flood rises three times; anyone under the line goes under. The last
+          Everyone starts on <span className={s.fig}>$10,000</span> of play money. The flood rises three times; anyone under the line goes under. The last
           summits split the pot.
         </p>
         <p className={s.stat}>
@@ -242,11 +242,11 @@ function Join({ match, acct, onJoined }: { match: Match; acct: PrivateKeyAccount
             />
           </span>
         </label>
-        <Button color="royale" disabled={!valid || busy || !acct} onClick={submit}>
+        <Button color="royale" className={s.go} disabled={!valid || busy || !acct} onClick={submit}>
           {busy ? "Joining" : "Join the lobby"}
         </Button>
         {err && <p className={s.error}>{err}</p>}
-        <p className={s.fine}>The $5.00 entry is paid for you. Your game key stays in this browser.</p>
+        <p className={s.fine}>The <span className={s.fig}>$5.00</span> entry is paid for you. Your game key stays in this browser.</p>
         <a className={s.link} href={source === "mock" ? "?mock=predict&screen=rounds" : "?mode=predict&screen=rounds"}>
           Or call a price in a prediction round
         </a>
@@ -432,7 +432,7 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
           <Gauge equity={equity} cut={cut} zone={zone} />
         </div>
         <p className={`${s.sentence} ${danger ? s.sentenceDanger : onLine ? s.sentenceEdge : ""}`} role="status">
-          {sentence}
+          {figs(sentence)}
         </p>
 
         <div className={s.markets} role="tablist" aria-label="Market">
@@ -494,7 +494,7 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
             </span>
             <input
               className={s.range}
-              style={{ ["--p" as string]: levP }}
+              style={{ ["--p" as string]: levP, ["--c" as string]: "var(--ink)" }}
               type="range"
               min={1}
               max={100}
@@ -549,7 +549,7 @@ function Trade({ match, me, acct }: { match: Match; me: string; acct: PrivateKey
           )}
         </div>
       </div>
-      {toast && <p className={`${s.toast} ${toast.tone === "bad" ? s.toastBad : ""}`}>{toast.text}</p>}
+      {toast && <p className={`${s.toast} ${toast.tone === "bad" ? s.toastBad : ""}`}>{figs(toast.text)}</p>}
     </section>
   );
 }
@@ -605,7 +605,7 @@ function Eliminated({
           </div>
         </dl>
         <p className={s.watch}>
-          {finalists ? `${finalists.length} made it to the end.` : `${alive.length} still standing. Watch the big screen.`}
+          {figs(finalists ? `${finalists.length} made it to the end.` : `${alive.length} still standing. Watch the big screen.`)}
         </p>
         <ul className={s.standing}>
           {(finalists
@@ -701,7 +701,7 @@ function Spectate({ match }: { match: Match }) {
     <section className={s.out}>
       <Head game="royale" eyebrow="The Arena" title="The match has started" />
       <div className={s.body}>
-        <p className={s.lede}>This lobby is closed to new players. {alive.length} still standing.</p>
+        <p className={s.lede}>This lobby is closed to new players. <span className={s.fig}>{alive.length}</span> still standing.</p>
       </div>
     </section>
   );
