@@ -1,7 +1,8 @@
 ## Status
-- Step: look-arena 7.3: royale and prediction arena redrawn in the island's world (b/toon.ts, scene.ts, predict.ts), Sofia files removed.
-- Last check: typecheck clean; look-ui arena and Sofia parts pass (play parts are look-play's); ui/predict-ui/island-ui not yet rerun.
-- Next: run the three ui gates, frame times at 50 players, live check against a local engine. Blockers: none.
+- Step: look-arena 7.3 done: royale and prediction arena in the island's world (b/toon.ts, scene.ts, predict.ts), Sofia files removed (b/fonts.ts is a shim for /play's old import).
+- Last check: GATE PASS ui, predict-ui, island-ui (/arena first load +1.6%); typecheck clean; look-ui arena and Sofia parts pass, its play parts are look-play's.
+- Frame times, 50 bots live (CHAIN=off engine), 1920x1080 headless Chrome: interval p95 16.7 ms, JS per frame p95 1.9 ms over checkpoint 1 (-12 s to +8 s).
+- Next: merge with look-play, then delete b/fonts.ts once /play stops importing it. Blockers: none.
 
 ## Running
 
