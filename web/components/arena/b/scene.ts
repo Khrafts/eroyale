@@ -77,6 +77,30 @@ export class Scene {
   leader: string | null = null;
   burstFinal = false;
   burstSettled = false;
+  /** The lobby the scene holds state for; following to the next lobby starts the scene over (undefined: none yet). */
+  lobbyId: number | null | undefined = undefined;
+
+  /** Forget everything that belongs to one lobby, so the next one loads as if the page had just opened on it. */
+  private reset() {
+    this.peaks.clear();
+    this.lo = 9750;
+    this.hi = 10250;
+    this.vlo = 0;
+    this.vhi = 0;
+    this.top = LIVE_TOP;
+    this.vtop = 0;
+    this.first = true;
+    this.seen = new WeakSet<object>();
+    this.gusts = [];
+    this.amp = 0;
+    this.cutBoxNow = null;
+    this.drown = 0;
+    this.leader = null;
+    this.burstFinal = false;
+    this.burstSettled = false;
+    this.confetti = new Confetti();
+    this.T.rolls.clear();
+  }
 
   // ---------- coordinates ----------
   Y(v: number) {
@@ -85,6 +109,13 @@ export class Scene {
 
   // ---------- state ----------
   private sync(s: MatchState, now: number, dt: number, reduced: boolean) {
+    if (s.lobbyId !== this.lobbyId) {
+      if (this.lobbyId !== undefined) this.reset();
+      this.lobbyId = s.lobbyId;
+    }
+    // only this lobby's players have a summit (a peak left from another roster is dropped)
+    const ids = new Set(s.players.map((lp) => lp.player));
+    for (const id of [...this.peaks.keys()]) if (!ids.has(id)) this.peaks.delete(id);
     const rows = new Map((s.board?.rows ?? []).map((r) => [r.player, r]));
     const deaths = new Map<string, { e: EliminatedEvent; reason: Peak["reason"]; rank: number }>();
     for (const e of s.eliminations) for (const p of e.players) deaths.set(p.player, { e, reason: p.reason, rank: p.rank });
@@ -443,10 +474,12 @@ export class Scene {
     T.odo(ctx, b.line, RX + 18, y + 28, vf, 34, ink, "left");
   }
 
-  /** Where the water will stand at the next checkpoint: the lobby preset's zone line for it. */
+  /** Where the water will stand at the next checkpoint: the lobby preset's zone line for it. A relative zone follows
+   *  the field, so there is no line to project: the checkpoint enforces the zone as it stands, the live `tick.zone`. */
   private zoneAtCheckpoint(s: MatchState): number | null {
     const nc = s.tick?.nextCheckpoint;
     if (s.status !== "live" || !nc) return null;
+    if (s.zoneMode === "relative") return num(s.tick!.zone);
     const l = presetOf(s.preset).zoneLines[nc.index - 1];
     return l ? num(l) : null;
   }
@@ -561,7 +594,9 @@ export class Scene {
     // where the water will stand at the next checkpoint
     let note = "";
     const at = this.zoneAtCheckpoint(s);
-    if (nc && at !== null) {
+    if (nc && at !== null && s.zoneMode === "relative") {
+      note = `follows the field, cuts at checkpoint ${nc.index}`;
+    } else if (nc && at !== null) {
       note = `rises to ${commas(Math.round(at).toFixed(0))} by checkpoint ${nc.index}`;
       const hy = this.Y(at);
       ctx.save();

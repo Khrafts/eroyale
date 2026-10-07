@@ -9,6 +9,8 @@ export type Side = 1 | -1;
 export type LobbyStatus = "open" | "countdown" | "live" | "settling" | "settled" | "cancelled";
 export type LobbyPlayer = { player: string; callsign: string; bot: boolean };
 
+export type ZoneMode = "linear" | "relative";
+
 export type LobbyEvent = {
   type: "lobby";
   status: LobbyStatus;
@@ -18,6 +20,8 @@ export type LobbyEvent = {
   lobbyId?: number;
   preset?: string;
   endTime?: number | null;
+  /** Royale only: how the zone moves. Absent means `linear` (the preset's zone lines); `relative` follows the field. */
+  zoneMode?: ZoneMode;
   /** Absent on royale lobbies. Predict lobbies also send lockTime and market (startsAt is the lock time). */
   mode?: "royale" | "predict";
   lockTime?: number;

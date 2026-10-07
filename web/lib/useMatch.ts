@@ -20,6 +20,7 @@ import type {
   Side,
   TickEvent,
   WarningEvent,
+  ZoneMode,
 } from "./events";
 import { isPredictFinal, presetOf } from "./events";
 import { MOCK_END, MOMENTS, mockMatch } from "../mocks/match";
@@ -33,6 +34,8 @@ export type MatchState = {
   startsAt: number | null;
   endTime: number | null;
   preset: string;
+  /** `relative`: the engine's zone follows the field's average equity, so the preset's zone lines do not apply. */
+  zoneMode: ZoneMode;
   /** Match length in seconds, from endTime - startsAt or the preset. */
   duration: number;
   potUnits: string;
@@ -88,6 +91,7 @@ export const emptyState = (lobbyId: number | null = null): MatchState => ({
   startsAt: null,
   endTime: null,
   preset: "stage",
+  zoneMode: "linear",
   duration: presetOf("stage").duration,
   potUnits: "0",
   tick: null,
@@ -180,6 +184,7 @@ export function applyEvent(s: MatchState, ev: MatchEvent, at: number = s.t, catc
       s.startsAt = ev.startsAt ?? null;
       if (ev.endTime !== undefined) s.endTime = ev.endTime ?? null;
       if (ev.preset) s.preset = ev.preset;
+      if (ev.zoneMode) s.zoneMode = ev.zoneMode;
       if (typeof ev.lobbyId === "number") s.lobbyId = ev.lobbyId;
       s.potUnits = ev.potUnits;
       s.duration = durationOf(s);
@@ -240,6 +245,7 @@ type SnapshotPlayer = {
 type Snapshot = {
   lobbyId: number;
   preset?: string;
+  zoneMode?: ZoneMode;
   status: LobbyStatus;
   startsAt: number | null;
   endTime: number | null;
@@ -273,6 +279,7 @@ export function applySnapshot(s: MatchState, snap: Snapshot, receivedAtMs: numbe
     s.potUnits = snap.potUnits;
   }
   if (snap.preset) s.preset = snap.preset;
+  if (snap.zoneMode) s.zoneMode = snap.zoneMode;
   s.duration = durationOf(s);
   if (snap.tick && (!s.tick || snap.tick.t >= s.tick.t)) applyEvent(s, { ...snap.tick, type: "tick" });
   if (snap.leaderboard && (!s.board || snap.leaderboard.t >= s.board.t)) applyEvent(s, { ...snap.leaderboard, type: "leaderboard" });
