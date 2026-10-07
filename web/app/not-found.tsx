@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Panel, PanelHead, TopBar } from "@/components/kit";
+import { Panel, PanelHead } from "@/components/kit";
+import AutoTopBar from "@/components/kit/auto-bar";
 import { EndActions } from "@/components/kit/actions";
 import { island } from "@/lib/nav";
 import { paper } from "@/lib/theme";
@@ -10,7 +11,7 @@ export const metadata: Metadata = { title: "Page not found" };
 export default function NotFound() {
   return (
     <div style={{ minHeight: "100dvh", background: paper }}>
-      <TopBar watch={null} />
+      <AutoTopBar watch={null} />
       <main style={{ maxWidth: 460, margin: "0 auto", padding: "28px 16px 40px" }}>
         <Panel>
           <PanelHead color="var(--ink)" eyebrow="404" title="Nothing stands here" />

@@ -1,6 +1,6 @@
 ## Status
 - Step: Phase 12 nav-kit: lib/nav.ts, lib/useUrlState.ts, the kit app bar (bar/switcher/you/link.tsx), EndActions, app/not-found.tsx, route titles.
-- Last check: typecheck clean; first-load /arena 134315, /play 166084 gzip bytes (limit 140993 / 173810); gates: see the nav-kit commit log.
+- Last check: typecheck clean; GATE PASS ui, duel-ui, look-ui; nav-ui parts bundle/notfound/practice/names ok (others belong to nav-play/arena/island); /arena 134332, /play 166101 gzip B (limit 140993 / 173810).
 - Next: nav-play, nav-arena, nav-island adopt the API below ("Navigation"). Blockers: none.
 
 ## Running
@@ -165,4 +165,4 @@ Phase 12 kit (CLAUDE.md "Navigation"). Tracks use these; do not hand-roll anothe
 - End-state block: `<EndActions game primary watch? more? />` from `@/components/kit/actions` (not the index, so screens without it do not carry it). `primary`/`more` items are `{label, href?, onClick?, replace?}`. Renders the primary in the game colour, "Watch on the big screen" (when `watch`), `more` as ghost buttons, the other games, and "Back to the island" (omitted for `game="island"`). Server-compatible.
 - URL state: `const { params, push, replace, back } = useUrlState()` from `@/lib/useUrlState`. `push(set, path?)` drill-down, `replace(set, path?)` lateral, `back(parentSet, path?)` = `history.back()` when the previous entry was pushed from that parent URL, else replaceState to it. `set` only changes the keys it names (`null` deletes), so `mock`, `at`, `speed`, `seed`, `me`, `motion` survive. `params` re-read on popstate and every move; empty during SSR/hydration. `withParams(set, path?, search?)` builds the same URL for an href.
 - Titles: layout template `"%s · Royale Isle"`; route titles `Trading Royale` (/play), `Stickman Duel` (/duel), `Big screen` (/arena, via app/arena/layout.tsx), `Page not found`; `/` is absolute "Royale Isle". Screens set finer titles with `docTitle`.
-- 404: `app/not-found.tsx`, the app bar (no you chip: the burner needs viem, which the 404 does not load) and `EndActions game="island"`.
+- 404: `app/not-found.tsx`: `AutoTopBar` (components/kit/auto-bar.tsx: the app bar with the you chip from `burner()`, lib/engine imported after mount) and `EndActions game="island"`.
