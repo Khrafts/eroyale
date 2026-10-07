@@ -69,6 +69,10 @@ const N_BOTS = Number(args.bots);
 const N_ON_JOIN = Number(args["bots-on-join"]);
 if (!Number.isInteger(N_ON_JOIN) || N_ON_JOIN < 0 || N_ON_JOIN > 49) throw new Error("--bots-on-join (BOTS_ON_JOIN) must be 0 to 49");
 const ON_JOIN_GAP_MS = 200;
+// Seconds after the settlement candle's start before it is read (spec: 120, i.e. 60 s after the match ends). The
+// workflow refuses earlier reads, so its CANDLE_FINAL_DELAY must be <= this. CANDLE_FINAL_DELAY_S overrides.
+const CANDLE_FINAL_DELAY_S = Number(process.env.CANDLE_FINAL_DELAY_S ?? "120");
+if (!Number.isInteger(CANDLE_FINAL_DELAY_S) || CANDLE_FINAL_DELAY_S < 61 || CANDLE_FINAL_DELAY_S > 600) throw new Error("CANDLE_FINAL_DELAY_S must be 61 to 600");
 const PORT = Number(args.port ?? process.env.PORT ?? 8787);
 const OPEN_S = Number(args.open);
 const COUNTDOWN_S = Number(args.countdown);
@@ -380,7 +384,7 @@ async function finish(m: Match) {
   let marks: Prices = l.marks!;
   if (PRICE_URL) {
     const S = settlementMinute(l.endTime!);
-    const wait = (S + 120) * 1000 - Date.now();
+    const wait = (S + CANDLE_FINAL_DELAY_S) * 1000 - Date.now();
     if (wait > 0) {
       log(`[lobby ${l.id}] waiting ${Math.ceil(wait / 1000)}s for the settlement candle at ${S}`);
       await new Promise((r) => setTimeout(r, wait + 1500));
@@ -803,7 +807,7 @@ async function finishRound(m: RoundMatch) {
   let price = r.mark!;
   if (PRICE_URL) {
     const S = settlementMinute(r.endTime);
-    const wait = (S + 120) * 1000 - Date.now();
+    const wait = (S + CANDLE_FINAL_DELAY_S) * 1000 - Date.now();
     if (wait > 0) {
       log(`[round ${r.id}] waiting ${Math.ceil(wait / 1000)}s for the settlement candle at ${S}`);
       await sleep(wait + 1500);
@@ -1217,7 +1221,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(PORT, async () => {
-  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} duration=${preset.duration}s checkpoints=${preset.checkpoints.join("/")} zone=${ZONE.mode === "relative" ? `relative(${ZONE.startBps}->${ZONE.endBps}bps)` : "linear"} open=${OPEN_S}s countdown=${COUNTDOWN_S}s protocolRound=${protocolSpec(MARKETS[0]).lockAfter}/${protocolSpec(MARKETS[0]).resolveAfter}s bots=${N_BOTS} botsOnJoin=${N_ON_JOIN} chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
+  log(`engine on :${PORT} royale=${ROYALE_ON} predict=${PREDICT_ON} predictBots=${PREDICT_BOTS} preset=${preset.name} duration=${preset.duration}s checkpoints=${preset.checkpoints.join("/")} zone=${ZONE.mode === "relative" ? `relative(${ZONE.startBps}->${ZONE.endBps}bps)` : "linear"} open=${OPEN_S}s countdown=${COUNTDOWN_S}s protocolRound=${protocolSpec(MARKETS[0]).lockAfter}/${protocolSpec(MARKETS[0]).resolveAfter}s bots=${N_BOTS} botsOnJoin=${N_ON_JOIN} candleDelay=${CANDLE_FINAL_DELAY_S}s chain=${chain.on ? process.env.CHAIN : "off"} settle=${chain.on ? SETTLE_MODE : "-"} priceSource=${PRICE_URL ? "coinbase-candles" : "last-live-mark"} sig=${SIG_OFF ? "off" : "on"}`);
   setInterval(loop, 20);
   setInterval(duels.loop, 4);
   void duels.recover().catch((e) => log(`duel recovery failed: ${failReason(e)}`));
