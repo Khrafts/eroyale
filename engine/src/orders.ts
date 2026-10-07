@@ -151,3 +151,28 @@ export async function verifyPrediction(lobbyId: number, player: string, price: s
     return false;
   }
 }
+
+// Stickman Duel: joining the ranked queue (CLAUDE.md "Stickman Duel > Engine"). Same domain.
+export const DUEL_QUEUE_TYPES = {
+  DuelQueue: [
+    { name: "player", type: "address" },
+    { name: "callsign", type: "string" },
+    { name: "nonce", type: "uint256" },
+  ],
+} as const;
+
+export function duelQueueMessage(player: string, callsign: string, nonce: number | string) {
+  return { player: player.toLowerCase() as Address, callsign, nonce: BigInt(nonce) };
+}
+
+export async function verifyDuelQueue(player: string, callsign: string, nonce: number | string, signature: unknown): Promise<boolean> {
+  if (typeof signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(signature)) return false;
+  try {
+    return await verifyTypedData({
+      address: player as Address, domain: ORDER_DOMAIN, types: DUEL_QUEUE_TYPES, primaryType: "DuelQueue",
+      message: duelQueueMessage(player, callsign, nonce), signature: signature as Hex,
+    });
+  } catch {
+    return false;
+  }
+}
