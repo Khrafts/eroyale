@@ -1,3 +1,11 @@
 **/node_modules
 engine/data
 .env
+**/.next
+**/.next-*
+.git
+.gate
+.claude
+contracts/out
+contracts/cache
+contracts/lib
