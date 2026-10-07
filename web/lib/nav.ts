@@ -33,6 +33,8 @@ export const playRound = (id: number) => `/play?mode=predict&lobby=${id}`;
 export const createRound = () => "/play?mode=predict&screen=create";
 /** The duel menu, or practice against the bot. */
 export const duel = (mode?: "practice") => (mode ? `/duel?mode=${mode}` : "/duel");
+/** Your lobbies and rounds, live and past. */
+export const me = () => "/me";
 /** The big screen on one royale lobby. */
 export const watchLobby = (id: number) => `/arena?lobby=${id}`;
 /** The big screen on one prediction round, or following the protocol round. */

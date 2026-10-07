@@ -4,6 +4,7 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import type { Market, Side } from "./events";
 import { engineHttp } from "./engineUrl";
+import { recordActivity } from "./activity";
 
 export const DOMAIN = { name: "TradingRoyale", version: "1" } as const;
 export const ORDER_TYPES = {
@@ -97,7 +98,9 @@ export async function signJoin(acct: PrivateKeyAccount, lobbyId: number, callsig
 }
 
 export async function join(acct: PrivateKeyAccount, lobbyId: number, callsign: string) {
-  return post(`/lobbies/${lobbyId}/join`, await signJoin(acct, lobbyId, callsign));
+  const r = await post(`/lobbies/${lobbyId}/join`, await signJoin(acct, lobbyId, callsign));
+  if (r.ok) recordActivity(lobbyId);
+  return r;
 }
 
 /** `serverOffsetMs` (server clock minus local) keeps `ts` inside the engine's 30 s window on a skewed phone. */
@@ -193,7 +196,9 @@ export async function signCreateRound(acct: PrivateKeyAccount, p: Omit<CreateRou
 }
 
 export async function createRound(acct: PrivateKeyAccount, p: Omit<CreateRoundParams, "creator">) {
-  return post("/rounds", await signCreateRound(acct, p));
+  const r = await post("/rounds", await signCreateRound(acct, p));
+  if (r.ok && typeof r.data.lobbyId === "number") recordActivity(r.data.lobbyId, "creator");
+  return r;
 }
 
 /** `price` must be a positive 2-decimal string; anything else throws before signing. */
