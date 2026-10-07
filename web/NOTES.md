@@ -1,8 +1,8 @@
 ## Status
-- Step: duel-ui done on shared/duel.ts: practice, ranked queue/fight/result, /arena?duel=, live Dojo panel, mocks, shots.
-- Last check: GATE PASS ui (PORT=free), predict-ui, island-ui, duel-ui; typecheck clean; ranked PvP shown on a local CHAIN=off engine.
-- Next: rerun the gates after feat/duel takes duel-engine; nothing else pending.
-- Blockers: none.
+- Step: duel-ui review fixes on feat/duel (engine merged): leave-queue DELETE, offline wording, Dojo results flags, tokens, winnerSide.
+- Last check: GATE PASS ui, predict-ui, island-ui, duel-ui (free PORT); typecheck clean. look-ui fails only on look-play/look-arena paths.
+- Next: the look judge's findings, if any.
+- Blockers: none (DELETE /duels/queue/:ticket answers 404 until the engine adds it; the phone then returns to the menu).
 
 ## Running
 
@@ -138,6 +138,7 @@ look-arena restyle /play and /arena on it.
 - `/duel`: the menu (an attract loop of a bot match, Practice, callsign, Fight for 5 USDC). `/duel?mode=practice` starts at once: the rules at 60 Hz against `botInput` (Normal by default, Easy/Normal/Hard toggle), you are fighter 0, `window.__duelState()` returns the live DuelState. Keyboard on window (arrows, Z = A, X = B, Z+X throw); touch pad bottom left, A and B bottom right, A+B pill for a one-thumb throw.
 - Ranked: signed `DuelQueue` (EIP-712, same domain and burner as /play; `components/duel/net.ts`, nonce on the same `royale.nonce.<player>` key as lib/engine.ts), ticket polled every 1 s, after 10 s alone "Fight the bot for free" (`POST /duels/queue/:ticket/bot`). The fight (`link.ts`): input bits sent on change over `WS /ws?duel=`; your fighter is the rules stepped from the newest `dstate` up to now plus 3 ticks with your recorded bits; the opponent is interpolated about 4 ticks behind. The result fetches `GET /duels/:id/final`, replays it in the browser (`verify.ts`) and shows the replay hash, whether the winner matches and whether keccak256 of the body equals `bookHash`; payouts say provisional until `settled`, offline settlements say nothing was paid on chain.
 - `/arena?duel=:id`: one canvas at 1920x1080, island chips for the duel, stake and status, the end card with payout, replay hash and book hash. Loaded with React.lazy from `app/arena/page.tsx`, so /arena's first load did not grow (+1.1% vs main, as before the branch).
+- Leaving the queue sends `DELETE /duels/queue/:ticket` and returns to the menu only on 200 or 404; a 409 with a matched ticket goes to the fight. A `dfinal` is placed by its `winnerSide` (else the winner's address among the players); until it can be placed the result waits and no draw is shown. `GET /duels/:id` 404 stops following the duel; an archived or finished snapshot is shown from its `dfinal`/`settled` without reconnecting. Offline amounts always carry "not paid, offline"; draws say "Refunded, tx …". Stake amounts come from the engine's `stakeUnits`. Your name in a fight is the engine's `players[side].callsign`.
 - Island: `components/duel/dojo.ts` polls `GET /duels` every 3 s (paused while hidden); the Dojo panel (`DojoPanel.tsx`, mounted by Panel.tsx), the list card, the Dojo label line and the Duel jet (queue + players in live duels, out of 20) read it.
 - Mocks: `/duel?mock=duel&at=practice|fight|result`, `/arena?mock=duel&at=fight`, `/?mock=island&at=dojo` (Dojo panel open, mock GET /duels). The mock match is botInput level 3 against level 2 through the rules (`mock.ts`); in the ranked moments you are kestrel on side 1, who wins 2-0.
 - Renderer (`render.ts`): sky gradient and clouds, meadow, sand deck with an ink edge, dojo posts at the walls; stickmen in ink with avatar colours (yours from storage, others `cfgFor`), joints eased toward pose targets each frame, hit sparks and bursts on hp drops and fresh blockstun, the combo count (kept on the attacker by the rules), health with a coral trail, round dots, timer, round and winner banners. `prefers-reduced-motion`: no sparks, shake or banner pop.

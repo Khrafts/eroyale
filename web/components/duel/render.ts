@@ -3,7 +3,7 @@
 // in ink lines wearing their avatar's colours. Everything is read from a plain view each frame; the renderer keeps
 // only presentation state (camera, smoothed joints, sparks, the damage trail, banners).
 import type { AvatarCfg } from "@/lib/island/avatar";
-import { ISLAND, canvasFont, coral, ink, muted, paper, skyBottom, skyTop, sun, tang } from "@/lib/theme";
+import { ISLAND, canvasFont, coral, coralText, gloss, ink, muted, paper, shade, skyBottom, skyTop, sun, tang } from "@/lib/theme";
 
 export type RFighter = { x: number; y: number; hp: number; facing: 1 | -1; act: string; frame: number; combo: number; rounds: number };
 export type View = {
@@ -318,7 +318,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     const face = f.facing;
     const w = Math.max(big ? 9 : 5, 105 * s);
     // floor shadow
-    ctx.fillStyle = "rgba(43,29,82,.18)";
+    ctx.fillStyle = shade;
     ctx.beginPath();
     ctx.ellipse(ox, groundY(), 380 * s * Math.max(0.4, 1 - f.y / 2400), 60 * s, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -544,7 +544,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
       ctx.fillStyle = hp <= 25 ? coral : tang;
       if (side === 0) ctx.fillRect(x0, by, hw, barH);
       else ctx.fillRect(x0 + barW - hw, by, hw, barH);
-      ctx.fillStyle = "rgba(255,255,255,.45)";
+      ctx.fillStyle = gloss;
       if (side === 0) ctx.fillRect(x0, by + barH * 0.15, hw, barH * 0.22);
       else ctx.fillRect(x0 + barW - hw, by + barH * 0.15, hw, barH * 0.22);
       ctx.restore();
@@ -575,7 +575,7 @@ export function createRenderer(canvas: HTMLCanvasElement, opts: { big?: boolean;
     const ty = top + 2 * k;
     chip(tx, ty, timerW, 30 * k, paper, lw, 3 * k * 0.8);
     ctx.font = canvasFont("mono", 800, 17 * k);
-    ctx.fillStyle = secs <= 5 && !v.pause ? "#D12B52" : ink;
+    ctx.fillStyle = secs <= 5 && !v.pause ? coralText : ink;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(v.pause > 0 && v.roundTick === 0 ? 30 : secs).padStart(2, "0"), W / 2, ty + 15 * k + 1);

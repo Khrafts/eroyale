@@ -314,7 +314,7 @@ export function IslandLive() {
             fresh
               .reverse()
               .filter((w) => !announced.has(`${w.mode}:${w.lobbyId}`))
-              .forEach((w) => feed("win", ` won ${usdc(w.amountUnits)} in ${w.mode === "royale" ? "Trading Royale" : "Prediction"} #${w.lobbyId}${chainOff ? ". Offline run, nothing paid on chain" : ""}`, w.callsign, w.bot));
+              .forEach((w) => feed("win", ` won ${usdc(w.amountUnits)} in ${w.mode === "royale" ? "Trading Royale" : w.mode === "duel" ? "Stickman Duel" : "Prediction"} #${w.lobbyId}${chainOff ? ". Offline run, nothing paid on chain" : ""}`, w.callsign, w.bot));
             if (wins[0]) lastWinAt = Math.max(lastWinAt, wins[0].at);
             firstStats = false;
           } else patch.statsState = status === 404 ? "missing" : "down";

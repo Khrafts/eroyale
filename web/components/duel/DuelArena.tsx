@@ -8,7 +8,7 @@ import { cfgFor, type AvatarCfg } from "@/lib/island/avatar";
 import { isTxHash, unitsToUsd } from "@/lib/events";
 import { Stage } from "./Stage";
 import type { View } from "./render";
-import { DuelLink } from "./link";
+import { DuelLink, winnerSideOf } from "./link";
 import { MOCK_DUEL_ID, MOCK_PLAYERS, MOCK_STAKE, mockRun, pickTick } from "./mock";
 import { useVerify } from "./verify";
 import type { DuelPlayer } from "./types";
@@ -77,7 +77,7 @@ function LiveArena({ duelId }: { duelId: number }) {
     const id = setTimeout(() => setEnded(true), 2500);
     return () => clearTimeout(id);
   }, [info?.final]);
-  const ranked = !players.some((p) => p.bot);
+  const ranked = info?.ranked ?? !players.some((p) => p.bot);
   const name = (i: 0 | 1) => players[i]?.callsign || `fighter ${i + 1}`;
   const endedRef = useRef(false);
   endedRef.current = ended;
@@ -87,25 +87,29 @@ function LiveArena({ duelId }: { duelId: number }) {
     return { ...fr, names: [name(0), name(1)], bots: [!!players[0]?.bot, !!players[1]?.bot], avatars: [cfgFor(players[0]?.player ?? "a", name(0)), cfgFor(players[1]?.player ?? "b", name(1))], me: null, quietEnd: endedRef.current };
   };
   const fin = info?.final;
-  const winnerName = fin ? (fin.winner === null ? null : players.find((p) => p.player.toLowerCase() === fin.winner!.toLowerCase())?.callsign ?? "the winner") : null;
+  const ws = fin ? winnerSideOf(fin, players) : undefined;
+  const winnerName = ws === 0 || ws === 1 ? players[ws]?.callsign || `fighter ${ws + 1}` : null;
   const offline = !!info?.settled && !isTxHash(info.settled.txHash);
-  const status = info?.cancelled ? `Cancelled: ${info.cancelled}` : !info?.connected ? "Connecting to the engine" : fin ? (info.settled ? (offline ? "Settled offline" : "Paid") : "Replaying the match") : info.status === "live" ? "Live" : "Get ready";
+  const status = info?.missing ? "No such duel on this engine" : info?.cancelled ? `Cancelled: ${info.cancelled}` : !info?.connected ? "Connecting to the engine" : fin ? (info.settled ? (offline ? "Settled offline" : "Paid") : "Replaying the match") : info.status === "live" ? "Live" : "Get ready";
   return (
     <>
       <Stage view={view} big label={`Duel ${duelId} on the big screen`} />
-      {!info?.connected && !fin && <div className="da-wait">Waiting for duel #{duelId}</div>}
+      {!info?.connected && !fin && <div className="da-wait">{info?.missing ? `There is no duel #${duelId} on this engine` : `Waiting for duel #${duelId}`}</div>}
       <Bottom duelId={duelId} stake={stakeLine(info?.stakeUnits ?? null, ranked)} status={status} pot={ranked && info?.stakeUnits ? `Pot ${unitsToUsd(String(BigInt(info.stakeUnits) * 2n))} USDC` : undefined} />
-      {ended && fin && (
+      {ended && fin && ws !== undefined && (
         <section className={`${kit.panel} da-end`}>
           <h2>{winnerName ? `${winnerName} wins` : "A draw"} <span style={{ fontFamily: "var(--mono)" }}>{fin.rounds[0]}–{fin.rounds[1]}</span></h2>
           {ranked && (
             <>
               <div className="row">
                 {winnerName ? "Payout" : "Stakes"}
-                <b>{winnerName ? <span className="da-sun">{unitsToUsd(fin.payoutUnits)} USDC</span> : "refunded to both"}{!info?.settled ? " provisional" : ""}</b>
+                <b>
+                  {winnerName ? offline ? `${unitsToUsd(fin.payoutUnits)} USDC` : <span className="da-sun">{unitsToUsd(fin.payoutUnits)} USDC</span> : "stakes back to both"}
+                  {!info?.settled ? " provisional" : offline ? " not paid, offline" : ""}
+                </b>
               </div>
               <div className="row">
-                Settlement<b>{!info?.settled ? "waiting for the replay report" : offline ? "settled offline, nothing paid on chain" : `paid, tx ${info.settled.txHash.slice(0, 12)}…`}</b>
+                Settlement<b>{!info?.settled ? "waiting for the replay report" : offline ? "settled offline (no chain), nothing paid" : `${winnerName ? "paid" : "refunded"}, tx ${info.settled.txHash.slice(0, 12)}…`}</b>
               </div>
             </>
           )}

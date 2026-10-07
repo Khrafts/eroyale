@@ -5,11 +5,11 @@ export type DuelPlayer = { player: string; callsign: string; bot: boolean };
 export type WireFighter = { x: number; y: number; hp: number; facing: 1 | -1; act: string; frame: number; combo: number };
 
 export type DuelEvent =
-  | { type: "duel"; status: DuelStatus; players: DuelPlayer[]; stakeUnits: string; startsAt: number | null }
+  | { type: "duel"; status: DuelStatus; players: DuelPlayer[]; stakeUnits: string; startsAt: number | null; ranked?: boolean }
   | { type: "dstate"; tick: number; round: number; roundTick: number; f: [WireFighter, WireFighter]; rounds: [number, number] }
   | { type: "dhit"; tick: number; by: 0 | 1; move: string; damage: number; combo: number; blocked: boolean }
   | { type: "dround"; round: number; winner: 0 | 1 | null; hp: [number, number] }
-  | { type: "dfinal"; winner: string | null; bookHash: string; rounds: [number, number]; payoutUnits: string }
+  | { type: "dfinal"; winner: string | null; winnerSide?: 0 | 1 | null; bookHash: string; rounds: [number, number]; payoutUnits: string; ranked?: boolean }
   | { type: "settled"; txHash: string; mode?: string; winners?: string[]; amounts?: string[] }
   | { type: "cancelled"; reason?: string };
 
@@ -18,8 +18,8 @@ export type QueueTicket = { status: "waiting" | "matched"; duelId: number | null
 /** GET /duels, read tolerantly: the field names below are the spec's words ("queue size, live duels (id, players,
  *  round, hp), recent results"); anything missing shows as empty. */
 export type DuelsLive = { duelId: number; players: DuelPlayer[]; round: number; hp: [number, number]; ranked?: boolean };
-export type DuelsRecent = { duelId: number; players: DuelPlayer[]; winner: string | null; rounds: [number, number]; stakeUnits?: string; payoutUnits?: string; at?: number };
-export type DuelsInfo = { queue: number; live: DuelsLive[]; recent: DuelsRecent[] };
+export type DuelsRecent = { duelId: number; players: DuelPlayer[]; winner: string | null; rounds: [number, number]; stakeUnits?: string; payoutUnits?: string; at?: number; settled: boolean; ranked: boolean | undefined };
+export type DuelsInfo = { queue: number; live: DuelsLive[]; recent: DuelsRecent[]; stakeUnits: string | null };
 
 const num = (v: unknown, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 const players = (v: unknown): DuelPlayer[] =>
@@ -44,6 +44,8 @@ export function parseDuels(raw: unknown): DuelsInfo {
     stakeUnits: typeof d.stakeUnits === "string" ? d.stakeUnits : undefined,
     payoutUnits: typeof d.payoutUnits === "string" ? d.payoutUnits : undefined,
     at: typeof d.at === "number" ? d.at : undefined,
+    settled: d.settled === true || d.status === "settled",
+    ranked: d.ranked === undefined ? undefined : !!d.ranked,
   }));
-  return { queue, live, recent };
+  return { queue, live, recent, stakeUnits: typeof r.stakeUnits === "string" ? r.stakeUnits : null };
 }

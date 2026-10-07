@@ -211,7 +211,7 @@ export function unitsToUsd(units: string): string {
 export type StatsLeader = { player: string; callsign: string; bot: boolean; wins: number; earnedUnits: string };
 export type RecentWin = {
   lobbyId: number;
-  mode: "royale" | "predict";
+  mode: "royale" | "predict" | "duel";
   player: string;
   callsign: string;
   bot: boolean;

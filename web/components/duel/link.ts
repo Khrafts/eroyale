@@ -17,6 +17,9 @@ export type LinkInfo = {
   settled: Extract<DuelEvent, { type: "settled" }> | null;
   cancelled: string | null;
   connected: boolean;
+  /** GET /duels/:id said 404: there is no such duel. */
+  missing: boolean;
+  ranked: boolean | null;
   lastRound: Extract<DuelEvent, { type: "dround" }> | null;
 };
 
@@ -25,7 +28,7 @@ const BEHIND = 4; // ticks the opponent is drawn behind the newest frame
 const MS_PER_TICK = 1000 / 60;
 
 export class DuelLink {
-  info: LinkInfo = { status: null, players: [], stakeUnits: null, startsAt: null, final: null, settled: null, cancelled: null, connected: false, lastRound: null };
+  info: LinkInfo = { status: null, players: [], stakeUnits: null, startsAt: null, final: null, settled: null, cancelled: null, connected: false, missing: false, ranked: null, lastRound: null };
   private frames: Frame[] = [];
   private ws: WebSocket | null = null;
   private subs = new Set<() => void>();
@@ -44,7 +47,15 @@ export class DuelLink {
   ) {
     this.connect();
     void getDuel(duelId)
-      .then((d) => this.snapshot(d))
+      .then(({ status, body }) => {
+        if (status === 404) {
+          // no such duel: stop following it
+          this.info.missing = true;
+          this.close();
+          return this.emit();
+        }
+        if (body) this.snapshot(body);
+      })
       .catch(() => {});
   }
 
@@ -61,6 +72,14 @@ export class DuelLink {
     if (Array.isArray(d.players) && !this.info.players.length) this.info.players = d.players as DuelPlayer[];
     if (typeof d.status === "string" && !this.info.status) this.info.status = d.status as DuelStatus;
     if (typeof d.stakeUnits === "string") this.info.stakeUnits = d.stakeUnits;
+    if (typeof d.ranked === "boolean") this.info.ranked = d.ranked;
+    if (d.dfinal && typeof d.dfinal === "object" && !this.info.final) this.info.final = d.dfinal as LinkInfo["final"];
+    if (d.settled && typeof d.settled === "object" && !this.info.settled) this.info.settled = d.settled as LinkInfo["settled"];
+    if (d.status === "cancelled" && !this.info.cancelled) this.info.cancelled = typeof d.cancelReason === "string" ? d.cancelReason : "cancelled";
+    // an archived duel (finished before this engine started) has no live socket to follow
+    if (d.archived === true || this.info.settled || this.info.cancelled) {
+      if (d.archived === true || d.status === "settled" || d.status === "cancelled") this.close();
+    }
     this.emit();
   }
 
@@ -96,7 +115,7 @@ export class DuelLink {
   private on(e: DuelEvent) {
     switch (e.type) {
       case "duel":
-        Object.assign(this.info, { status: e.status, players: e.players ?? this.info.players, stakeUnits: e.stakeUnits ?? this.info.stakeUnits, startsAt: e.startsAt ?? null });
+        Object.assign(this.info, { status: e.status, players: e.players ?? this.info.players, stakeUnits: e.stakeUnits ?? this.info.stakeUnits, startsAt: e.startsAt ?? null, ranked: typeof e.ranked === "boolean" ? e.ranked : this.info.ranked });
         return this.emit();
       case "dstate": {
         const fr: Frame = { tick: e.tick, round: e.round, roundTick: e.roundTick, f: e.f, rounds: e.rounds, at: performance.now() };
@@ -232,16 +251,26 @@ export class DuelLink {
       }
     }
     const fin = this.info.final;
-    const winner = fin ? (fin.winner === null ? null : (this.info.players.findIndex((p) => p.player.toLowerCase() === fin.winner!.toLowerCase()) as 0 | 1 | -1)) : null;
+    const winner = fin ? winnerSideOf(fin, this.info.players) : null;
     if (fin) {
       f[0].rounds = fin.rounds[0];
       f[1].rounds = fin.rounds[1];
     }
-    return { f, round: latest.round, roundTick: latest.roundTick, pause: this.pauseLeft(latest), over: !!fin, winner: winner === -1 ? null : (winner as 0 | 1 | null) };
+    // a final whose winner cannot be placed yet (players unknown) is not shown as a draw: hold the banner
+    return { f, round: latest.round, roundTick: latest.roundTick, pause: this.pauseLeft(latest), over: !!fin && winner !== undefined, winner: winner ?? null };
   }
 
   close() {
     this.dead = true;
     this.ws?.close();
   }
+}
+
+/** The winning side of a `dfinal`: its winnerSide, else the winner's place among the players; null a draw;
+ *  undefined when the winner is an address not (yet) among the known players. */
+export function winnerSideOf(fin: { winner: string | null; winnerSide?: 0 | 1 | null }, players: DuelPlayer[]): 0 | 1 | null | undefined {
+  if (fin.winnerSide === 0 || fin.winnerSide === 1) return fin.winnerSide;
+  if (fin.winner === null) return fin.winnerSide === null || fin.winnerSide === undefined ? null : undefined;
+  const i = players.findIndex((p) => p.player.toLowerCase() === fin.winner!.toLowerCase());
+  return i === 0 || i === 1 ? i : undefined;
 }

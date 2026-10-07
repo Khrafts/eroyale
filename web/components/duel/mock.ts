@@ -62,9 +62,11 @@ export function mockDuels(): DuelsInfo {
       { duelId: 13, players: [MOCK_PLAYERS[0], p("0x0000000000000000000000000000000000000b07", "dojo bot", true)], round: 1, hp: [80, 91], ranked: false },
     ],
     recent: [
-      { duelId: 12, players: MOCK_PLAYERS, winner: MOCK_PLAYERS[1].player, rounds: [0, 2], stakeUnits: MOCK_STAKE, payoutUnits: "9500000", at: 0 },
-      { duelId: 11, players: [p("0x3b6e9a1c4d7f0b2e5a8c1d4f7b0e3a6c9d2f5b8e", "vesper"), p("0x6d9a2c5f8b1e4a7d0c3f6b9e2a5d8c1f4b7e0a3d", "rook")], winner: "0x6d9a2c5f8b1e4a7d0c3f6b9e2a5d8c1f4b7e0a3d", rounds: [0, 2], stakeUnits: MOCK_STAKE, payoutUnits: "9500000", at: 0 },
-      { duelId: 10, players: [p("0x8f1b4e7a0d3c6f9b2e5a8d1c4f7b0e3a6d9c2f5b", "ember"), p("0x2a5d8b1e4c7f0a3d6b9e2c5f8a1d4b7e0c3f6a9d", "slate")], winner: null, rounds: [1, 1], stakeUnits: MOCK_STAKE, at: 0 },
+      { duelId: 12, players: MOCK_PLAYERS, winner: MOCK_PLAYERS[1].player, rounds: [0, 2], stakeUnits: MOCK_STAKE, payoutUnits: "9500000", at: 0, settled: true, ranked: true },
+      { duelId: 11, players: [p("0x3b6e9a1c4d7f0b2e5a8c1d4f7b0e3a6c9d2f5b8e", "vesper"), p("0x6d9a2c5f8b1e4a7d0c3f6b9e2a5d8c1f4b7e0a3d", "rook")], winner: "0x6d9a2c5f8b1e4a7d0c3f6b9e2a5d8c1f4b7e0a3d", rounds: [0, 2], stakeUnits: MOCK_STAKE, payoutUnits: "9500000", at: 0, settled: true, ranked: true },
+      { duelId: 10, players: [p("0x8f1b4e7a0d3c6f9b2e5a8d1c4f7b0e3a6d9c2f5b", "ember"), p("0x2a5d8b1e4c7f0a3d6b9e2c5f8a1d4b7e0c3f6a9d", "slate")], winner: null, rounds: [1, 1], stakeUnits: MOCK_STAKE, payoutUnits: MOCK_STAKE, at: 0, settled: false, ranked: true },
+      { duelId: 9, players: [p("0x4c7f0a3d6b9e2c5f8a1d4b7e0c3f6a9d2b5e8c1f", "pike"), p("0x0000000000000000000000000000000000000b07", "BOT", true)], winner: "0x4c7f0a3d6b9e2c5f8a1d4b7e0c3f6a9d2b5e8c1f", rounds: [2, 0], stakeUnits: "0", payoutUnits: "0", at: 0, settled: true, ranked: false },
     ],
+    stakeUnits: MOCK_STAKE,
   };
 }

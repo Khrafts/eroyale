@@ -13,8 +13,8 @@ import { createInput, type InputSource } from "./input";
 import { Stage } from "./Stage";
 import { Controls } from "./Controls";
 import type { View } from "./render";
-import { DuelLink } from "./link";
-import { botFight, engineConfigured, pollTicket, queue } from "./net";
+import { botFight, engineConfigured, leaveQueue, pollTicket, queue } from "./net";
+import { DuelLink, winnerSideOf } from "./link";
 import { useVerify, type Verify } from "./verify";
 import { DUEL_MOMENTS, MOCK_DUEL_ID, MOCK_ME, MOCK_PLAYERS, MOCK_STAKE, mockReplay, mockRun, pickTick, type DuelMoment } from "./mock";
 import type { DuelPlayer } from "./types";
@@ -28,6 +28,8 @@ declare global {
 
 const TICK_MS = 1000 / 60;
 const STAKE_UNITS = "5000000";
+/** "5" for 5000000 units, "5.50" otherwise. */
+const usd = (units: string | null | undefined) => unitsToUsd(units ?? STAKE_UNITS).replace(/\.00$/, "");
 const LEVELS = [
   { value: "1", label: "Easy" },
   { value: "2", label: "Normal" },
@@ -108,7 +110,7 @@ export default function Duel() {
   if (!screen) return <main className={s.screen} />;
   if (screen.k === "practice") return <Practice me={me} onExit={() => go({ k: "menu" })} />;
   if (screen.k === "mock") return <MockScreen at={screen.at} me={me} />;
-  if (screen.k === "queue") return <Queue me={me} ticket={screen.ticket} since={screen.since} onMatched={(t) => setScreen({ k: "fight", duelId: t.duelId, side: t.side, token: t.token, ranked: t.ranked })} onCancel={() => go({ k: "menu" })} />;
+  if (screen.k === "queue") return <Queue me={me} ticket={screen.ticket} since={screen.since} onMatched={(t) => setScreen({ k: "fight", duelId: t.duelId, side: t.side, token: t.token, ranked: t.ranked })} onLeft={() => go({ k: "menu" })} />;
   if (screen.k === "fight") return <Ranked me={me} duelId={screen.duelId} side={screen.side} token={screen.token} ranked={screen.ranked} onAgain={() => go({ k: "menu" })} onPractice={() => go({ k: "practice" })} />;
   return <Menu me={me} onPractice={() => go({ k: "practice" })} onQueued={(ticket) => setScreen({ k: "queue", ticket, since: Date.now() })} />;
 }
@@ -234,9 +236,7 @@ function Practice({ me, onExit }: { me: Me; onExit: () => void }) {
   return (
     <main className={s.fight}>
       <TopBar wallet={me.address}>
-        <span className={kit.chip}>
-          Practice · <b>free</b>
-        </span>
+        <span className={kit.chip}>Practice</span>
       </TopBar>
       <div className={s.levelRow}>
         <span>Bot</span>
@@ -278,7 +278,7 @@ function Practice({ me, onExit }: { me: Me; onExit: () => void }) {
 
 // ---------- queue ----------
 type Matched = { duelId: number; side: 0 | 1; token: string | null; ranked: boolean };
-function Queue({ me, ticket, since, onMatched, onCancel }: { me: Me; ticket: string; since: number; onMatched: (m: Matched) => void; onCancel: () => void }) {
+function Queue({ me, ticket, since, onMatched, onLeft }: { me: Me; ticket: string; since: number; onMatched: (m: Matched) => void; onLeft: () => void }) {
   const [now, setNow] = useState(Date.now());
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -303,6 +303,19 @@ function Queue({ me, ticket, since, onMatched, onCancel }: { me: Me; ticket: str
     };
   }, [ticket, onMatched]);
   const waited = Math.floor((now - since) / 1000);
+  // back to the menu only once the engine let go of the ticket (200) or never knew it (404); matched meanwhile: fight
+  const leave = async () => {
+    setBusy(true);
+    try {
+      const r = await leaveQueue(ticket);
+      if (r.status === 200 || r.status === 404) return onLeft();
+      if (r.status === 409 && r.ticket && r.ticket.duelId !== null && r.ticket.side !== null) return onMatched({ duelId: r.ticket.duelId, side: r.ticket.side, token: r.ticket.sessionToken, ranked: r.ticket.ranked });
+      setErr(`Could not leave the queue (the engine answered ${r.status}).`);
+    } catch (e) {
+      setErr(`Could not leave the queue: ${(e as Error).message}`);
+    }
+    setBusy(false);
+  };
   const fightBot = async () => {
     setBusy(true);
     try {
@@ -317,9 +330,7 @@ function Queue({ me, ticket, since, onMatched, onCancel }: { me: Me; ticket: str
   return (
     <main className={s.screen}>
       <TopBar wallet={me.address}>
-        <span className={kit.chip}>
-          Ranked · <b>5 USDC</b>
-        </span>
+        <span className={kit.chip}>Ranked</span>
       </TopBar>
       <PanelHead color="duel" eyebrow="The Dojo · queue" title="Looking for an opponent" />
       <div className={s.body}>
@@ -338,7 +349,9 @@ function Queue({ me, ticket, since, onMatched, onCancel }: { me: Me; ticket: str
           <p className={s.fine}>No one yet? In {10 - waited} s you can fight the bot for free instead.</p>
         )}
         {err && <p className={s.err}>{err}</p>}
-        <GhostButton onClick={onCancel}>Leave the queue</GhostButton>
+        <GhostButton onClick={leave} disabled={busy}>
+          Leave the queue
+        </GhostButton>
       </div>
     </main>
   );
@@ -368,7 +381,7 @@ function Ranked({ me, duelId, side, token, ranked, onAgain, onPractice }: { me: 
     return () => clearTimeout(id);
   }, [info?.final]);
   const players = info?.players ?? [];
-  const nameOf = (i: 0 | 1) => (i === side ? me.callsign || players[i]?.callsign || "you" : players[i]?.callsign || "opponent");
+  const nameOf = (i: 0 | 1) => players[i]?.callsign || (i === side ? me.callsign || "you" : "opponent");
   const avatarOf = (i: 0 | 1) => (i === side ? me.avatar : cfgFor(players[i]?.player ?? `p${i}`, nameOf(i)));
   const lastView = useRef<View | null>(null);
   const view = (now: number): View | null => {
@@ -377,17 +390,18 @@ function Ranked({ me, duelId, side, token, ranked, onAgain, onPractice }: { me: 
     if (!fr) return null;
     return (lastView.current = { ...fr, names: [nameOf(0), nameOf(1)], bots: [!!players[0]?.bot, !!players[1]?.bot], avatars: [avatarOf(0), avatarOf(1)], me: side });
   };
-  if (showResult && info?.final)
-    return <Result me={me} side={side} players={players} final={info.final} settled={info.settled} verify={verify} ranked={ranked} duelId={duelId} last={lastView.current} onAgain={onAgain} onPractice={onPractice} />;
-  const status = info?.cancelled ? `Cancelled: ${info.cancelled}` : !info?.connected ? "Connecting…" : info.status === "countdown" || info.status === "matching" ? "Get ready" : info.status === "settling" ? "Replaying the match" : "Live";
+  // the result waits until the winner can be placed (players known or winnerSide given)
+  if (showResult && info?.final && winnerSideOf(info.final, players) !== undefined)
+    return <Result me={me} side={side} players={players} final={info.final} settled={info.settled} verify={verify} ranked={info.ranked ?? ranked} stakeUnits={info.stakeUnits} duelId={duelId} last={lastView.current} onAgain={onAgain} onPractice={onPractice} />;
+  const status = info?.missing ? "No such duel on this engine" : info?.cancelled ? `Cancelled: ${info.cancelled}` : info?.final ? "Replaying the match" : !info?.connected ? "Connecting…" : info.status === "countdown" || info.status === "matching" ? "Get ready" : info.status === "settling" ? "Replaying the match" : "Live";
   return (
     <main className={s.fight}>
       <TopBar wallet={me.address}>
-        <span className={kit.chip}>{ranked ? <>Ranked · <b>{unitsToUsd(info?.stakeUnits ?? STAKE_UNITS).replace(/\.00$/, "")} USDC</b></> : <>Bot fight · <b>free</b></>}</span>
+        <span className={kit.chip}>{ranked ? "Ranked" : "Bot fight"}</span>
       </TopBar>
       <div className={s.strip}>
         <span>
-          Duel <span className={s.fig}>#{duelId}</span>
+          Duel <span className={s.fig}>#{duelId}</span> · {ranked ? <>stake <span className={s.fig}>{usd(info?.stakeUnits)}</span> USDC</> : "free, no stake"}
         </span>
         <span>{status}</span>
       </div>
@@ -399,11 +413,12 @@ function Ranked({ me, duelId, side, token, ranked, onAgain, onPractice }: { me: 
   );
 }
 
-function Result({ me, side, players, final, settled, verify, ranked, duelId, last, onAgain, onPractice }: {
+function Result({ me, side, players, final, settled, verify, ranked, stakeUnits, duelId, last, onAgain, onPractice }: {
   me: Me;
   side: 0 | 1;
   players: DuelPlayer[];
-  final: { winner: string | null; bookHash: string; rounds: [number, number]; payoutUnits: string };
+  final: { winner: string | null; winnerSide?: 0 | 1 | null; bookHash: string; rounds: [number, number]; payoutUnits: string };
+  stakeUnits: string | null;
   settled: { txHash: string } | null;
   verify: Verify;
   ranked: boolean;
@@ -413,16 +428,16 @@ function Result({ me, side, players, final, settled, verify, ranked, duelId, las
   onAgain: () => void;
   onPractice: () => void;
 }) {
-  const mine = players[side]?.player?.toLowerCase() ?? me.address;
-  const won = final.winner !== null && final.winner.toLowerCase() === mine;
-  const draw = final.winner === null;
+  const ws = winnerSideOf(final, players);
+  const won = ws === side;
+  const draw = ws === null;
   const offline = !!settled && !isTxHash(settled.txHash);
   const verdict = draw ? "A draw" : won ? "You win" : "You lose";
   const opp = players[1 - side]?.callsign ?? "your opponent";
   return (
     <main className={s.screen}>
       <TopBar wallet={me.address}>
-        <span className={kit.chip}>{ranked ? <>Ranked · <b>5 USDC</b></> : <>Bot fight · <b>free</b></>}</span>
+        <span className={kit.chip}>{ranked ? "Ranked" : "Bot fight"}</span>
       </TopBar>
       <PanelHead color="duel" eyebrow={`Duel #${duelId} · result`} title={verdict} />
       {last && (
@@ -443,13 +458,13 @@ function Result({ me, side, players, final, settled, verify, ranked, duelId, las
             <div>
               {won ? "Your payout" : draw ? "Your stake" : "Payout to the winner"}
               <b>
-                {draw ? <>{unitsToUsd(STAKE_UNITS)} USDC refunded</> : <span className={won ? s.chipSun : undefined}>{unitsToUsd(final.payoutUnits)} USDC</span>}
-                {!settled && <span className={s.prov}>provisional</span>}
+                {draw ? <>{usd(stakeUnits)} USDC back</> : <span className={won && !offline ? s.chipSun : undefined}>{unitsToUsd(final.payoutUnits)} USDC</span>}
+                {!settled ? <span className={s.prov}>provisional</span> : offline ? <span className={s.prov}>not paid, offline</span> : null}
               </b>
             </div>
             <div>
               Settlement
-              <b>{!settled ? "Waiting for the replay report" : offline ? "Settled offline, nothing paid on chain" : `Paid, tx ${settled.txHash.slice(0, 10)}…`}</b>
+              <b>{!settled ? "Waiting for the replay report" : offline ? "Settled offline (no chain), nothing paid" : `${draw ? "Refunded" : "Paid"}, tx ${settled.txHash.slice(0, 10)}…`}</b>
             </div>
           </div>
         )}
@@ -498,7 +513,8 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
         me={me}
         side={MOCK_ME}
         players={players}
-        final={{ winner, bookHash: keccak256(stringToBytes(book)), rounds: [fin.f[0].rounds, fin.f[1].rounds], payoutUnits: "9500000" }}
+        final={{ winner, winnerSide: fin.winner, bookHash: keccak256(stringToBytes(book)), rounds: [fin.f[0].rounds, fin.f[1].rounds], payoutUnits: "9500000" }}
+        stakeUnits={MOCK_STAKE}
         settled={null}
         verify={{ hash: rep.hash, ticks: rep.ticks, matches: true, bookHashOk: true }}
         ranked
@@ -517,7 +533,7 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
   return (
     <main className={s.fight}>
       <TopBar wallet={me.address}>
-        <span className={kit.chip}>{practice ? <>Practice · <b>free</b></> : <>Ranked · <b>5 USDC</b></>}</span>
+        <span className={kit.chip}>{practice ? "Practice" : "Ranked"}</span>
       </TopBar>
       {practice ? (
         <div className={s.levelRow}>
@@ -529,7 +545,7 @@ function MockScreen({ at, me }: { at: DuelMoment; me: Me }) {
       ) : (
         <div className={s.strip}>
           <span>
-            Duel <span className={s.fig}>#{MOCK_DUEL_ID}</span>
+            Duel <span className={s.fig}>#{MOCK_DUEL_ID}</span> · stake <span className={s.fig}>{usd(MOCK_STAKE)}</span> USDC
           </span>
           <span>Live · mock data</span>
         </div>

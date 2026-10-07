@@ -3,6 +3,7 @@
 // live duels with Watch, recent results, Practice and Fight for 5 USDC. Live from GET /duels through dojo.ts.
 import { unitsToUsd } from "@/lib/events";
 import { useDojo } from "./dojo";
+import { useIsland } from "@/lib/island/store";
 import type { DuelPlayer } from "./types";
 
 const name = (p: DuelPlayer | undefined) => p?.callsign || (p?.player ? `${p.player.slice(0, 6)}…` : "?");
@@ -10,9 +11,12 @@ const Bot = ({ p }: { p: DuelPlayer | undefined }) => (p?.bot ? <span className=
 
 export function DojoBody() {
   const d = useDojo();
+  const health = useIsland((s) => s.health);
   const info = d.info;
   const live = info?.live ?? [];
   const recent = (info?.recent ?? []).slice(0, 4);
+  // a CHAIN=off engine settles offline: nothing it lists was paid on chain
+  const offline = health?.chain === false;
   return (
     <>
       <p className="lede">One on one, best of three. Practice against the dojo bot for free, or fight another player for a 5 USDC stake. Every ranked match is replayed from its recorded inputs before the stake is paid.</p>
@@ -27,7 +31,7 @@ export function DojoBody() {
         </div>
         <div>
           <span>Stake</span>
-          <b>5 USDC</b>
+          <b>{unitsToUsd(info?.stakeUnits ?? "5000000").replace(/\.00$/, "")} USDC</b>
         </div>
         <div>
           <span>Settlement</span>
@@ -35,7 +39,7 @@ export function DojoBody() {
         </div>
       </div>
       <a className="cta" href="/duel">
-        Fight for 5 USDC
+        Fight for {unitsToUsd(info?.stakeUnits ?? "5000000").replace(/\.00$/, "")} USDC
       </a>
       <a className="ghost" href="/duel?mode=practice" style={{ color: "var(--ink)", textDecoration: "none" }}>
         Practice for free
@@ -100,7 +104,8 @@ export function DojoBody() {
                       </span>
                     </div>
                     <div className="rt">
-                      <b>{w && x.payoutUnits ? `${unitsToUsd(x.payoutUnits)} USDC` : w ? "won" : "refunded"}</b>
+                      <b>{x.ranked === false ? "free" : w ? (x.payoutUnits && x.payoutUnits !== "0" ? `${unitsToUsd(x.payoutUnits)} USDC` : "won") : "stakes back"}</b>
+                      {x.ranked !== false && <span>{!x.settled ? "provisional" : offline ? "offline, not paid" : w ? "paid" : "refunded"}</span>}
                     </div>
                   </li>
                 );

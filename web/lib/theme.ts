@@ -22,8 +22,12 @@ export const seaMid = "#2CC3E0";
 export const seaDeep = "#3A6FE0";
 /** Loss, danger, liquidated as text on paper: coral darkened to 4.87:1 on `paper` (coral itself is 2.85:1). */
 export const coralText = "#D12B52";
+/** A soft ink shade on the ground under a figure (the duel's floor shadow). */
+export const shade = "rgba(43,29,82,.18)";
+/** The white gloss strip along a filled bar. */
+export const gloss = "rgba(255,255,255,.45)";
 
-export const TOKENS = { ink, ink2, muted, paper, glass, line, coral, violet, tang, mint, sun, skyTop, skyBottom, seaFoam, seaShallow, seaMid, seaDeep, coralText } as const;
+export const TOKENS = { ink, ink2, muted, paper, glass, line, coral, violet, tang, mint, sun, skyTop, skyBottom, seaFoam, seaShallow, seaMid, seaDeep, coralText, shade, gloss } as const;
 
 /** Each game's colour: its panel heads and its primary button. */
 export const GAME = { royale: coral, predict: violet, duel: tang, create: mint } as const;

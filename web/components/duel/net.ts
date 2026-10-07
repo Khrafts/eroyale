@@ -71,7 +71,23 @@ export async function queue(acct: PrivateKeyAccount, callsign: string): Promise<
 export const pollTicket = async (ticket: string) => ticketOf(await call(`/duels/queue/${encodeURIComponent(ticket)}`));
 export const botFight = async (ticket: string) => ticketOf(await call(`/duels/queue/${encodeURIComponent(ticket)}/bot`, {}));
 export const getDuelFinal = (id: number) => fetch(`${engineHttp()}/duels/${id}/final`, { cache: "no-store" }).then((r) => (r.ok ? r.text() : null));
-export const getDuel = (id: number) => call<Record<string, unknown>>(`/duels/${id}`);
+/** GET /duels/:id with its status (404: no such duel, so stop following it). */
+export async function getDuel(id: number): Promise<{ status: number; body: Record<string, unknown> | null }> {
+  const r = await fetch(`${engineHttp()}/duels/${id}`, { cache: "no-store" });
+  return { status: r.status, body: r.ok ? ((await r.json()) as Record<string, unknown>) : null };
+}
+
+/** DELETE /duels/queue/:ticket. 200 {status: "left"}; 409 with the ticket view when already matched; 404 unknown. */
+export async function leaveQueue(ticket: string): Promise<{ status: number; ticket: QueueTicket | null }> {
+  const r = await fetch(`${engineHttp()}/duels/queue/${encodeURIComponent(ticket)}`, { method: "DELETE" });
+  let body: Record<string, unknown> | null = null;
+  try {
+    body = (await r.json()) as Record<string, unknown>;
+  } catch {
+    /* empty */
+  }
+  return { status: r.status, ticket: r.status === 409 && body ? ticketOf(body) : null };
+}
 
 export function duelWsUrl(id: number): string | null {
   const base = process.env.NEXT_PUBLIC_ENGINE_WS;
